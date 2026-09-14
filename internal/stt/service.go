@@ -83,9 +83,15 @@ func (s *Service) Prepare(cfg config.SpeechConfig) error {
 // applyEngine sets up the selected transcription backend: a resident local model, or
 // capture-only audio for witai/remote, which transcribe from the raw take.
 func (s *Service) applyEngine(speech *input.FFISpeech, cfg config.SpeechConfig) error {
-	s.activeEngine = cfg.Engine
+	// A build with no embedded keys hides Wit.ai in the UI, but a config carried
+	// over from a build that had them can still name it; fall back to local.
+	engine := cfg.Engine
+	if engine == config.SpeechWitAI && !witai.Available() {
+		engine = config.SpeechLocal
+	}
+	s.activeEngine = engine
 
-	switch cfg.Engine {
+	switch engine {
 	case config.SpeechWitAI:
 		if err := s.applyCaptureOnly(speech, true); err != nil {
 			return err

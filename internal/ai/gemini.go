@@ -24,9 +24,11 @@ type GeminiProvider struct {
 
 func (p *GeminiProvider) SetLowReasoning(low bool) { p.LowReasoning = low }
 
+const geminiBaseURL = "https://generativelanguage.googleapis.com"
+
 func NewGeminiProvider(apiKey, baseURL, model string, temperature float64) *GeminiProvider {
 	if baseURL == "" {
-		baseURL = "https://generativelanguage.googleapis.com"
+		baseURL = geminiBaseURL
 	}
 	if model == "" {
 		model = "gemini-2.5-flash-lite"

@@ -24,9 +24,11 @@ type OpenAIProvider struct {
 
 func (p *OpenAIProvider) SetLowReasoning(low bool) { p.LowReasoning = low }
 
+const openAIBaseURL = "https://api.openai.com/v1"
+
 func NewOpenAIProvider(apiKey, baseURL, model string, temperature float64) *OpenAIProvider {
 	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
+		baseURL = openAIBaseURL
 	}
 	if model == "" {
 		model = "gpt-4o"

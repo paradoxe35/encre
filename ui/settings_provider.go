@@ -105,6 +105,10 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	modelEntry.PlaceHolder = "e.g., gpt-4o"
 	modelEntry.Validator = nil // no validation icon
 
+	browseModels := widget.NewButtonWithIcon("", theme.ListIcon(), w.browseProviderModels)
+	browseModels.Importance = widget.LowImportance
+	modelRow := container.NewBorder(nil, nil, nil, browseModels, modelEntry)
+
 	// Only shown for custom/OpenAI-compatible providers.
 	baseURLLabel := widget.NewLabel("Base URL:")
 	baseURLLabel.TextStyle.Bold = true
@@ -124,11 +128,38 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 		apiKeyEntry,
 		widget.NewSeparator(),
 		modelLabel,
-		modelEntry,
+		modelRow,
 		w.baseURLContainer,
 	)
 
 	return configForm
+}
+
+// browseProviderModels lists what the provider currently selected on the AI tab
+// offers, using the key and URL on screen rather than the saved ones so an
+// unsaved edit can be tried out.
+func (w *MainWindow) browseProviderModels() {
+	provider, _ := w.providerBinding.Get()
+	apiKey, _ := w.apiKeyBinding.Get()
+	baseURL, _ := w.baseURLBinding.Get()
+	current, _ := w.modelBinding.Get()
+
+	settings := w.config.GetProviderSettings(provider)
+	if baseURL == "" {
+		baseURL = settings.BaseURL
+	}
+	if apiKey == "" && settings.RequiresAPIKey() {
+		w.statusBinding.Set("Error: API key is required to list models")
+		return
+	}
+
+	status := func(message string) { w.statusBinding.Set(message) }
+
+	w.loadModels(provider, apiKey, baseURL, current, status, func(model string) {
+		w.modelBinding.Set(model)
+		w.markDirty()
+		w.statusBinding.Set("Model set to " + model)
+	})
 }
 
 func (w *MainWindow) createConnectionTestSection() fyne.CanvasObject {
@@ -413,68 +444,16 @@ func (w *MainWindow) showDeleteProviderConfirmation() {
 }
 
 func (w *MainWindow) fetchModelsForCustomProvider(apiKey, baseURL string, requiresAPIKey bool, modelEntry *widget.Entry, statusLabel *widget.Label) {
-	if baseURL == "" || (apiKey == "" && requiresAPIKey) {
-		if requiresAPIKey {
-			statusLabel.SetText("API key and Base URL are required")
-		} else {
-			statusLabel.SetText("Base URL is required")
-		}
+	if baseURL == "" {
+		statusLabel.SetText("Base URL is required")
+		return
+	}
+	if apiKey == "" && requiresAPIKey {
+		statusLabel.SetText("API key and Base URL are required")
 		return
 	}
 
-	statusLabel.SetText("Fetching models...")
-
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
-		models, err := ai.FetchModelsOpenAI(ctx, apiKey, baseURL)
-
-		fyne.Do(func() {
-			if err != nil {
-				statusLabel.SetText(fmt.Sprintf("Error: %s", err.Error()))
-				return
-			}
-
-			if len(models) == 0 {
-				statusLabel.SetText("No models found")
-				return
-			}
-
-			statusLabel.SetText(fmt.Sprintf("Found %d models", len(models)))
-
-			modelNames := make([]string, len(models))
-			for i, m := range models {
-				modelNames[i] = m.ID
-			}
-
-			modelList := widget.NewList(
-				func() int { return len(modelNames) },
-				func() fyne.CanvasObject {
-					return widget.NewLabel("model-name-placeholder")
-				},
-				func(id widget.ListItemID, obj fyne.CanvasObject) {
-					obj.(*widget.Label).SetText(modelNames[id])
-				},
-			)
-
-			var modelDialog dialog.Dialog
-			modelList.OnSelected = func(id widget.ListItemID) {
-				modelEntry.SetText(modelNames[id])
-				modelDialog.Hide()
-			}
-
-			listContainer := container.NewScroll(modelList)
-			listContainer.SetMinSize(fyne.NewSize(350, 250))
-
-			modelDialog = dialog.NewCustom(
-				fmt.Sprintf("Select Model (%d available)", len(models)),
-				"Close",
-				listContainer,
-				w.Window,
-			)
-			modelDialog.Resize(fyne.NewSize(400, 350))
-			modelDialog.Show()
-		})
-	}()
+	// A provider being added has no name yet, so it lists as OpenAI-compatible,
+	// which is the only type custom providers can be.
+	w.loadModels("", apiKey, baseURL, modelEntry.Text, statusLabel.SetText, modelEntry.SetText)
 }

@@ -270,10 +270,25 @@ func (w *MainWindow) refreshWitAILanguages() {
 	w.speechLanguageCodes = codeByName
 
 	selected := stt.LanguageName(w.config.SpeechSettings().Language)
-	if _, ok := codeByName[selected]; !ok && len(labels) > 0 {
-		selected = labels[0]
+	if _, ok := codeByName[selected]; !ok {
+		selected = witaiFallbackLanguage(labels, codeByName)
 	}
 	w.speechLanguage.SetSelected(selected)
+}
+
+// Alphabetical order would land on Arabic, so try the system language and then
+// English before settling for the first entry.
+func witaiFallbackLanguage(labels []string, codeByName map[string]string) string {
+	for _, code := range []string{stt.SystemLanguage(), "en"} {
+		name := stt.LanguageName(code)
+		if _, ok := codeByName[name]; ok {
+			return name
+		}
+	}
+	if len(labels) > 0 {
+		return labels[0]
+	}
+	return ""
 }
 
 // witaiSpeechPane needs nothing beyond the shared header language select: Wit.ai
