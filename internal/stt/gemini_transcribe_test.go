@@ -95,9 +95,9 @@ func TestGeminiTranscribeRequest(t *testing.T) {
 	}
 }
 
-// A model that cannot switch thinking off rejects thinkingBudget; the take must
-// still be transcribed rather than lost.
-func TestGeminiRetriesWithoutThinkingBudget(t *testing.T) {
+// Gemini 3.1 Pro refuses the "minimal" level, and an older model refuses a level
+// outright. Either way the take must still be transcribed rather than lost.
+func TestGeminiRetriesWithoutThinkingConfig(t *testing.T) {
 	var attempts int
 	var sentBudget []bool
 
@@ -112,7 +112,7 @@ func TestGeminiRetriesWithoutThinkingBudget(t *testing.T) {
 
 		if attempts == 1 {
 			w.WriteHeader(http.StatusBadRequest)
-			io.WriteString(w, `{"error":{"message":"thinkingBudget is not supported"}}`)
+			io.WriteString(w, `{"error":{"message":"thinkingLevel minimal is not supported"}}`)
 			return
 		}
 		io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`)
@@ -179,7 +179,7 @@ func TestParseGeminiResponseJoinsParts(t *testing.T) {
 	}
 }
 
-// Gemini answers with no parts when the audio holds no speech.
+// Gemini answers with no candidates when the audio holds no speech.
 func TestParseGeminiResponseEmpty(t *testing.T) {
 	text, err := parseGeminiResponse([]byte(`{"candidates":[]}`))
 	if err != nil {
@@ -187,5 +187,149 @@ func TestParseGeminiResponseEmpty(t *testing.T) {
 	}
 	if text != "" {
 		t.Errorf("text = %q, want empty", text)
+	}
+}
+
+// Gemini 3 takes a level and Gemini 2.5 a budget; sending both is rejected, and
+// sending the wrong one is accepted and ignored, which is worse - it looks like
+// it worked while the model thinks at full depth.
+func TestThinkingConfigMatchesModelGeneration(t *testing.T) {
+	cases := []struct {
+		model      string
+		wantLevel  string
+		wantBudget bool
+	}{
+		{"gemini-3.8-flash", "minimal", false},
+		{"gemini-3.5-flash", "minimal", false},
+		{"gemini-3-flash-preview", "minimal", false},
+		{"gemini-2.5-flash", "", true},
+		{"gemini-2.0-flash-lite", "", true},
+	}
+
+	for _, tc := range cases {
+		config := thinkingConfigFor(tc.model)
+		if config == nil {
+			t.Errorf("%s: no thinking config", tc.model)
+			continue
+		}
+		if config.ThinkingLevel != tc.wantLevel {
+			t.Errorf("%s: level = %q, want %q", tc.model, config.ThinkingLevel, tc.wantLevel)
+		}
+		if (config.ThinkingBudget != nil) != tc.wantBudget {
+			t.Errorf("%s: budget set = %v, want %v", tc.model, config.ThinkingBudget != nil, tc.wantBudget)
+		}
+		if config.ThinkingLevel != "" && config.ThinkingBudget != nil {
+			t.Errorf("%s: sent both, which Gemini 3 rejects", tc.model)
+		}
+	}
+}
+
+// Guessing a parameter for a name we cannot place costs a refused round trip.
+func TestThinkingConfigSkippedForUnknownModel(t *testing.T) {
+	for _, model := range []string{"", "gemini-flash-latest", "whisper-1", "gemini"} {
+		if config := thinkingConfigFor(model); config != nil {
+			t.Errorf("thinkingConfigFor(%q) = %+v, want nil", model, config)
+		}
+	}
+}
+
+func TestGeminiMajorVersion(t *testing.T) {
+	cases := map[string]int{
+		"gemini-3.8-flash":       3,
+		"gemini-3-flash-preview": 3,
+		"gemini-2.5-flash":       2,
+		"gemini-flash-latest":    0,
+		"whisper-1":              0,
+		"":                       0,
+	}
+
+	for model, want := range cases {
+		if got := geminiMajorVersion(model); got != want {
+			t.Errorf("geminiMajorVersion(%q) = %d, want %d", model, got, want)
+		}
+	}
+}
+
+// The serialised request must carry one thinking field, never both.
+func TestGeminiRequestSendsOneThinkingField(t *testing.T) {
+	var sent map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &sent)
+		io.WriteString(w, `{"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"ok"}]}}]}`)
+	}))
+	defer server.Close()
+
+	if _, err := RemoteTranscribe(context.Background(), geminiConfig(server.URL), []byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	generation, _ := sent["generationConfig"].(map[string]any)
+	thinking, ok := generation["thinkingConfig"].(map[string]any)
+	if !ok {
+		t.Fatalf("no thinkingConfig in %v", generation)
+	}
+	if _, has := thinking["thinkingBudget"]; has {
+		t.Errorf("sent thinkingBudget to a Gemini 3 model: %v", thinking)
+	}
+	if thinking["thinkingLevel"] != "minimal" {
+		t.Errorf("thinkingLevel = %v", thinking["thinkingLevel"])
+	}
+}
+
+// A blocked or truncated answer is a normal 200 holding no text; dictating into
+// silence would otherwise look like the hotkey never fired.
+func TestGeminiReportsAnEmptyAnswer(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"blocked prompt", `{"promptFeedback":{"blockReason":"SAFETY"}}`, "SAFETY"},
+		{"thinking ate the budget",
+			`{"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[]}}]}`, "MAX_TOKENS"},
+		{"refused answer",
+			`{"candidates":[{"finishReason":"SAFETY","content":{"parts":[]}}]}`, "SAFETY"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseGeminiResponse([]byte(tc.body))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to name %s", err, tc.want)
+			}
+		})
+	}
+}
+
+// Truncated is still better than lost: keep what came back.
+func TestGeminiKeepsTruncatedText(t *testing.T) {
+	body := `{"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[{"text":"half a sen"}]}}]}`
+
+	text, err := parseGeminiResponse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "half a sen" {
+		t.Errorf("text = %q", text)
+	}
+}
+
+// Nothing asks for thought summaries, but one must never be typed as speech.
+func TestGeminiSkipsThoughtParts(t *testing.T) {
+	body := `{"candidates":[{"finishReason":"STOP","content":{"parts":[
+		{"text":"The user is speaking French.","thought":true},
+		{"text":"bonjour"}]}}]}`
+
+	text, err := parseGeminiResponse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "bonjour" {
+		t.Errorf("text = %q, want the thought dropped", text)
 	}
 }

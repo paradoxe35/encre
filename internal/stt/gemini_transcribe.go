@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/paradoxe35/encre/internal/config"
@@ -48,18 +49,71 @@ type geminiGenerConfig struct {
 	ThinkingConfig *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
+// Gemini 3 renamed the control from a token budget to a level, and rejects a
+// request carrying both. Exactly one field is ever set.
 type geminiThinkingConfig struct {
-	ThinkingBudget int `json:"thinkingBudget"`
+	ThinkingLevel  string `json:"thinkingLevel,omitempty"`
+	ThinkingBudget *int   `json:"thinkingBudget,omitempty"`
 }
 
 type geminiResponse struct {
 	Candidates []struct {
 		Content struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
+			Parts []geminiResponsePart `json:"parts"`
 		} `json:"content"`
+		FinishReason string `json:"finishReason"`
 	} `json:"candidates"`
+	PromptFeedback struct {
+		BlockReason string `json:"blockReason"`
+	} `json:"promptFeedback"`
+}
+
+type geminiResponsePart struct {
+	Text string `json:"text"`
+	// Set on a thought summary. Nothing here asks for those, so this is a guard
+	// against one arriving anyway and being typed out as if it were speech.
+	Thought bool `json:"thought"`
+}
+
+// thinkingConfigFor asks for the least thinking the model allows. Gemini 3 takes
+// a level, where "minimal" is the floor - it cannot be switched off - and older
+// models take a zero budget. Sending the wrong one is not rejected, merely
+// ignored, so the choice has to be made here rather than left to a retry.
+func thinkingConfigFor(model string) *geminiThinkingConfig {
+	switch major := geminiMajorVersion(model); {
+	case major >= 3:
+		return &geminiThinkingConfig{ThinkingLevel: "minimal"}
+	case major > 0:
+		budget := 0
+		return &geminiThinkingConfig{ThinkingBudget: &budget}
+	default:
+		// An unrecognised name: pay the default thinking rather than guess a
+		// parameter and spend a round trip having it refused.
+		return nil
+	}
+}
+
+// geminiMajorVersion reads the 3 out of gemini-3.8-flash and the 2 out of
+// gemini-2.5-flash; 0 when the name does not follow the pattern.
+func geminiMajorVersion(model string) int {
+	rest, found := strings.CutPrefix(strings.ToLower(strings.TrimSpace(model)), "gemini-")
+	if !found {
+		return 0
+	}
+
+	end := strings.IndexFunc(rest, func(r rune) bool { return r < '0' || r > '9' })
+	if end == 0 {
+		return 0
+	}
+	if end > 0 {
+		rest = rest[:end]
+	}
+
+	major, err := strconv.Atoi(rest)
+	if err != nil {
+		return 0
+	}
+	return major
 }
 
 // geminiTranscribe asks a Gemini model to transcribe wav. Gemini exposes no
@@ -101,7 +155,7 @@ func geminiPromptFor(language string) string {
 func sendGemini(ctx context.Context, cfg config.SpeechConfig, request geminiRequest, quiet bool) (string, error) {
 	request.GenerationConfig = &geminiGenerConfig{Temperature: 0}
 	if quiet {
-		request.GenerationConfig.ThinkingConfig = &geminiThinkingConfig{ThinkingBudget: 0}
+		request.GenerationConfig.ThinkingConfig = thinkingConfigFor(cfg.RemoteModel)
 	}
 
 	payload, err := json.Marshal(request)
@@ -148,15 +202,31 @@ func parseGeminiResponse(body []byte) (string, error) {
 		return "", fmt.Errorf("invalid Gemini response: %w", err)
 	}
 
+	if reason := parsed.PromptFeedback.BlockReason; reason != "" {
+		return "", fmt.Errorf("Gemini refused the recording (%s)", reason)
+	}
+	if len(parsed.Candidates) == 0 {
+		return "", nil
+	}
+	candidate := parsed.Candidates[0]
+
 	var text strings.Builder
-	for _, candidate := range parsed.Candidates {
-		for _, part := range candidate.Content.Parts {
-			text.WriteString(part.Text)
+	for _, part := range candidate.Content.Parts {
+		if part.Thought {
+			continue
 		}
-		break
+		text.WriteString(part.Text)
 	}
 
-	return strings.TrimSpace(text.String()), nil
+	// Thinking can consume the whole output allowance, which arrives as a normal
+	// 200 holding nothing. Reported, because dictating into silence looks like
+	// the hotkey failed.
+	transcript := strings.TrimSpace(text.String())
+	if transcript == "" && candidate.FinishReason != "" && candidate.FinishReason != "STOP" {
+		return "", fmt.Errorf("Gemini returned no transcript (%s)", candidate.FinishReason)
+	}
+
+	return transcript, nil
 }
 
 // remoteStatusError carries the status code so a rejected thinking budget can be
