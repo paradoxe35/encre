@@ -62,7 +62,10 @@ type MainWindow struct {
 	refreshHistory      func()
 	speechEngine        *widget.Select
 	speechLanguage      *widget.Select
+	speechLanguageEntry *widget.SelectEntry
+	speechLanguageBox   *fyne.Container
 	speechLanguageCodes map[string]string
+	languageSetKey      string
 	speechKeepLoaded    *widget.Check
 	speechCleanUp       *widget.Check
 	microphone          *MicrophonePicker

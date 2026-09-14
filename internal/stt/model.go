@@ -63,10 +63,7 @@ func (m Model) Speaks(code string) bool {
 // LanguageAfterSwitch is the stored choice once the model changes: detection
 // takes over where it exists, otherwise a spoken choice carries across.
 func (m Model) LanguageAfterSwitch(previous, fallback string) string {
-	if m.LanguageDetect {
-		return ""
-	}
-	return m.TranscribeLanguage(previous, fallback)
+	return SwitchLanguage(m.Languages, m.LanguageDetect, previous, fallback)
 }
 
 // TranscribeLanguage is the code to hand the engine. A model that cannot

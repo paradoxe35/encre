@@ -22,10 +22,11 @@ type RemotePreset struct {
 
 var RemotePresets = []RemotePreset{
 	{
-		ID:       "openai",
-		Name:     "OpenAI",
-		BaseURL:  "https://api.openai.com/v1",
-		Models:   []string{"gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"},
+		ID:      "openai",
+		Name:    "OpenAI",
+		BaseURL: "https://api.openai.com/v1",
+		Models: []string{"gpt-transcribe", "gpt-4o-transcribe", "gpt-4o-mini-transcribe",
+			"whisper-1"},
 		KeyHint:  "platform.openai.com",
 		Protocol: ProtocolOpenAI,
 	},
@@ -41,7 +42,7 @@ var RemotePresets = []RemotePreset{
 		ID:       "gemini",
 		Name:     "Google Gemini",
 		BaseURL:  "https://generativelanguage.googleapis.com",
-		Models:   []string{"gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash"},
+		Models:   []string{"gemini-3.5-transcribe", "gemini-3.8-flash", "gemini-2.5-flash"},
 		KeyHint:  "aistudio.google.com",
 		Protocol: ProtocolGemini,
 	},

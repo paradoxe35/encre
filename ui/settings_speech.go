@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -23,13 +24,25 @@ const (
 	detectLanguageLabel = "Auto-detect"
 )
 
-// speechLanguageCode maps the currently displayed label back to its ISO code, from
-// whichever of refreshSpeechLanguages/refreshWitAILanguages last populated the select.
+// speechLanguageCode maps the displayed label back to a code, from whichever
+// refresh last populated the picker.
 func (w *MainWindow) speechLanguageCode(label string) string {
 	if label == "" || label == detectLanguageLabel {
 		return ""
 	}
-	return w.speechLanguageCodes[label]
+	if code, ok := w.speechLanguageCodes[label]; ok {
+		return code
+	}
+	// Typed rather than picked: a code for a model we have no list for.
+	return strings.TrimSpace(label)
+}
+
+// selectedSpeechLanguage reads the picker that is currently on screen.
+func (w *MainWindow) selectedSpeechLanguage() string {
+	if w.speechLanguageEntry != nil && w.speechLanguageEntry.Visible() {
+		return w.speechLanguageCode(w.speechLanguageEntry.Text)
+	}
+	return w.speechLanguageCode(w.speechLanguage.Selected)
 }
 
 func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
@@ -52,11 +65,11 @@ func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
 			remote.Show()
 		case witaiEngineLabel:
 			witaiPane.Show()
-			w.refreshWitAILanguages()
 		default:
 			local.Show()
-			w.refreshSpeechLanguages()
 		}
+
+		w.refreshLanguages(engineFromLabel(label))
 	})
 	w.speechEngine.SetSelected(engineLabel(w.config.SpeechSettings().Engine))
 
@@ -70,11 +83,22 @@ func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
 		container.NewPadded(container.NewVBox(
 			w.speechHeader(),
 			container.NewBorder(nil, nil, widget.NewLabel("Transcribe"), options,
-				container.NewGridWithColumns(2, w.speechEngine, w.speechLanguage)),
+				container.NewGridWithColumns(2, w.speechEngine, w.speechLanguageBox)),
 		)),
 		nil, nil, nil,
 		container.NewStack(local, remote, witaiPane),
 	)
+}
+
+func engineFromLabel(label string) config.SpeechEngine {
+	switch label {
+	case remoteEngineLabel:
+		return config.SpeechRemote
+	case witaiEngineLabel:
+		return config.SpeechWitAI
+	default:
+		return config.SpeechLocal
+	}
 }
 
 func engineLabel(engine config.SpeechEngine) string {
@@ -107,10 +131,10 @@ func (w *MainWindow) localSpeechPane() *fyne.Container {
 		func(model stt.Model) {
 			speech := w.config.SpeechSettings()
 			speech.ModelID = model.ID
-			speech.Language = model.LanguageAfterSwitch(speech.Language, stt.SystemLanguage())
 			w.config.SetSpeechSettings(speech)
 			active.SetText(activeModelText(model.ID, stt.Catalogue(), store.Downloaded))
-			w.refreshSpeechLanguages()
+			// Settles the language through the same rule every other engine uses.
+			w.refreshLanguages(config.SpeechLocal)
 			w.markDirty()
 			w.statusBinding.Set("Speech model set to " + model.Name)
 		})
@@ -153,6 +177,10 @@ func (w *MainWindow) remoteSpeechPane() *fyne.Container {
 
 	w.speechRemoteModel = w.dirtySelectEntry()
 	w.speechRemoteModel.SetText(speech.RemoteModel)
+	w.speechRemoteModel.OnChanged = func(string) {
+		w.markDirty()
+		w.refreshLanguages(config.SpeechRemote)
+	}
 
 	w.speechRemoteURL = w.dirtyEntry()
 	w.speechRemoteURL.SetPlaceHolder("https://api.example.com/v1")
@@ -195,12 +223,15 @@ func (w *MainWindow) applyPreset(name string) {
 
 	if preset.ID == "custom" {
 		w.speechRemoteURL.Enable()
+		w.adoptPresetModel(preset)
+		w.refreshLanguages(config.SpeechRemote)
 		return
 	}
 
 	w.speechRemoteURL.SetText(preset.BaseURL)
 	w.speechRemoteURL.Disable()
 	w.adoptPresetModel(preset)
+	w.refreshLanguages(config.SpeechRemote)
 }
 
 // adoptPresetModel swaps in the new service's default when the box still holds
@@ -230,14 +261,164 @@ func (w *MainWindow) buildSpeechOptions() {
 	w.microphone.onChanged = w.markDirty
 
 	w.speechLanguage = w.dirtySelect(nil, nil)
-	if speech.Engine == config.SpeechWitAI && witai.Available() {
-		w.refreshWitAILanguages()
-	} else {
-		w.refreshSpeechLanguages()
-	}
+	w.speechLanguageEntry = w.dirtySelectEntry()
+	w.speechLanguageEntry.Hide()
+	w.speechLanguageBox = container.NewStack(w.speechLanguage, w.speechLanguageEntry)
+	w.refreshLanguages(speech.Engine)
 
 	w.speechKeepLoaded = w.dirtyCheck("Keep the model in memory", speech.KeepModelLoaded)
 	w.speechCleanUp = w.dirtyCheck("Tidy the transcript with AI", speech.CleanUp)
+}
+
+// languageSet is what the engine currently configured can do. key identifies it
+// so a real change can be told from a redraw, and from a model name being typed
+// one letter at a time.
+type languageSet struct {
+	key     string
+	codes   []string
+	detects bool
+}
+
+// currentLanguageSet reads the engine, and for a hosted service the provider and
+// model too, since whisper-1 and gpt-transcribe do not accept the same codes.
+func (w *MainWindow) currentLanguageSet(engine config.SpeechEngine) languageSet {
+	switch engine {
+	case config.SpeechWitAI:
+		if witai.Available() {
+			// A Wit app is built for one language, so it never detects.
+			return languageSet{key: "witai", codes: witai.Languages()}
+		}
+
+	case config.SpeechRemote:
+		preset, _ := stt.PresetByName(w.speechRemote.Selected)
+		name := stt.LanguageSetName(preset.ID, w.speechRemoteModel.Text)
+		return languageSet{
+			key:     "remote:" + name,
+			codes:   stt.Codes(stt.LanguagesFor(preset.ID, w.speechRemoteModel.Text)),
+			detects: true,
+		}
+	}
+
+	model, _ := stt.FindModel(w.config.SpeechSettings().ModelID)
+	return languageSet{
+		key:     "local:" + model.ID,
+		codes:   model.Languages,
+		detects: model.LanguageDetect,
+	}
+}
+
+// refreshLanguages settles the language for the engine now in effect, then
+// redraws the picker from it.
+//
+// Every engine goes through one rule: leave a detecting engine to detect, and
+// on one that cannot, keep the language if it can serve it, else fall back.
+// Writing the result to the config rather than only showing it keeps the picker
+// reading from a single place, so a second switch starts from the first.
+func (w *MainWindow) refreshLanguages(engine config.SpeechEngine) {
+	set := w.currentLanguageSet(engine)
+
+	if w.languageSetKey == "" {
+		// First draw of the session: show what was saved, do not re-decide it.
+		w.languageSetKey = set.key
+	} else if set.key != w.languageSetKey {
+		w.languageSetKey = set.key
+
+		speech := w.config.SpeechSettings()
+		speech.Language = stt.SwitchLanguage(set.codes, set.detects,
+			speech.Language, stt.SystemLanguage())
+		w.config.SetSpeechSettings(speech)
+	}
+
+	switch engine {
+	case config.SpeechWitAI:
+		if witai.Available() {
+			w.refreshWitAILanguages()
+			return
+		}
+		w.refreshSpeechLanguages()
+	case config.SpeechRemote:
+		w.refreshRemoteLanguages()
+	default:
+		w.refreshSpeechLanguages()
+	}
+}
+
+// refreshRemoteLanguages offers what the chosen service and model accept, which
+// is neither one shared list nor the local model's: whisper-1 takes ISO 639-1,
+// the gpt- models take more, and gemini-3.5-transcribe takes BCP-47 locales.
+// A model we know nothing about gets a typable box rather than a false list.
+func (w *MainWindow) refreshRemoteLanguages() {
+	if w.speechLanguage == nil {
+		return
+	}
+
+	preset, _ := stt.PresetByName(w.speechRemote.Selected)
+	languages := stt.LanguagesFor(preset.ID, w.speechRemoteModel.Text)
+	if languages == nil {
+		w.showFreeformLanguages()
+		return
+	}
+
+	labels := make([]string, 0, len(languages)+1)
+	codeByName := make(map[string]string, len(languages))
+
+	labels = append(labels, detectLanguageLabel)
+	for _, language := range languages {
+		labels = append(labels, language.Name)
+		codeByName[language.Name] = language.Code
+	}
+
+	w.speechLanguage.Options = labels
+	w.speechLanguageCodes = codeByName
+	w.showFixedLanguages()
+
+	// Carry the choice across a change of service: fr-FR and fr are one request.
+	selected := detectLanguageLabel
+	if code := stt.MatchLanguage(languages, w.config.SpeechSettings().Language); code != "" {
+		for _, language := range languages {
+			if language.Code == code {
+				selected = language.Name
+				break
+			}
+		}
+	}
+	w.speechLanguage.SetSelected(selected)
+}
+
+// showFreeformLanguages hands over to the typable box, suggesting Whisper's
+// codes: a custom endpoint is a Whisper server often enough to be worth
+// offering, and nothing stops the user typing something else.
+func (w *MainWindow) showFreeformLanguages() {
+	suggestions := stt.SuggestedLanguages()
+
+	labels := make([]string, 0, len(suggestions)+1)
+	codeByName := make(map[string]string, len(suggestions))
+
+	labels = append(labels, detectLanguageLabel)
+	for _, language := range suggestions {
+		labels = append(labels, language.Name)
+		codeByName[language.Name] = language.Code
+	}
+
+	w.speechLanguageCodes = codeByName
+	w.speechLanguageEntry.SetOptions(labels)
+
+	current := w.config.SpeechSettings().Language
+	if current == "" {
+		w.speechLanguageEntry.SetText(detectLanguageLabel)
+	} else {
+		w.speechLanguageEntry.SetText(stt.LanguageName(current))
+	}
+
+	w.speechLanguage.Hide()
+	w.speechLanguageEntry.Show()
+	w.speechLanguageBox.Refresh()
+}
+
+func (w *MainWindow) showFixedLanguages() {
+	w.speechLanguageEntry.Hide()
+	w.speechLanguage.Show()
+	w.speechLanguageBox.Refresh()
 }
 
 // refreshSpeechLanguages lists what the selected model speaks, offering
@@ -264,6 +445,7 @@ func (w *MainWindow) refreshSpeechLanguages() {
 
 	w.speechLanguage.Options = labels
 	w.speechLanguageCodes = codeByName
+	w.showFixedLanguages()
 	w.speechLanguage.SetSelected(speechLanguageLabel(model, w.config.SpeechSettings().Language))
 }
 
@@ -286,6 +468,7 @@ func (w *MainWindow) refreshWitAILanguages() {
 
 	w.speechLanguage.Options = labels
 	w.speechLanguageCodes = codeByName
+	w.showFixedLanguages()
 
 	selected := stt.LanguageName(w.config.SpeechSettings().Language)
 	if _, ok := codeByName[selected]; !ok {
@@ -358,17 +541,10 @@ func (w *MainWindow) applySpeechSettings() {
 	current := w.config.SpeechSettings()
 	speech := &current
 
-	switch w.speechEngine.Selected {
-	case remoteEngineLabel:
-		speech.Engine = config.SpeechRemote
-	case witaiEngineLabel:
-		speech.Engine = config.SpeechWitAI
-	default:
-		speech.Engine = config.SpeechLocal
-	}
+	speech.Engine = engineFromLabel(w.speechEngine.Selected)
 
 	speech.InputDevice = w.microphone.Device()
-	speech.Language = w.speechLanguageCode(w.speechLanguage.Selected)
+	speech.Language = w.selectedSpeechLanguage()
 	speech.KeepModelLoaded = w.speechKeepLoaded.Checked
 	speech.CleanUp = w.speechCleanUp.Checked
 

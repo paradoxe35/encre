@@ -19,6 +19,8 @@ import (
 // it leaves room for the prompt; at 16 kHz mono that is still about six minutes.
 const geminiMaxRequestBytes = 18 * 1024 * 1024
 
+const geminiTranscribeBaseURL = "https://generativelanguage.googleapis.com"
+
 // A chat model will happily answer "Sure, here is the transcript:" unless told
 // not to, and that preamble would be typed into the user's document.
 const geminiTranscribePrompt = "Transcribe the speech in this audio verbatim. " +
@@ -120,6 +122,12 @@ func geminiMajorVersion(model string) int {
 // Whisper-style endpoint, so this goes through generateContent, which Google
 // still recommends over the newer interactions API for production use.
 func geminiTranscribe(ctx context.Context, cfg config.SpeechConfig, wav []byte) (string, error) {
+	// A speech model has its own endpoint; the chat models below are the fallback
+	// for anyone who points this at a flash model by hand.
+	if IsGeminiTranscribeModel(cfg.RemoteModel) {
+		return geminiTranscribeSpeech(ctx, cfg, wav)
+	}
+
 	encoded := base64.StdEncoding.EncodeToString(wav)
 	if len(encoded) > geminiMaxRequestBytes {
 		return "", fmt.Errorf("recording is too long for Gemini (limit is about %d minutes)",
@@ -165,7 +173,7 @@ func sendGemini(ctx context.Context, cfg config.SpeechConfig, request geminiRequ
 
 	base := strings.TrimRight(cfg.RemoteBaseURL, "/")
 	if base == "" {
-		base = "https://generativelanguage.googleapis.com"
+		base = geminiTranscribeBaseURL
 	}
 	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", base, cfg.RemoteModel)
 

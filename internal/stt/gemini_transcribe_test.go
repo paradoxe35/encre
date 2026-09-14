@@ -333,3 +333,131 @@ func TestGeminiSkipsThoughtParts(t *testing.T) {
 		t.Errorf("text = %q, want the thought dropped", text)
 	}
 }
+
+// gemini-3.5-transcribe is a speech model on its own endpoint: no prompt, and
+// the language is a field rather than a sentence.
+func TestGeminiTranscribeModelUsesInteractions(t *testing.T) {
+	var gotPath string
+	var sent interactionsRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &sent)
+		io.WriteString(w, `{"steps":[{"content":[{"type":"text","text":"  bonjour  "}]}]}`)
+	}))
+	defer server.Close()
+
+	cfg := geminiConfig(server.URL)
+	cfg.RemoteModel = "gemini-3.5-transcribe"
+	cfg.Language = "fr"
+
+	text, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2, 3, 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if text != "bonjour" {
+		t.Errorf("text = %q", text)
+	}
+	if gotPath != "/v1beta/interactions" {
+		t.Errorf("path = %q, want the interactions endpoint", gotPath)
+	}
+	if sent.Model != "gemini-3.5-transcribe" {
+		t.Errorf("model = %q", sent.Model)
+	}
+	if len(sent.Input) != 1 || sent.Input[0].Type != "audio" || sent.Input[0].MimeType != "audio/wav" {
+		t.Errorf("input = %+v", sent.Input)
+	}
+	if sent.Input[0].Data == "" {
+		t.Error("no audio sent")
+	}
+	// fr must reach the wire as the BCP-47 locale this model takes.
+	codes := sent.GenerationConfig.TranscriptionConfig.LanguageCodes
+	if len(codes) != 1 || codes[0] != "fr-FR" {
+		t.Errorf("language_codes = %v, want [fr-FR]", codes)
+	}
+}
+
+// An absent language_codes is what asks the model to detect.
+func TestGeminiTranscribeAutoDetectSendsNoLanguage(t *testing.T) {
+	var sent interactionsRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &sent)
+		io.WriteString(w, `{"steps":[{"content":[{"type":"text","text":"hello"}]}]}`)
+	}))
+	defer server.Close()
+
+	cfg := geminiConfig(server.URL)
+	cfg.RemoteModel = "gemini-3.5-transcribe"
+	cfg.Language = ""
+
+	if _, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	if sent.GenerationConfig != nil {
+		t.Errorf("sent %+v, want no transcription config", sent.GenerationConfig)
+	}
+}
+
+// A chat model typed by hand must still work, through generateContent.
+func TestGeminiFlashModelStillUsesGenerateContent(t *testing.T) {
+	var gotPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		io.WriteString(w, `{"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"hi"}]}}]}`)
+	}))
+	defer server.Close()
+
+	cfg := geminiConfig(server.URL)
+	cfg.RemoteModel = "gemini-3.8-flash"
+
+	if _, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(gotPath, ":generateContent") {
+		t.Errorf("path = %q, want generateContent", gotPath)
+	}
+}
+
+func TestParseInteractionsResponseJoinsTextContent(t *testing.T) {
+	body := `{"steps":[{"content":[
+		{"type":"text","text":"hello "},
+		{"type":"audio","text":"ignored"},
+		{"type":"text","text":"world"}]}]}`
+
+	text, err := parseInteractionsResponse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "hello world" {
+		t.Errorf("text = %q", text)
+	}
+}
+
+// The -live twin needs a websocket we do not open; the error should name the
+// model that does work rather than relaying a confusing one from the endpoint.
+func TestGeminiLiveModelIsRefusedWithAdvice(t *testing.T) {
+	var called bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+	defer server.Close()
+
+	cfg := geminiConfig(server.URL)
+	cfg.RemoteModel = "gemini-3.5-transcribe-live"
+
+	_, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if called {
+		t.Error("sent the audio anyway")
+	}
+	if !strings.Contains(err.Error(), "gemini-3.5-transcribe") {
+		t.Errorf("error = %q, want it to name the working model", err)
+	}
+}
