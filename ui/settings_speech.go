@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -199,9 +200,26 @@ func (w *MainWindow) applyPreset(name string) {
 
 	w.speechRemoteURL.SetText(preset.BaseURL)
 	w.speechRemoteURL.Disable()
-	if len(preset.Models) > 0 && w.speechRemoteModel.Text == "" {
-		w.speechRemoteModel.SetText(preset.Models[0])
+	w.adoptPresetModel(preset)
+}
+
+// adoptPresetModel swaps in the new service's default when the box still holds
+// another service's, which would be rejected: Gemini and OpenAI share no model
+// names. A value belonging to no preset was typed by hand, so it is left alone.
+func (w *MainWindow) adoptPresetModel(preset stt.RemotePreset) {
+	if len(preset.Models) == 0 {
+		return
 	}
+
+	current := w.speechRemoteModel.Text
+	if slices.Contains(preset.Models, current) {
+		return
+	}
+	if current != "" && !stt.IsPresetModel(current) {
+		return
+	}
+
+	w.speechRemoteModel.SetText(preset.Models[0])
 }
 
 // buildSpeechOptions runs once so Save reads the same widgets whether or not the dialog was ever opened.

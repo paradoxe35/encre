@@ -30,6 +30,10 @@ var remoteClient = &http.Client{Timeout: remoteRequestTimeout}
 // configured in cfg and returns the recognized text.
 func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) (string, error) {
 	wav := wavFile(pcm)
+	if protocolFor(cfg.RemoteProvider) == ProtocolGemini {
+		return geminiTranscribe(ctx, cfg, wav)
+	}
+
 	if len(wav) > remoteMaxAudioBytes {
 		return "", fmt.Errorf("recording is too large for the hosted service (limit is %d MB)", remoteMaxAudioBytes/(1024*1024))
 	}
