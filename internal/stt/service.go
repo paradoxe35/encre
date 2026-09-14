@@ -34,6 +34,9 @@ type Service struct {
 	witaiLang    string
 	remoteCfg    config.SpeechConfig
 	keepLoaded   bool
+	pendingLoad  chan error
+	loadingPath  string
+	loadEpoch    uint64
 }
 
 func NewService() *Service {
@@ -106,15 +109,93 @@ func (s *Service) applyEngine(speech *input.FFISpeech, cfg config.SpeechConfig) 
 		return nil
 	}
 
-	if err := s.applyCaptureOnly(speech, false); err != nil {
-		return err
-	}
 	s.keepLoaded = cfg.KeepModelLoaded
-	if err := s.load(speech, cfg); err != nil {
+
+	path, err := s.modelPath(cfg)
+	if err != nil {
 		return err
 	}
 	s.applyLanguage(speech, cfg)
+
+	// Resident already: the take can stream, which transcribes as it is spoken.
+	if s.loaded == path {
+		return s.applyCaptureOnly(speech, false)
+	}
+
+	// Not resident: capture rather than wait for the load, or the first words go
+	// missing while the model comes up. The load runs alongside and is waited on
+	// at stop, when it has usually finished.
+	if err := s.applyCaptureOnly(speech, true); err != nil {
+		return err
+	}
+	s.beginLoad(speech, path)
 	return nil
+}
+
+// modelLoader is the part of the engine beginLoad needs, so the concurrency
+// around it can be exercised without an audio device.
+type modelLoader interface {
+	Load(path string) error
+}
+
+// beginLoad loads the model on its own goroutine. Rust runs the engine on a
+// thread of its own, so this does not hold up the capture that follows.
+func (s *Service) beginLoad(speech modelLoader, path string) {
+	if s.pendingLoad != nil && s.loadingPath == path {
+		return
+	}
+	s.dropPendingLoad()
+
+	done := make(chan error, 1)
+	s.pendingLoad = done
+	s.loadingPath = path
+	s.loadEpoch++
+	epoch := s.loadEpoch
+
+	go func() {
+		err := speech.Load(path)
+
+		s.mu.Lock()
+		// Only the newest load says what is resident: a superseded one finishing
+		// late would otherwise name a model the engine has already replaced.
+		if s.loadEpoch == epoch {
+			if err == nil {
+				s.loaded = path
+			} else {
+				s.loaded = ""
+			}
+		}
+		s.mu.Unlock()
+
+		done <- err
+	}()
+}
+
+// dropPendingLoad releases a load no take is waiting for any more; the caller
+// holds the lock. The load itself runs on, and reports what it loaded unless a
+// newer one has since superseded it.
+func (s *Service) dropPendingLoad() {
+	pending := s.pendingLoad
+	s.pendingLoad = nil
+	s.loadingPath = ""
+
+	if pending != nil {
+		go func() { <-pending }()
+	}
+}
+
+// awaitLoad blocks until a load started for this take has finished.
+func (s *Service) awaitLoad() error {
+	s.mu.Lock()
+	pending := s.pendingLoad
+	s.pendingLoad = nil
+	s.loadingPath = ""
+	s.mu.Unlock()
+
+	if pending == nil {
+		return nil
+	}
+	return <-pending
 }
 
 // applyCaptureOnly is a no-op when nothing changed, matching applyDevice/applyLanguage.
@@ -159,33 +240,22 @@ func (s *Service) applyLanguage(speech *input.FFISpeech, cfg config.SpeechConfig
 	s.language = code
 }
 
-func (s *Service) load(speech *input.FFISpeech, cfg config.SpeechConfig) error {
+// modelPath resolves the file the take will be transcribed with, and refuses
+// early on the cases a load could not recover from anyway.
+func (s *Service) modelPath(cfg config.SpeechConfig) (string, error) {
 	if cfg.ModelID == "" {
-		return ErrNoModel
+		return "", ErrNoModel
 	}
 
 	model, ok := FindModel(cfg.ModelID)
 	if !ok {
-		return fmt.Errorf("unknown model %q", cfg.ModelID)
+		return "", fmt.Errorf("unknown model %q", cfg.ModelID)
 	}
 	if !s.store.Downloaded(model) {
-		return fmt.Errorf("%s is not downloaded yet", model.Name)
+		return "", fmt.Errorf("%s is not downloaded yet", model.Name)
 	}
 
-	path := s.store.Path(model)
-	if s.loaded == path {
-		return nil
-	}
-	if err := speech.Load(path); err != nil {
-		// The Rust load unloads any resident model first, so a failure leaves the engine
-		// empty; clearing the stale marker makes the next dictation retry instead of looping.
-		s.loaded = ""
-		return err
-	}
-
-	s.loaded = path
-	logger.Info("Speech model loaded", "model", model.Name)
-	return nil
+	return s.store.Path(model), nil
 }
 
 // StartRecording loads the model too, so the first dictation needs no setup.
@@ -207,6 +277,7 @@ func (s *Service) StartRecording(cfg config.SpeechConfig) error {
 
 	s.applyDevice(speech, cfg)
 	if err := speech.Start(); err != nil {
+		s.dropPendingLoad()
 		return err
 	}
 
@@ -217,7 +288,7 @@ func (s *Service) StartRecording(cfg config.SpeechConfig) error {
 // StopRecording blocks for as long as transcription takes.
 func (s *Service) StopRecording() (string, error) {
 	s.mu.Lock()
-	speech, recording, captureOnly, activeEngine, lang, remoteCfg := s.speech, s.recording, s.captureOnly, s.activeEngine, s.witaiLang, s.remoteCfg
+	speech, recording, activeEngine, lang, remoteCfg := s.speech, s.recording, s.activeEngine, s.witaiLang, s.remoteCfg
 	s.recording = false
 	s.mu.Unlock()
 
@@ -225,11 +296,18 @@ func (s *Service) StopRecording() (string, error) {
 		return "", errors.New("not recording")
 	}
 
-	if captureOnly {
-		if activeEngine == config.SpeechRemote {
-			return s.stopRemote(speech, remoteCfg)
-		}
+	switch activeEngine {
+	case config.SpeechRemote:
+		return s.stopRemote(speech, remoteCfg)
+	case config.SpeechWitAI:
 		return s.stopWitAI(speech, lang)
+	}
+
+	if err := s.awaitLoad(); err != nil {
+		// The recorder is still in the take and only leaves on stop or cancel;
+		// returning here would hold the microphone open for good.
+		speech.Cancel()
+		return "", err
 	}
 
 	text, err := speech.Stop()
@@ -303,6 +381,7 @@ func (s *Service) Cancel() {
 	s.mu.Lock()
 	speech := s.speech
 	s.recording = false
+	s.dropPendingLoad()
 	s.mu.Unlock()
 
 	if speech != nil {
@@ -314,14 +393,29 @@ func (s *Service) Cancel() {
 func (s *Service) TranscribeFile(cfg config.SpeechConfig, path string) (string, error) {
 	s.mu.Lock()
 	speech, err := s.engine()
+	var modelFile string
 	if err == nil {
-		err = s.load(speech, cfg)
+		modelFile, err = s.modelPath(cfg)
 	}
+	resident := s.loaded == modelFile
 	s.mu.Unlock()
 
 	if err != nil {
 		return "", err
 	}
+
+	if !resident {
+		if err := speech.Load(modelFile); err != nil {
+			s.mu.Lock()
+			s.loaded = ""
+			s.mu.Unlock()
+			return "", err
+		}
+		s.mu.Lock()
+		s.loaded = modelFile
+		s.mu.Unlock()
+	}
+
 	return speech.TranscribeFile(path)
 }
 

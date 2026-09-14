@@ -26,8 +26,13 @@ import (
 // FFISpeech records from the microphone and transcribes locally. Every call
 // beyond Level runs on the caller's goroutine; Stop blocks for as long as
 // inference takes.
+//
+// The lock is shared rather than exclusive because Rust serialises what has to
+// be: capture and the model run on separate threads there, so holding a Go lock
+// across a transcription would make the next take wait for the previous one.
+// Close takes it exclusively, which is what keeps the handle alive under a call.
 type FFISpeech struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	handle C.encre_SttHandle
 }
 
@@ -67,9 +72,9 @@ func (s *FFISpeech) Load(path string) error {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
 
-	s.mu.Lock()
+	s.mu.RLock()
 	result := C.encre_stt_load(s.handle, cPath)
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	if result != 0 {
 		return fmt.Errorf("%s", getLastError())
@@ -78,15 +83,15 @@ func (s *FFISpeech) Load(path string) error {
 }
 
 func (s *FFISpeech) Unload() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	C.encre_stt_unload(s.handle)
 }
 
 func (s *FFISpeech) Start() error {
-	s.mu.Lock()
+	s.mu.RLock()
 	result := C.encre_stt_start(s.handle)
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	if result != 0 {
 		return fmt.Errorf("%s", getLastError())
@@ -97,16 +102,16 @@ func (s *FFISpeech) Start() error {
 // Stop ends recording and returns the transcript; blocks for the length of transcription, so
 // callers should not run it on the UI goroutine.
 func (s *FFISpeech) Stop() (string, error) {
-	s.mu.Lock()
+	s.mu.RLock()
 	text := C.encre_stt_stop(s.handle)
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	return takeString(text)
 }
 
 func (s *FFISpeech) Cancel() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	C.encre_stt_cancel(s.handle)
 }
 
@@ -115,9 +120,9 @@ func (s *FFISpeech) TranscribeFile(path string) (string, error) {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
 
-	s.mu.Lock()
+	s.mu.RLock()
 	text := C.encre_stt_transcribe_file(s.handle, cPath)
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	return takeString(text)
 }
@@ -148,9 +153,9 @@ func (s *FFISpeech) SetDevice(name string) error {
 		defer C.free(unsafe.Pointer(cName))
 	}
 
-	s.mu.Lock()
+	s.mu.RLock()
 	result := C.encre_stt_set_device(s.handle, cName)
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	if result != 0 {
 		return fmt.Errorf("%s", getLastError())
@@ -167,9 +172,9 @@ func (s *FFISpeech) SetLanguage(code string) error {
 		defer C.free(unsafe.Pointer(cCode))
 	}
 
-	s.mu.Lock()
+	s.mu.RLock()
 	result := C.encre_stt_set_language(s.handle, cCode)
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	if result != 0 {
 		return fmt.Errorf("%s", getLastError())
@@ -180,9 +185,9 @@ func (s *FFISpeech) SetLanguage(code string) error {
 // SetCaptureOnly toggles capture-only recording: audio is captured but never handed to the
 // engine, for a remote transcriber that needs the raw take. Applies to the next recording.
 func (s *FFISpeech) SetCaptureOnly(enabled bool) error {
-	s.mu.Lock()
+	s.mu.RLock()
 	result := C.encre_stt_set_capture_only(s.handle, C.bool(enabled))
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	if result != 0 {
 		return fmt.Errorf("%s", getLastError())
@@ -195,9 +200,9 @@ func (s *FFISpeech) SetCaptureOnly(enabled bool) error {
 func (s *FFISpeech) StopPCM() ([]byte, error) {
 	var length C.uintptr_t
 
-	s.mu.Lock()
+	s.mu.RLock()
 	ptr := C.encre_stt_stop_pcm(s.handle, &length)
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	if ptr == nil {
 		return nil, fmt.Errorf("%s", getLastError())
