@@ -43,6 +43,9 @@ fyne_metadata_init.go
 .encre/
 *.log
 
+# Generated from WITAI_KEYS by scripts/embed-witai-keys.sh; never commit real keys
+internal/stt/witai/keys_embedded.go
+
 # Python bytecode from the asset scripts
 __pycache__/
 *.pyc

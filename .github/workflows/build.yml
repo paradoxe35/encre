@@ -112,6 +112,11 @@ jobs:
           mkdir -p lib
           cp rust-ffi/target/release/libencre_ffi.a lib/
 
+      - name: Embed Wit.ai keys
+        env:
+          WITAI_KEYS: ${{ secrets.WITAI_KEYS }}
+        run: bash scripts/embed-witai-keys.sh
+
       - name: Build application with Fyne
         env:
           CGO_ENABLED: 1
@@ -366,6 +371,12 @@ jobs:
           mkdir -p lib
           cp rust-ffi/target/x86_64-pc-windows-gnu/release/libencre_ffi.a lib/
 
+      - name: Embed Wit.ai keys
+        shell: bash
+        env:
+          WITAI_KEYS: ${{ secrets.WITAI_KEYS }}
+        run: bash scripts/embed-witai-keys.sh
+
       - name: Build application with Fyne
         env:
           CGO_ENABLED: 1
@@ -618,6 +629,11 @@ jobs:
           fi
           bash scripts/build-rust-ffi.sh "$TARGET"
           cp rust-ffi/target/"$TARGET"/release/libencre_ffi.a lib/
+
+      - name: Embed Wit.ai keys
+        env:
+          WITAI_KEYS: ${{ secrets.WITAI_KEYS }}
+        run: bash scripts/embed-witai-keys.sh
 
       - name: Build application with Fyne
         env:

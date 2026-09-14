@@ -33,9 +33,13 @@ import (
 )
 
 type FFIHotkeyManager struct {
-	mu          sync.RWMutex
-	ffiMu       sync.Mutex // Separate mutex for FFI calls
-	handle      C.encre_HotkeyManagerHandle
+	// ffiMu guards handle for its whole read-then-call-C sequence in every method, so a freed
+	// handle can never reach Rust.
+	ffiMu  sync.Mutex
+	handle C.encre_HotkeyManagerHandle
+
+	// mu guards Go-side state that never touches handle.
+	mu          sync.Mutex
 	handlers    map[string]func()
 	active      bool
 	disabled    bool
@@ -66,24 +70,10 @@ func NewFFIHotkeyManager() *FFIHotkeyManager {
 	return manager
 }
 
-func (h *FFIHotkeyManager) SetBindings(selectAll, selection string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	logger.Info("FFI: Setting hotkey bindings",
-		"select_all", selectAll,
-		"selection", selection)
-}
-
-func (h *FFIHotkeyManager) RegisterHandler(action string, handler func()) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.handlers[action] = handler
-	logger.Info("FFI: Handler registered", "action", action)
-}
-
 func (h *FFIHotkeyManager) ClearBindings() error {
+	h.ffiMu.Lock()
+	defer h.ffiMu.Unlock()
+
 	if h.handle == nil {
 		return fmt.Errorf("hotkey manager not initialized")
 	}
@@ -92,10 +82,7 @@ func (h *FFIHotkeyManager) ClearBindings() error {
 	h.handlers = make(map[string]func())
 	h.mu.Unlock()
 
-	h.ffiMu.Lock()
 	result := C.encre_hotkey_clear(h.handle)
-	h.ffiMu.Unlock()
-
 	if result != 0 {
 		return fmt.Errorf("failed to clear hotkey bindings: %s", getLastError())
 	}
@@ -105,6 +92,9 @@ func (h *FFIHotkeyManager) ClearBindings() error {
 }
 
 func (h *FFIHotkeyManager) RegisterHotkey(binding, action string, handler func()) error {
+	h.ffiMu.Lock()
+	defer h.ffiMu.Unlock()
+
 	if h.handle == nil {
 		return fmt.Errorf("hotkey manager not initialized")
 	}
@@ -112,9 +102,6 @@ func (h *FFIHotkeyManager) RegisterHotkey(binding, action string, handler func()
 	h.mu.Lock()
 	h.handlers[action] = handler
 	h.mu.Unlock()
-
-	h.ffiMu.Lock()
-	defer h.ffiMu.Unlock()
 
 	cBinding := C.CString(binding)
 	cAction := C.CString(action)
@@ -139,14 +126,14 @@ func (h *FFIHotkeyManager) RegisterHotkey(binding, action string, handler func()
 // ListenError reports why the listener is not running, or "" when it is. Start only spawns the
 // thread; the system refuses the key tap afterwards, so a successful start proves nothing.
 func (h *FFIHotkeyManager) ListenError() string {
+	h.ffiMu.Lock()
+	defer h.ffiMu.Unlock()
+
 	if h.handle == nil {
 		return ""
 	}
 
-	h.ffiMu.Lock()
 	cStr := C.encre_hotkey_listen_error(h.handle)
-	h.ffiMu.Unlock()
-
 	if cStr == nil {
 		return ""
 	}
@@ -163,13 +150,13 @@ func (h *FFIHotkeyManager) Start() error {
 	}
 	h.mu.Unlock()
 
+	h.ffiMu.Lock()
 	if h.handle == nil {
+		h.ffiMu.Unlock()
 		return fmt.Errorf("hotkey manager not initialized")
 	}
 
 	logger.Info("FFI: Starting hotkey manager")
-
-	h.ffiMu.Lock()
 	result := C.encre_hotkey_start(h.handle)
 	h.ffiMu.Unlock()
 
@@ -191,15 +178,15 @@ func (h *FFIHotkeyManager) Stop() {
 		h.mu.Unlock()
 		return
 	}
-	if h.handle == nil {
-		h.mu.Unlock()
-		return
-	}
 	h.mu.Unlock()
 
-	logger.Info("FFI: Stopping hotkey manager")
-
 	h.ffiMu.Lock()
+	if h.handle == nil {
+		h.ffiMu.Unlock()
+		return
+	}
+
+	logger.Info("FFI: Stopping hotkey manager")
 	result := C.encre_hotkey_stop(h.handle)
 	h.ffiMu.Unlock()
 
@@ -214,28 +201,20 @@ func (h *FFIHotkeyManager) Stop() {
 	logger.Info("FFI: Hotkey manager stopped")
 }
 
-func (h *FFIHotkeyManager) IsActive() bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.active
-}
-
 func (h *FFIHotkeyManager) Close() {
 	h.Stop()
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
+	h.ffiMu.Lock()
 	if h.handle != nil {
 		logger.Info("FFI: Freeing hotkey manager resources")
-
-		h.ffiMu.Lock()
 		C.encre_hotkey_manager_free(h.handle)
-		h.ffiMu.Unlock()
-
 		h.handle = nil
-		h.handlers = make(map[string]func())
 	}
+	h.ffiMu.Unlock()
+
+	h.mu.Lock()
+	h.handlers = make(map[string]func())
+	h.mu.Unlock()
 
 	globalFFIMu.Lock()
 	if globalFFIHotkeyManager == h {

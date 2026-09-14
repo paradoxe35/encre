@@ -17,9 +17,9 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	themeLabel := widget.NewLabel("Theme:")
 	themeLabel.TextStyle.Bold = true
 
+	// Theme is applied in saveSettings, like every other control here.
 	themeSelect := w.dirtySelect([]string{"auto", "light", "dark"}, func(value string) {
 		w.themeBinding.Set(value)
-		w.applyTheme(value)
 	})
 
 	currentTheme, _ := w.themeBinding.Get()
@@ -77,14 +77,14 @@ func (w *MainWindow) applyAutoStartSetting(enabled bool) {
 	if enabled {
 		if err := autoStart.Enable(); err != nil {
 			logger.Error("Failed to enable auto-start", "error", err)
-			w.statusBinding.Set("✗ Failed to enable auto-start")
+			w.statusBinding.Set("Failed to enable auto-start")
 		} else {
 			logger.Info("Auto-start enabled")
 		}
 	} else {
 		if err := autoStart.Disable(); err != nil {
 			logger.Error("Failed to disable auto-start", "error", err)
-			w.statusBinding.Set("✗ Failed to disable auto-start")
+			w.statusBinding.Set("Failed to disable auto-start")
 		} else {
 			logger.Info("Auto-start disabled")
 		}

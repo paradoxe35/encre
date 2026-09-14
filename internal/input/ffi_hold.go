@@ -39,7 +39,7 @@ var (
 // RegisterHoldHotkey binds a shortcut that reports key down and key up; the binding must name
 // a real key, since a modifier-only chord cannot be held.
 func (m *FFIHotkeyManager) RegisterHoldHotkey(binding, action string, handler HoldHandler) error {
-	if m == nil || m.handle == nil {
+	if m == nil {
 		return fmt.Errorf("hotkey manager not initialized")
 	}
 
@@ -53,6 +53,13 @@ func (m *FFIHotkeyManager) RegisterHoldHotkey(binding, action string, handler Ho
 	defer C.free(unsafe.Pointer(cAction))
 
 	m.ffiMu.Lock()
+	if m.handle == nil {
+		m.ffiMu.Unlock()
+		holdMu.Lock()
+		delete(holdBindings, action)
+		holdMu.Unlock()
+		return fmt.Errorf("hotkey manager not initialized")
+	}
 	result := C.encre_hotkey_register_hold(
 		m.handle, cBinding, cAction,
 		C.encre_PttCallback(C.holdCallbackGateway),

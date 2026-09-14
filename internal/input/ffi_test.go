@@ -4,6 +4,8 @@
 package input
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -32,7 +34,7 @@ func TestFFIClipboard(t *testing.T) {
 		t.Errorf("Text mismatch: expected '%s', got '%s'", testText, retrievedText)
 	}
 
-	t.Logf("✓ Clipboard test passed")
+	t.Logf("Clipboard test passed")
 }
 
 func TestFFISimulator(t *testing.T) {
@@ -43,7 +45,7 @@ func TestFFISimulator(t *testing.T) {
 	defer simulator.Close()
 
 	// Actual key simulation requires a GUI context; this just checks it doesn't crash.
-	t.Logf("✓ Simulator created successfully")
+	t.Logf("Simulator created successfully")
 	t.Logf("  (Actual key simulation requires GUI context)")
 }
 
@@ -70,6 +72,34 @@ func TestFFIHotkeys(t *testing.T) {
 	// Stop immediately; we don't wait for actual keypresses.
 	hotkeyMgr.Stop()
 
-	t.Logf("✓ Hotkey manager test passed")
+	t.Logf("Hotkey manager test passed")
 	t.Logf("  (Hotkey registered and manager started/stopped successfully)")
+}
+
+// Reproduces saving settings while quitting: RegisterHotkey races Close. Run with -race.
+func TestFFIHotkeyManagerConcurrentRegisterAndClose(t *testing.T) {
+	mgr := NewFFIHotkeyManager()
+	if mgr == nil {
+		t.Fatal("Failed to create hotkey manager")
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			binding := fmt.Sprintf("ctrl+alt+%d", i%9+1)
+			action := fmt.Sprintf("action-%d", i)
+			_ = mgr.RegisterHotkey(binding, action, func() {})
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		_ = mgr.ClearBindings()
+		mgr.Close()
+	}()
+
+	wg.Wait()
 }

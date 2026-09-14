@@ -22,19 +22,24 @@ func (w *MainWindow) saveSettings() {
 		return
 	}
 
-	w.config.Translate.PrimaryLanguage = w.primaryLanguage.Code()
-	w.config.Translate.SecondaryLanguage = w.secondaryLanguage.Code()
-	w.config.EnableProviderMentions = w.mentionsCheck.Checked
+	w.config.SetTranslation(config.TranslateConfig{
+		PrimaryLanguage:   w.primaryLanguage.Code(),
+		SecondaryLanguage: w.secondaryLanguage.Code(),
+	})
+	w.config.SetProviderMentionsEnabled(w.mentionsCheck.Checked)
 	w.applySpeechSettings()
 
 	startMinimized, _ := w.startMinimizedBinding.Get()
 	startOnLogin, _ := w.startOnLoginBinding.Get()
 	themeSetting, _ := w.themeBinding.Get()
 
-	w.config.Appearance.StartMinimized = startMinimized
-	w.config.Appearance.StartOnLogin = startOnLogin
-	w.config.Appearance.Theme = themeSetting
+	w.config.SetAppearanceSettings(config.AppearanceConfig{
+		Theme:          themeSetting,
+		StartMinimized: startMinimized,
+		StartOnLogin:   startOnLogin,
+	})
 
+	w.applyTheme(themeSetting)
 	w.applyAutoStartSetting(startOnLogin)
 
 	if err := w.config.Save(); err != nil {
@@ -62,6 +67,7 @@ func (w *MainWindow) applyProviderSettings() error {
 
 	settings := config.ProviderSettings{
 		Model:        model,
+		BaseURL:      existing.BaseURL, // the form only shows/owns this field for custom providers
 		Temperature:  existing.Temperature,
 		IsCustom:     existing.IsCustom,
 		ProviderType: existing.ProviderType,

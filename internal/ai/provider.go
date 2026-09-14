@@ -12,14 +12,12 @@ type Provider interface {
 	ValidateConfig() error
 	GetName() string
 	GetModel() string
-	GetTemperature() float64
 }
 
 // ProviderFactory manages AI providers
 type ProviderFactory struct {
 	mu        sync.RWMutex
 	providers map[string]Provider
-	current   Provider
 }
 
 func NewProviderFactory() *ProviderFactory {
@@ -40,7 +38,6 @@ func (f *ProviderFactory) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.providers = make(map[string]Provider)
-	f.current = nil
 }
 
 func (f *ProviderFactory) Get(name string) (Provider, error) {
@@ -61,14 +58,5 @@ func (f *ProviderFactory) SetCurrent(name string) error {
 	if err := provider.ValidateConfig(); err != nil {
 		return fmt.Errorf("provider validation failed: %w", err)
 	}
-	f.mu.Lock()
-	f.current = provider
-	f.mu.Unlock()
 	return nil
-}
-
-func (f *ProviderFactory) GetCurrent() Provider {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return f.current
 }

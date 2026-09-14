@@ -8,22 +8,23 @@ import (
 )
 
 type CustomProvider struct {
-	name         string
-	providerType string
-	inner        Provider
+	name  string
+	inner Provider
 }
 
+// NewCustomProvider rejects a providerType it cannot serve rather than silently coercing it.
+// Empty is accepted: configs written before this field existed have nothing to check.
 func NewCustomProvider(name, providerType, apiKey, baseURL, model string, temperature float64) (*CustomProvider, error) {
 	if baseURL == "" {
 		return nil, fmt.Errorf("base URL is required for custom providers")
 	}
-	// Custom providers always use OpenAI-compatible API
-	providerType = config.ProviderTypeOpenAICompatible
+	if providerType != "" && providerType != config.ProviderTypeOpenAICompatible {
+		return nil, fmt.Errorf("unsupported custom provider type: %s", providerType)
+	}
 
 	return &CustomProvider{
-		name:         name,
-		providerType: providerType,
-		inner:        NewOpenAIProvider(apiKey, baseURL, model, temperature),
+		name:  name,
+		inner: NewOpenAIProvider(apiKey, baseURL, model, temperature),
 	}, nil
 }
 
@@ -47,12 +48,4 @@ func (p *CustomProvider) GetName() string {
 
 func (p *CustomProvider) GetModel() string {
 	return p.inner.GetModel()
-}
-
-func (p *CustomProvider) GetTemperature() float64 {
-	return p.inner.GetTemperature()
-}
-
-func (p *CustomProvider) GetProviderType() string {
-	return p.providerType
 }

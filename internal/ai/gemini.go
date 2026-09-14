@@ -16,12 +16,19 @@ type GeminiProvider struct {
 	BaseURL     string
 	Model       string
 	Temperature float64
-	client      *http.Client
+	// LowReasoning asks the model to think less. A correction is not a puzzle, and the tokens it
+	// spends thinking are billed and thrown away.
+	LowReasoning bool
+	client       *http.Client
 }
+
+func (p *GeminiProvider) SetLowReasoning(low bool) { p.LowReasoning = low }
+
+const geminiBaseURL = "https://generativelanguage.googleapis.com"
 
 func NewGeminiProvider(apiKey, baseURL, model string, temperature float64) *GeminiProvider {
 	if baseURL == "" {
-		baseURL = "https://generativelanguage.googleapis.com"
+		baseURL = geminiBaseURL
 	}
 	if model == "" {
 		model = "gemini-2.5-flash-lite"
@@ -89,7 +96,7 @@ func (p *GeminiProvider) ReviseText(ctx context.Context, text, systemPrompt stri
 
 	// A zero budget is refused outright by the models that cannot switch thinking off, so the
 	// request is retried without it rather than failing the user's correction.
-	return withReasoningFallback(p.BaseURL, p.Model, true, func(includeReasoning bool) (string, error) {
+	return withReasoningFallback(p.BaseURL, p.Model, p.LowReasoning, func(includeReasoning bool) (string, error) {
 		config := GenerationConfig{Temperature: p.Temperature}
 		if includeReasoning {
 			config.ThinkingConfig = &ThinkingConfig{ThinkingBudget: 0}
@@ -166,8 +173,4 @@ func (p *GeminiProvider) GetName() string {
 
 func (p *GeminiProvider) GetModel() string {
 	return p.Model
-}
-
-func (p *GeminiProvider) GetTemperature() float64 {
-	return p.Temperature
 }

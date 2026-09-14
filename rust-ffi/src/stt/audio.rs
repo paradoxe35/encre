@@ -33,6 +33,12 @@ pub enum Command {
     /// None means the system default. Takes effect on the next recording, so a
     /// change mid-take cannot truncate what is being said.
     SetDevice(Option<String>),
+    /// None asks the model to detect; the host resolves a code for models
+    /// that cannot, since the library would assume English.
+    SetLanguage(Option<String>),
+    /// When true, `record` never touches the engine: it only captures, for a
+    /// remote engine that transcribes the raw audio itself.
+    SetCaptureOnly(bool),
     /// The reply is Ok(streaming-capable) on a successful load; Err carries
     /// the load failure.
     Load(PathBuf, Sender<Result<bool>>),
@@ -71,6 +77,14 @@ impl Recorder {
 
     pub fn set_device(&self, name: Option<String>) {
         let _ = self.commands.send(Command::SetDevice(name));
+    }
+
+    pub fn set_language(&self, code: Option<String>) {
+        let _ = self.commands.send(Command::SetLanguage(code));
+    }
+
+    pub fn set_capture_only(&self, enabled: bool) {
+        let _ = self.commands.send(Command::SetCaptureOnly(enabled));
     }
 
     /// Loads or replaces the resident model. The reply is Ok(streaming-capable)
@@ -131,10 +145,14 @@ impl Recorder {
 fn run(commands: Receiver<Command>, levels: Sender<f32>) {
     let mut engine = Engine::new();
     let mut preferred: Option<String> = None;
+    let mut language: Option<String> = None;
+    let mut capture_only = false;
 
     loop {
         match commands.recv() {
             Ok(Command::SetDevice(name)) => preferred = name,
+            Ok(Command::SetLanguage(code)) => language = code,
+            Ok(Command::SetCaptureOnly(enabled)) => capture_only = enabled,
             Ok(Command::Load(path, reply)) => {
                 engine.unload();
                 let _ = reply.send(
@@ -145,16 +163,23 @@ fn run(commands: Receiver<Command>, levels: Sender<f32>) {
             }
             Ok(Command::Unload) => engine.unload(),
             Ok(Command::TranscribeSamples(samples, reply)) => {
-                let _ = reply.send(engine.transcribe(&samples, None));
+                let _ = reply.send(engine.transcribe(&samples, language.as_deref()));
             }
             Ok(Command::TranscribeFile(path, reply)) => {
                 let _ = reply.send(
                     crate::stt::engine::read_wav(&path)
-                        .and_then(|samples| engine.transcribe(&samples, None)),
+                        .and_then(|samples| engine.transcribe(&samples, language.as_deref())),
                 );
             }
             Ok(Command::Start) => {
-                if !record(&commands, levels.clone(), &mut engine, preferred.clone()) {
+                if !record(
+                    &commands,
+                    levels.clone(),
+                    &mut engine,
+                    preferred.clone(),
+                    language.clone(),
+                    capture_only,
+                ) {
                     return;
                 }
             }
@@ -172,16 +197,22 @@ fn record(
     levels: Sender<f32>,
     engine: &mut Engine,
     preferred: Option<String>,
+    language: Option<String>,
+    capture_only: bool,
 ) -> bool {
+    if capture_only {
+        return record_batch(commands, levels, engine, preferred, language, true);
+    }
+
     // Try streaming first, falling back to batch on failure. Dropped explicitly
     // so the borrow ends before the engine is handed to either session function.
-    let started = engine.stream_begin(None);
+    let started = engine.stream_begin(language.as_deref());
     if let Ok(stream) = started {
         return record_streaming(commands, levels, preferred, stream);
     }
     drop(started);
     tracing::debug!("streaming unavailable, using batch transcription");
-    record_batch(commands, levels, engine, preferred)
+    record_batch(commands, levels, engine, preferred, language, false)
 }
 
 /// Recording session with a live model stream. `stream` borrows the engine's
@@ -264,6 +295,8 @@ fn record_batch(
     levels: Sender<f32>,
     engine: &mut Engine,
     preferred: Option<String>,
+    language: Option<String>,
+    capture_only: bool,
 ) -> bool {
     let mut stream = StreamGuard::open(levels, preferred.as_deref()).ok();
     let mut pipeline = Pipeline::new();
@@ -279,11 +312,11 @@ fn record_batch(
                     let samples = drain(&mut stream, &mut pipeline);
                     batched.extend_from_slice(&samples);
                     let samples = std::mem::take(&mut batched);
-                    let text = if samples.is_empty() {
+                    let text = if capture_only || samples.is_empty() {
                         Ok(None)
                     } else {
                         engine
-                            .transcribe(&samples, None)
+                            .transcribe(&samples, language.as_deref())
                             .map(Some)
                             .map_err(|e| format!("batch transcription failed: {e}"))
                     };

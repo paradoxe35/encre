@@ -25,7 +25,6 @@ type Model struct {
 	// WordErrorRate is a percentage, as published: 7.53 means 7.53%.
 	WordErrorRate  float64 `json:"word_error_rate"`
 	RealtimeFactor float64 `json:"realtime_factor"`
-	SpeedScore     float64 `json:"speed_score"`
 	AccuracyScore  float64 `json:"accuracy_score"`
 
 	Recommended bool `json:"recommended"`
@@ -59,4 +58,31 @@ func (m Model) Speaks(code string) bool {
 		}
 	}
 	return false
+}
+
+// LanguageAfterSwitch is the stored choice once the model changes: detection
+// takes over where it exists, otherwise a spoken choice carries across.
+func (m Model) LanguageAfterSwitch(previous, fallback string) string {
+	if m.LanguageDetect {
+		return ""
+	}
+	return m.TranscribeLanguage(previous, fallback)
+}
+
+// TranscribeLanguage is the code to hand the engine. A model that cannot
+// detect is never left blank: the library assumes English.
+func (m Model) TranscribeLanguage(preferred, fallback string) string {
+	if preferred != "" && m.Speaks(preferred) {
+		return preferred
+	}
+	if m.LanguageDetect {
+		return ""
+	}
+	if fallback != "" && m.Speaks(fallback) {
+		return fallback
+	}
+	if len(m.Languages) > 0 {
+		return m.Languages[0]
+	}
+	return ""
 }

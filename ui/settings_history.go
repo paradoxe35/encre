@@ -82,7 +82,10 @@ func (w *MainWindow) createHistorySection() fyne.CanvasObject {
 			"Delete all history entries? This cannot be undone.",
 			func(ok bool) {
 				if ok {
-					w.historyStoreRef().Clear()
+					if err := w.historyStoreRef().Clear(); err != nil {
+						dialog.ShowError(err, w.Window)
+						return
+					}
 					refresh()
 				}
 			}, w.Window)

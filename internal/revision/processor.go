@@ -250,8 +250,9 @@ func (p *Processor) recordHistory(kind config.ActionKind, original, result, mode
 		Characters: utf8.RuneCountInString(result),
 	}
 	if kind.Operation() == config.OpTranslate {
-		entry.FromLang = language.Find(cfg.Translate.PrimaryLanguage).Name
-		entry.ToLang = language.Find(cfg.Translate.SecondaryLanguage).Name
+		translate := cfg.Translation()
+		entry.FromLang = language.Find(translate.PrimaryLanguage).Name
+		entry.ToLang = language.Find(translate.SecondaryLanguage).Name
 	}
 	p.history.Add(entry)
 }
@@ -272,11 +273,8 @@ func (p *Processor) transform(text string, kind config.ActionKind) (string, erro
 		return "", fmt.Errorf("nothing to work with - the selection is empty")
 	}
 
-	// Counted in characters, not bytes: an accented letter is two bytes in UTF-8, so len() halved
-	// the limit for exactly the text this app exists to correct.
-	if characters := utf8.RuneCountInString(trimmed); characters > operation.CharacterLimit {
-		return "", fmt.Errorf("selection is %d characters, over the %d limit",
-			characters, operation.CharacterLimit)
+	if err := checkCharacterLimit(trimmed, operation.CharacterLimit); err != nil {
+		return "", err
 	}
 
 	provider, err := p.resolveProvider(cfg, kind.Operation(), mentioned)
@@ -316,9 +314,10 @@ func systemPrompt(cfg *config.Config, op config.Operation, operation config.Oper
 		return template
 	}
 
+	translate := cfg.Translation()
 	return prompt.RenderTranslate(template,
-		language.Find(cfg.Translate.PrimaryLanguage).Name,
-		language.Find(cfg.Translate.SecondaryLanguage).Name,
+		language.Find(translate.PrimaryLanguage).Name,
+		language.Find(translate.SecondaryLanguage).Name,
 	)
 }
 
@@ -357,7 +356,7 @@ func (p *Processor) Close() {
 // parseProviderMention strips a leading "@provider" and reports which provider
 // it named, so a selection can opt into a provider for one run.
 func (p *Processor) parseProviderMention(cfg *config.Config, text string) (provider, remainder string, ok bool) {
-	if !cfg.EnableProviderMentions {
+	if !cfg.ProviderMentionsEnabled() {
 		return "", text, false
 	}
 
@@ -383,6 +382,15 @@ func findProvider(cfg *config.Config, name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// checkCharacterLimit counts in characters, not bytes: an accented letter is two bytes in UTF-8,
+// so len() halved the limit for exactly the text this app exists to correct.
+func checkCharacterLimit(text string, limit int) error {
+	if characters := utf8.RuneCountInString(text); characters > limit {
+		return fmt.Errorf("selection is %d characters, over the %d limit", characters, limit)
+	}
+	return nil
 }
 
 func leadingWhitespace(text string) string {

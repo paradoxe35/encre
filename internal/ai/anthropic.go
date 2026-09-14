@@ -19,9 +19,14 @@ type AnthropicProvider struct {
 	client      *http.Client
 }
 
+const (
+	anthropicBaseURL = "https://api.anthropic.com"
+	anthropicVersion = "2023-06-01"
+)
+
 func NewAnthropicProvider(apiKey, baseURL, model string, temperature float64) *AnthropicProvider {
 	if baseURL == "" {
-		baseURL = "https://api.anthropic.com"
+		baseURL = anthropicBaseURL
 	}
 	if model == "" {
 		model = "claude-3-5-haiku-20241022"
@@ -91,7 +96,7 @@ func (p *AnthropicProvider) ReviseText(ctx context.Context, text, systemPrompt s
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", p.APIKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-version", anthropicVersion)
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -147,8 +152,4 @@ func (p *AnthropicProvider) GetName() string {
 
 func (p *AnthropicProvider) GetModel() string {
 	return p.Model
-}
-
-func (p *AnthropicProvider) GetTemperature() float64 {
-	return p.Temperature
 }
