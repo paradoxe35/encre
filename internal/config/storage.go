@@ -86,13 +86,17 @@ func DecryptAPIKey(encryptedKey string) (string, error) {
 	return string(plaintext), nil
 }
 
-func (c *Config) SaveAPIKey(provider, apiKey string) error {
+// SetAPIKey stores the key in memory only. Saving here would publish a config
+// the caller is still partway through applying.
+func (c *Config) SetAPIKey(provider, apiKey string) error {
 	encrypted, err := EncryptAPIKey(apiKey)
 	if err != nil {
 		return err
 	}
 
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.AIProvider.Providers == nil {
 		c.AIProvider.Providers = make(map[string]ProviderSettings)
 	}
@@ -100,9 +104,7 @@ func (c *Config) SaveAPIKey(provider, apiKey string) error {
 	settings := c.AIProvider.Providers[provider]
 	settings.APIKey = encrypted
 	c.AIProvider.Providers[provider] = settings
-	c.mu.Unlock()
-
-	return c.Save()
+	return nil
 }
 
 func (c *Config) GetAPIKey(provider string) (string, error) {

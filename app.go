@@ -35,9 +35,7 @@ type Application struct {
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
 
-	reloadMutex    sync.Mutex
-	lastReloadTime time.Time
-	reloadDebounce time.Duration
+	reloadMutex sync.Mutex
 }
 
 func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
@@ -58,13 +56,12 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	mainWindow.SetHistoryStore(processor.History())
 
 	application := &Application{
-		app:            app,
-		mainWindow:     mainWindow,
-		config:         cfg,
-		hotkeyManager:  hotkeyManager,
-		processor:      processor,
-		notifications:  notifications,
-		reloadDebounce: 500 * time.Millisecond,
+		app:           app,
+		mainWindow:    mainWindow,
+		config:        cfg,
+		hotkeyManager: hotkeyManager,
+		processor:     processor,
+		notifications: notifications,
 	}
 
 	application.dictation = revision.NewDictation(processor,
@@ -182,17 +179,14 @@ func (a *Application) reportBindingFailure(binding string, err error) {
 	})
 }
 
-// reloadHotkeysFromConfig re-registers all hotkeys against the current config.
+// reloadHotkeysFromConfig re-registers every hotkey against the current config.
+//
+// Serialised: listeners run on their own goroutine, so two saves close together
+// arrive at once, and interleaving the clear with the re-registration would
+// leave shortcuts unbound.
 func (a *Application) reloadHotkeysFromConfig() {
 	a.reloadMutex.Lock()
-	now := time.Now()
-	if now.Sub(a.lastReloadTime) < a.reloadDebounce {
-		logger.Info("Skipping duplicate reload (debounced)")
-		a.reloadMutex.Unlock()
-		return
-	}
-	a.lastReloadTime = now
-	a.reloadMutex.Unlock()
+	defer a.reloadMutex.Unlock()
 
 	logger.Info("Reloading hotkeys from updated config")
 
@@ -201,7 +195,7 @@ func (a *Application) reloadHotkeysFromConfig() {
 		return
 	}
 
-	// Bindings are cleared but the listener keeps running, so no new thread is spawned.
+	// The listener keeps running, so clearing does not spawn a new thread.
 	logger.Info("Clearing existing hotkey bindings")
 	if err := a.hotkeyManager.ClearBindings(); err != nil {
 		logger.Error("Failed to clear bindings", "error", err)
@@ -213,8 +207,6 @@ func (a *Application) reloadHotkeysFromConfig() {
 
 	logger.Info("Re-registering hotkeys with new config")
 	a.setupHotkeys()
-
-	// The running listener picks up updated bindings without a stop/start cycle.
 	logger.Info("Hotkeys reloaded successfully")
 }
 

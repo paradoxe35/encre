@@ -80,7 +80,7 @@ func (w *MainWindow) applyProviderSettings() error {
 
 	w.config.SetProviderSettings(provider, settings)
 
-	if err := w.config.SaveAPIKey(provider, apiKey); err != nil {
+	if err := w.config.SetAPIKey(provider, apiKey); err != nil {
 		return err
 	}
 

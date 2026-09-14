@@ -373,7 +373,7 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 		}
 
 		if apiKey := strings.TrimSpace(apiKeyEntry.Text); apiKey != "" {
-			if err := w.config.SaveAPIKey(name, apiKey); err != nil {
+			if err := w.config.SetAPIKey(name, apiKey); err != nil {
 				errorLabel.SetText(fmt.Sprintf("Error saving API key: %s", err.Error()))
 				return
 			}

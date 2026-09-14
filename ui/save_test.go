@@ -2,6 +2,7 @@ package ui
 
 import (
 	"testing"
+	"time"
 
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/widget"
@@ -16,8 +17,8 @@ func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 	utils.EnsureAppHomeDir()
 
 	cfg := config.Default()
-	if err := cfg.SaveAPIKey(config.BuiltInOpenAI, "sk-test"); err != nil {
-		t.Fatalf("SaveAPIKey: %v", err)
+	if err := cfg.SetAPIKey(config.BuiltInOpenAI, "sk-test"); err != nil {
+		t.Fatalf("SetAPIKey: %v", err)
 	}
 
 	wantBaseURL := cfg.GetProviderSettings(config.BuiltInOpenAI).BaseURL
@@ -66,5 +67,77 @@ func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 	}
 	if got := cfg.Operation(config.OpTranslate).ProviderID; got != config.BuiltInOpenAI {
 		t.Errorf("translate override = %q, want %q (save silently reset it to Default)", got, config.BuiltInOpenAI)
+	}
+}
+
+// Enabling a hotkey and saving used to publish the config from inside
+// applyProviderSettings, before the hotkey flags were written: listeners
+// re-registered shortcuts from settings that still said this one was off.
+func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	utils.EnsureAppHomeDir()
+
+	cfg := config.Default()
+	if cfg.Action(config.ActionTranslate).Enabled {
+		t.Fatal("test setup: translate must start disabled")
+	}
+
+	w := &MainWindow{config: cfg}
+	w.providerBinding = binding.NewString()
+	w.providerBinding.Set(config.BuiltInOpenAI)
+	w.apiKeyBinding = binding.NewString()
+	w.apiKeyBinding.Set("sk-test")
+	w.modelBinding = binding.NewString()
+	w.modelBinding.Set(cfg.GetProviderSettings(config.BuiltInOpenAI).Model)
+	w.baseURLBinding = binding.NewString()
+
+	w.hotkeyBindings = make(map[config.ActionKind]binding.String, len(config.ActionOrder))
+	w.enables = make(map[config.ActionKind]*widget.Check, len(config.ActionOrder))
+	for _, kind := range config.ActionOrder {
+		action := cfg.Action(kind)
+
+		value := binding.NewString()
+		value.Set(action.Hotkey)
+		w.hotkeyBindings[kind] = value
+
+		check := widget.NewCheck("", nil)
+		check.SetChecked(action.Enabled)
+		w.enables[kind] = check
+	}
+
+	// Listeners run on their own goroutines, so collect rather than count.
+	published := make(chan bool, 8)
+	config.RegisterListener(func(cfg *config.Config) {
+		select {
+		case published <- cfg.Action(config.ActionTranslate).Enabled:
+		default:
+		}
+	})
+
+	w.enables[config.ActionTranslate].SetChecked(true)
+
+	if err := w.applyProviderSettings(); err != nil {
+		t.Fatalf("applyProviderSettings: %v", err)
+	}
+	if err := w.applyActionSettings(); err != nil {
+		t.Fatalf("applyActionSettings: %v", err)
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	select {
+	case enabled := <-published:
+		if !enabled {
+			t.Error("published while translate still read as disabled")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the save never published")
+	}
+
+	select {
+	case <-published:
+		t.Error("one save published twice; the first carries a half-applied config")
+	case <-time.After(200 * time.Millisecond):
 	}
 }
