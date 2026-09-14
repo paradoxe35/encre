@@ -167,11 +167,11 @@ func (h *HotkeyCapture) startCapture() {
 }
 
 func (h *HotkeyCapture) saveAndStop() {
-	success := h.saveHotkey()
-
-	// stopCapture restores the previous value in the label if the save above failed.
+	if !h.saveHotkey() {
+		// Stopping here would hide saveHotkey's error behind the restored old binding.
+		return
+	}
 	h.stopCapture()
-	_ = success
 }
 
 func (h *HotkeyCapture) stopCapture() {
@@ -309,7 +309,7 @@ func (h *HotkeyCapture) saveHotkey() bool {
 		}
 	}
 	if !valid {
-		h.entry.SetText("❌ Invalid combination (need modifier + key)")
+		h.entry.SetText("Invalid combination (need modifier + key)")
 		return false
 	}
 
@@ -321,7 +321,7 @@ func (h *HotkeyCapture) saveHotkey() bool {
 		}
 		siblingValue, _ := sibling.binding.Get()
 		if siblingValue != "" && siblingValue == hotkeyStr {
-			h.entry.SetText("❌ Duplicate! '" + hotkeyStr + "' is already used")
+			h.entry.SetText("Duplicate: '" + hotkeyStr + "' is already used")
 			return false
 		}
 	}

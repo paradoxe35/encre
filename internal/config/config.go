@@ -283,6 +283,69 @@ func (c *Config) SetProviderSettings(provider string, settings ProviderSettings)
 	c.AIProvider.Providers[provider] = settings
 }
 
+// The value fields below are read from hotkey and dictation goroutines while the
+// UI writes them, so they go through the mutex the map fields already use.
+
+func (c *Config) Translation() TranslateConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Translate
+}
+
+func (c *Config) SetTranslation(translate TranslateConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Translate = translate
+}
+
+func (c *Config) SpeechSettings() SpeechConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Speech
+}
+
+func (c *Config) SetSpeechSettings(speech SpeechConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Speech = speech
+}
+
+func (c *Config) AppearanceSettings() AppearanceConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Appearance
+}
+
+func (c *Config) SetAppearanceSettings(appearance AppearanceConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Appearance = appearance
+}
+
+func (c *Config) FirstRun() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Meta.FirstRun
+}
+
+func (c *Config) SetFirstRun(first bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Meta.FirstRun = first
+}
+
+func (c *Config) ProviderMentionsEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.EnableProviderMentions
+}
+
+func (c *Config) SetProviderMentionsEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.EnableProviderMentions = enabled
+}
+
 func (c *Config) GetCurrentProvider() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

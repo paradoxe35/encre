@@ -37,7 +37,7 @@ const (
 	CaptureOK CaptureOutcome = iota
 	// CaptureNothingSelected: the copy landed, but there was nothing selected.
 	CaptureNothingSelected
-	// CaptureCopyFailed: the copy never took effect — no permission, a slow app, a refusing compositor.
+	// CaptureCopyFailed: the copy never took effect - no permission, a slow app, a refusing compositor.
 	CaptureCopyFailed
 )
 
@@ -97,14 +97,6 @@ func (c *FFIClipboardManager) Clear() error {
 	}
 
 	return nil
-}
-
-// HasText reports whether the clipboard holds text, without reading it.
-func (c *FFIClipboardManager) HasText() bool {
-	if c.handle == nil {
-		return false
-	}
-	return C.encre_clipboard_has_text(c.handle) == 1
 }
 
 // await polls until read answers or the deadline passes, rather than a fixed sleep that's
@@ -190,7 +182,7 @@ func (c *FFIClipboardManager) capture(selectAllFirst bool) (string, CaptureOutco
 
 	sim, err := NewFFIKeySimulator()
 	if err != nil {
-		c.Restore()
+		c.Abandon()
 		return "", CaptureCopyFailed, fmt.Errorf("failed to create simulator: %w", err)
 	}
 	defer sim.Close()
@@ -202,25 +194,25 @@ func (c *FFIClipboardManager) capture(selectAllFirst bool) (string, CaptureOutco
 
 	// The sentinel is absence: whatever is on the clipboard afterwards came from this copy.
 	if err := c.Clear(); err != nil {
-		c.Restore()
+		c.Abandon()
 		return "", CaptureCopyFailed, fmt.Errorf("could not use the clipboard: %w", err)
 	}
 
 	if selectAllFirst {
 		if err := sim.SelectAll(); err != nil {
-			c.Restore()
+			c.Abandon()
 			return "", CaptureCopyFailed, fmt.Errorf("could not select the text: %w", err)
 		}
 	}
 
 	if err := sim.Copy(); err != nil {
-		c.Restore()
+		c.Abandon()
 		return "", CaptureCopyFailed, fmt.Errorf("could not copy the selection: %w", err)
 	}
 
 	copied, ok := await(c.text)
 	if !ok {
-		c.Restore()
+		c.Abandon()
 		// An empty selection and a refused copy are indistinguishable from here.
 		if selectAllFirst {
 			return "", CaptureCopyFailed, nil
@@ -228,7 +220,7 @@ func (c *FFIClipboardManager) capture(selectAllFirst bool) (string, CaptureOutco
 		return "", CaptureNothingSelected, nil
 	}
 	if strings.TrimSpace(copied) == "" {
-		c.Restore()
+		c.Abandon()
 		return "", CaptureNothingSelected, nil
 	}
 
@@ -240,7 +232,7 @@ func (c *FFIClipboardManager) capture(selectAllFirst bool) (string, CaptureOutco
 // The selection is still active from the capture, so pasting replaces it.
 func (c *FFIClipboardManager) ReplaceSelectedText(newText string) error {
 	if err := c.SetText(newText); err != nil {
-		c.Restore()
+		c.Abandon()
 		return fmt.Errorf("failed to set clipboard text: %w", err)
 	}
 
@@ -249,13 +241,13 @@ func (c *FFIClipboardManager) ReplaceSelectedText(newText string) error {
 		text, ok := c.text()
 		return text, ok && text == newText
 	}); !ok {
-		c.Restore()
+		c.Abandon()
 		return fmt.Errorf("the clipboard did not take the revised text")
 	}
 
 	sim, err := NewFFIKeySimulator()
 	if err != nil {
-		c.Restore()
+		c.Abandon()
 		return fmt.Errorf("failed to create simulator: %w", err)
 	}
 	defer sim.Close()
@@ -265,18 +257,18 @@ func (c *FFIClipboardManager) ReplaceSelectedText(newText string) error {
 	}
 
 	if err := sim.Paste(); err != nil {
-		c.Restore()
+		c.Abandon()
 		return fmt.Errorf("failed to simulate paste: %w", err)
 	}
 
 	// The paste is asynchronous; restoring immediately can hand the target application the old contents.
 	time.Sleep(clipboardPasteSettle)
-	c.Restore()
+	c.Abandon()
 
 	return nil
 }
 
-// Abandon puts the clipboard back after an action that failed part-way through.
+// Abandon puts the clipboard back and logs, rather than returning, on failure.
 func (c *FFIClipboardManager) Abandon() {
 	if err := c.Restore(); err != nil {
 		logger.Warn("Failed to restore clipboard", "error", err)

@@ -30,29 +30,29 @@ func ParseAPIError(statusCode int, body []byte, providerName string) error {
 	}
 
 	if json.Unmarshal(body, &errResp) == nil && errResp.Error != nil {
-		return apiError(statusCode, "API error (%d): %s", statusCode, errResp.Error.Message)
+		return apiError(statusCode, "%s API error (%d): %s", providerName, statusCode, errResp.Error.Message)
 	}
 
 	switch statusCode {
 	case 401:
-		return apiError(statusCode, "authentication failed: invalid API key or credentials")
+		return apiError(statusCode, "%s authentication failed: invalid API key or credentials", providerName)
 	case 403:
-		return apiError(statusCode, "access forbidden: check your API key permissions")
+		return apiError(statusCode, "%s access forbidden: check your API key permissions", providerName)
 	case 404:
-		return apiError(statusCode, "endpoint not found: verify the base URL is correct")
+		return apiError(statusCode, "%s endpoint not found: verify the base URL is correct", providerName)
 	case 429:
-		return apiError(statusCode, "rate limit exceeded: please try again later")
+		return apiError(statusCode, "%s rate limit exceeded: please try again later", providerName)
 	case 500, 502, 503, 504:
-		return apiError(statusCode, "API server error (%d): service may be temporarily unavailable", statusCode)
+		return apiError(statusCode, "%s API server error (%d): service may be temporarily unavailable", providerName, statusCode)
 	default:
 		preview := string(body)
 		if len(preview) > 100 {
 			preview = preview[:100] + "..."
 		}
 		if len(preview) > 0 {
-			return apiError(statusCode, "API request failed (%d): %s", statusCode, preview)
+			return apiError(statusCode, "%s API request failed (%d): %s", providerName, statusCode, preview)
 		}
-		return apiError(statusCode, "API request failed with status code %d", statusCode)
+		return apiError(statusCode, "%s API request failed with status code %d", providerName, statusCode)
 	}
 }
 

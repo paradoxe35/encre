@@ -37,11 +37,18 @@ func geminiOK(w http.ResponseWriter) {
 	io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"corrigé"}]}}]}`)
 }
 
-func TestGeminiAsksForNoThinking(t *testing.T) {
+func geminiProvider(t *testing.T, url string, low bool) *GeminiProvider {
+	t.Helper()
 	clearReasoningCache()
+	p := NewGeminiProvider("k", url, "gemini-test", 1.0)
+	p.LowReasoning = low
+	return p
+}
+
+func TestGeminiAsksForNoThinkingWhenLowReasoningIsOn(t *testing.T) {
 	server, seen := geminiServer(t, geminiOK)
 
-	if _, err := NewGeminiProvider("k", server.URL, "gemini-test", 1.0).
+	if _, err := geminiProvider(t, server.URL, true).
 		ReviseText(context.Background(), "text", "prompt"); err != nil {
 		t.Fatalf("revise: %v", err)
 	}
@@ -51,13 +58,25 @@ func TestGeminiAsksForNoThinking(t *testing.T) {
 	}
 }
 
+func TestGeminiDoesNotAskForNoThinkingWhenLowReasoningIsOff(t *testing.T) {
+	server, seen := geminiServer(t, geminiOK)
+
+	if _, err := geminiProvider(t, server.URL, false).
+		ReviseText(context.Background(), "text", "prompt"); err != nil {
+		t.Fatalf("revise: %v", err)
+	}
+
+	if len(*seen) != 1 || (*seen)[0].GenerationConfig.ThinkingConfig != nil {
+		t.Fatalf("expected no thinking budget, got %+v", *seen)
+	}
+}
+
 // A model that cannot switch thinking off rejects a zero budget outright; the request must retry
 // without it.
 func TestGeminiRetriesWithoutTheBudgetWhenRefused(t *testing.T) {
-	clearReasoningCache()
 	server, seen := geminiServer(t, badRequest, geminiOK)
 
-	result, err := NewGeminiProvider("k", server.URL, "gemini-pro-test", 1.0).
+	result, err := geminiProvider(t, server.URL, true).
 		ReviseText(context.Background(), "text", "prompt")
 	if err != nil {
 		t.Fatalf("revise: %v", err)

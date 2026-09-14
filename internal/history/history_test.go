@@ -66,13 +66,22 @@ func TestTrimKeepsNewestAtCap(t *testing.T) {
 func TestClearRemovesEverything(t *testing.T) {
 	store := testStore(t)
 	store.Add(Entry{Kind: KindRevise, Result: "r"})
-	store.Clear()
+	if err := store.Clear(); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
 
 	if got := len(store.Recent("")); got != 0 {
 		t.Fatalf("after clear, %d entries remain", got)
 	}
 	if _, err := os.Stat(store.path); !os.IsNotExist(err) {
 		t.Error("clear should remove the file")
+	}
+}
+
+func TestClearOnAMissingFileIsNotAnError(t *testing.T) {
+	store := testStore(t)
+	if err := store.Clear(); err != nil {
+		t.Fatalf("clearing an empty store should not error, got %v", err)
 	}
 }
 

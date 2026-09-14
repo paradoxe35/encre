@@ -16,9 +16,6 @@
 
 typedef void *encre_ClipboardHandle;
 
-/**
- * Opaque pointer types for safe cross-FFI boundary object passing
- */
 typedef void *encre_HotkeyManagerHandle;
 
 /**
@@ -46,14 +43,12 @@ extern bool CGEventSourceKeyState(int32_t state_id, uint16_t key);
 #endif
 
 /**
- * Get the last error message
- * Returns: C string (must be freed with encre_free_string) or NULL if no error
+ * Returns the last error as a C string (free with `encre_free_string`), or NULL if none.
  */
 const char *encre_get_last_error(void);
 
 /**
- * Free a string allocated by Rust
- * This must be called for all strings returned by Rust functions
+ * Frees a string returned by any function in this crate.
  */
 void encre_free_string(char *s);
 
@@ -160,6 +155,32 @@ char *encre_stt_transcribe_file(encre_SttHandle handle, const char *path);
  * Takes effect on the next recording.
  */
 int encre_stt_set_device(encre_SttHandle handle, const char *name);
+
+/**
+ * Sets the spoken language as an ISO code; NULL or empty asks the model to
+ * detect, which only some can.
+ */
+int encre_stt_set_language(encre_SttHandle handle, const char *code);
+
+/**
+ * Enables or disables capture-only mode: while on, recording never touches the
+ * engine, so `encre_stt_stop` fails and audio must be read back with
+ * `encre_stt_stop_pcm`. Takes effect on the next recording.
+ */
+int encre_stt_set_capture_only(encre_SttHandle handle, bool enabled);
+
+/**
+ * Stops a capture-only recording and returns the audio as headerless 16-bit
+ * signed little-endian PCM, mono, at `encre_SAMPLE_RATE`. Free with
+ * `encre_stt_free_bytes`. Null on failure; a silent take returns a valid
+ * zero-length buffer.
+ */
+uint8_t *encre_stt_stop_pcm(encre_SttHandle handle, uintptr_t *out_len);
+
+/**
+ * Frees a buffer returned by `encre_stt_stop_pcm`.
+ */
+void encre_stt_free_bytes(uint8_t *ptr, uintptr_t len);
 
 /**
  * Input device names, newline separated, the default marked with a leading '*'.

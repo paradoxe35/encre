@@ -19,9 +19,14 @@ import (
 )
 
 type Application struct {
-	app           fyne.App
-	mainWindow    *ui.MainWindow
-	config        *config.Config
+	app        fyne.App
+	mainWindow *ui.MainWindow
+
+	// configMu guards config: the listener swaps it while hotkey and dictation
+	// goroutines are reading it.
+	configMu sync.RWMutex
+	config   *config.Config
+
 	hotkeyManager *input.FFIHotkeyManager
 	processor     *revision.Processor
 	dictation     *revision.Dictation
@@ -63,9 +68,11 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	}
 
 	application.dictation = revision.NewDictation(processor,
-		func() *config.Config { return application.config },
+		application.currentConfig,
 		func(err error) {
-			application.notifications.ShowError("Dictation failed", err.Error())
+			fyne.Do(func() {
+				application.notifications.ShowError("Dictation failed", err.Error())
+			})
 		})
 
 	// Set up permission monitoring before hotkeys so the UI reflects state early.
@@ -78,7 +85,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 
 	config.RegisterListener(func(newCfg *config.Config) {
 		logger.Info("Config changed, reloading hotkeys")
-		application.config = newCfg
+		application.setConfig(newCfg)
 		application.reloadHotkeysFromConfig()
 	})
 
@@ -107,7 +114,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 // setupHotkeys binds every enabled action to its shortcut.
 func (a *Application) setupHotkeys() {
 	for _, kind := range config.ActionOrder {
-		action := a.config.Action(kind)
+		action := a.currentConfig().Action(kind)
 		if !action.Enabled || action.Hotkey == "" {
 			continue
 		}
@@ -148,13 +155,17 @@ func (a *Application) actionHandler(kind config.ActionKind) func() {
 		logger.Info("Hotkey triggered", "action", kind)
 
 		if a.processor.IsProcessing() {
-			a.notifications.ShowInfo("Please Wait", "Another action is already running")
+			fyne.Do(func() {
+				a.notifications.ShowInfo("Please Wait", "Another action is already running")
+			})
 			return
 		}
 
 		if err := a.processor.Run(kind); err != nil {
 			logger.Error("Action failed", "action", kind, "error", err)
-			a.notifications.ShowError(kind.Label()+" failed", err.Error())
+			fyne.Do(func() {
+				a.notifications.ShowError(kind.Label()+" failed", err.Error())
+			})
 		}
 	}
 }
@@ -166,7 +177,9 @@ func (a *Application) reportBindingFailure(binding string, err error) {
 		return
 	}
 	logger.Error("Could not register shortcut", "binding", binding, "error", err)
-	a.notifications.ShowError("Shortcut not registered", binding+": "+err.Error())
+	fyne.Do(func() {
+		a.notifications.ShowError("Shortcut not registered", binding+": "+err.Error())
+	})
 }
 
 // reloadHotkeysFromConfig re-registers all hotkeys against the current config.
@@ -192,7 +205,9 @@ func (a *Application) reloadHotkeysFromConfig() {
 	logger.Info("Clearing existing hotkey bindings")
 	if err := a.hotkeyManager.ClearBindings(); err != nil {
 		logger.Error("Failed to clear bindings", "error", err)
-		a.notifications.ShowError("Hotkey Reload Failed", "Failed to clear old hotkeys")
+		fyne.Do(func() {
+			a.notifications.ShowError("Hotkey Reload Failed", "Failed to clear old hotkeys")
+		})
 		return
 	}
 
@@ -204,6 +219,18 @@ func (a *Application) reloadHotkeysFromConfig() {
 }
 
 // setupPermissions initialises macOS permission handling and keeps the UI in sync.
+func (a *Application) currentConfig() *config.Config {
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	return a.config
+}
+
+func (a *Application) setConfig(cfg *config.Config) {
+	a.configMu.Lock()
+	a.config = cfg
+	a.configMu.Unlock()
+}
+
 func (a *Application) setupPermissions() {
 	state := permissions.CurrentState()
 	supported := permissions.IsSupported()
@@ -299,11 +326,11 @@ func (a *Application) Start() error {
 	if a.permissionsMissingOnLaunch {
 		a.mainWindow.ShowWindow()
 		logger.Info("Showing permissions screen", "permissions_pending", true)
-	} else if a.config.Meta.FirstRun || !a.config.Appearance.StartMinimized {
+	} else if cfg := a.currentConfig(); cfg.FirstRun() || !cfg.AppearanceSettings().StartMinimized {
 		a.mainWindow.ShowWindow()
-		if a.config.Meta.FirstRun {
-			a.config.Meta.FirstRun = false
-			if err := a.config.Save(); err != nil {
+		if cfg.FirstRun() {
+			cfg.SetFirstRun(false)
+			if err := cfg.Save(); err != nil {
 				logger.Error("Failed to persist first-run flag", "error", err)
 			}
 			logger.Info("First run complete, window shown")
@@ -337,5 +364,6 @@ func (a *Application) Stop() {
 		a.processor.Close()
 	}
 
-	a.app.Quit()
+	// Stop is also called from the tray's Quit handler, off Fyne's thread.
+	fyne.Do(a.app.Quit)
 }

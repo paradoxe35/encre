@@ -1,10 +1,13 @@
 package config
 
+import "github.com/paradoxe35/encre/internal/stt/witai"
+
 type SpeechEngine string
 
 const (
 	SpeechLocal  SpeechEngine = "local"
 	SpeechRemote SpeechEngine = "remote"
+	SpeechWitAI  SpeechEngine = "witai"
 )
 
 // The hotkey and push-to-talk mode live on the dictate action instead.
@@ -46,6 +49,8 @@ func (c *Config) SpeechReady() bool {
 	switch c.Speech.Engine {
 	case SpeechRemote:
 		return c.Speech.RemoteBaseURL != "" && c.Speech.RemoteModel != ""
+	case SpeechWitAI:
+		return witai.Available() && c.Speech.Language != ""
 	default:
 		return c.Speech.ModelID != ""
 	}

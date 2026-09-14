@@ -40,7 +40,7 @@ func (d *Dictation) Prepare() {
 	}
 
 	go func() {
-		if err := d.service.Prepare(cfg.Speech); err != nil {
+		if err := d.service.Prepare(cfg.SpeechSettings()); err != nil {
 			logger.Info("Dictation not ready yet", "reason", err)
 		}
 	}()
@@ -64,7 +64,7 @@ func (d *Dictation) start() {
 	d.running = true
 	d.mu.Unlock()
 
-	if err := d.service.StartRecording(d.config().Speech); err != nil {
+	if err := d.service.StartRecording(d.config().SpeechSettings()); err != nil {
 		d.mu.Lock()
 		d.running = false
 		d.mu.Unlock()
@@ -94,7 +94,7 @@ func (d *Dictation) stop() {
 			return
 		}
 		text := raw
-		if d.config().Speech.CleanUp {
+		if d.config().SpeechSettings().CleanUp {
 			if cleaned, err := d.processor.CleanTranscript(raw); err == nil {
 				text = cleaned
 			} else {

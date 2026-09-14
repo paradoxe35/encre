@@ -1,13 +1,19 @@
 package stt
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
+
+	locale "github.com/jeandeaual/go-locale"
 
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
+	"github.com/paradoxe35/encre/internal/stt/witai"
 )
 
 var ErrNoModel = errors.New("no speech model selected - choose one in Settings")
@@ -17,11 +23,17 @@ var ErrNoModel = errors.New("no speech model selected - choose one in Settings")
 type Service struct {
 	store *Store
 
-	mu        sync.Mutex
-	speech    *input.FFISpeech
-	recording bool
-	loaded    string
-	device    string
+	mu           sync.Mutex
+	speech       *input.FFISpeech
+	recording    bool
+	loaded       string
+	device       string
+	language     string
+	captureOnly  bool
+	activeEngine config.SpeechEngine
+	witaiLang    string
+	remoteCfg    config.SpeechConfig
+	keepLoaded   bool
 }
 
 func NewService() *Service {
@@ -46,6 +58,8 @@ func (s *Service) engine() (*input.FFISpeech, error) {
 	s.speech = speech
 	s.loaded = ""
 	s.device = ""
+	s.language = ""
+	s.captureOnly = false
 	return speech, nil
 }
 
@@ -58,11 +72,54 @@ func (s *Service) Prepare(cfg config.SpeechConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := s.load(speech, cfg); err != nil {
+	if err := s.applyEngine(speech, cfg); err != nil {
 		return err
 	}
 
 	s.applyDevice(speech, cfg)
+	return nil
+}
+
+// applyEngine sets up the selected transcription backend: a resident local model, or
+// capture-only audio for witai/remote, which transcribe from the raw take.
+func (s *Service) applyEngine(speech *input.FFISpeech, cfg config.SpeechConfig) error {
+	s.activeEngine = cfg.Engine
+
+	switch cfg.Engine {
+	case config.SpeechWitAI:
+		if err := s.applyCaptureOnly(speech, true); err != nil {
+			return err
+		}
+		s.witaiLang = cfg.Language
+		return nil
+	case config.SpeechRemote:
+		if err := s.applyCaptureOnly(speech, true); err != nil {
+			return err
+		}
+		s.remoteCfg = cfg
+		return nil
+	}
+
+	if err := s.applyCaptureOnly(speech, false); err != nil {
+		return err
+	}
+	s.keepLoaded = cfg.KeepModelLoaded
+	if err := s.load(speech, cfg); err != nil {
+		return err
+	}
+	s.applyLanguage(speech, cfg)
+	return nil
+}
+
+// applyCaptureOnly is a no-op when nothing changed, matching applyDevice/applyLanguage.
+func (s *Service) applyCaptureOnly(speech *input.FFISpeech, capture bool) error {
+	if s.captureOnly == capture {
+		return nil
+	}
+	if err := speech.SetCaptureOnly(capture); err != nil {
+		return err
+	}
+	s.captureOnly = capture
 	return nil
 }
 
@@ -76,6 +133,24 @@ func (s *Service) applyDevice(speech *input.FFISpeech, cfg config.SpeechConfig) 
 		return
 	}
 	s.device = cfg.InputDevice
+}
+
+// applyLanguage tells the engine what to listen for; see TranscribeLanguage.
+func (s *Service) applyLanguage(speech *input.FFISpeech, cfg config.SpeechConfig) {
+	model, ok := FindModel(cfg.ModelID)
+	if !ok {
+		return
+	}
+
+	code := model.TranscribeLanguage(cfg.Language, SystemLanguage())
+	if s.language == code {
+		return
+	}
+	if err := speech.SetLanguage(code); err != nil {
+		logger.Warn("Could not set the speech language", "language", code, "error", err)
+		return
+	}
+	s.language = code
 }
 
 func (s *Service) load(speech *input.FFISpeech, cfg config.SpeechConfig) error {
@@ -120,7 +195,7 @@ func (s *Service) StartRecording(cfg config.SpeechConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := s.load(speech, cfg); err != nil {
+	if err := s.applyEngine(speech, cfg); err != nil {
 		return err
 	}
 
@@ -136,7 +211,7 @@ func (s *Service) StartRecording(cfg config.SpeechConfig) error {
 // StopRecording blocks for as long as transcription takes.
 func (s *Service) StopRecording() (string, error) {
 	s.mu.Lock()
-	speech, recording := s.speech, s.recording
+	speech, recording, captureOnly, activeEngine, lang, remoteCfg := s.speech, s.recording, s.captureOnly, s.activeEngine, s.witaiLang, s.remoteCfg
 	s.recording = false
 	s.mu.Unlock()
 
@@ -144,13 +219,78 @@ func (s *Service) StopRecording() (string, error) {
 		return "", errors.New("not recording")
 	}
 
+	if captureOnly {
+		if activeEngine == config.SpeechRemote {
+			return s.stopRemote(speech, remoteCfg)
+		}
+		return s.stopWitAI(speech, lang)
+	}
+
 	text, err := speech.Stop()
+	s.unloadIfNotKept(speech)
 	if err != nil {
 		return "", err
 	}
 
 	logger.Info("Dictation transcribed", "characters", len(text))
 	return text, nil
+}
+
+func (s *Service) stopWitAI(speech *input.FFISpeech, lang string) (string, error) {
+	pcm, err := speech.StopPCM()
+	if err != nil {
+		return "", err
+	}
+
+	// Generous: a long dictation is sent to Wit.ai in several sequential chunk requests.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	text, err := witai.Transcribe(ctx, pcm, lang)
+	if err != nil {
+		return "", err
+	}
+
+	logger.Info("Dictation transcribed", "characters", len(text), "engine", "witai")
+	return text, nil
+}
+
+func (s *Service) stopRemote(speech *input.FFISpeech, cfg config.SpeechConfig) (string, error) {
+	pcm, err := speech.StopPCM()
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), remoteRequestTimeout)
+	defer cancel()
+
+	text, err := RemoteTranscribe(ctx, cfg, pcm)
+	if err != nil {
+		return "", err
+	}
+
+	logger.Info("Dictation transcribed", "characters", len(text), "engine", "remote")
+	return text, nil
+}
+
+// unloadIfNotKept releases the resident model's memory once a local dictation finishes when
+// "Keep the model in memory" is off; clearing s.loaded makes the next dictation reload it.
+func (s *Service) unloadIfNotKept(speech *input.FFISpeech) {
+	s.mu.Lock()
+	keep, loaded := s.keepLoaded, s.loaded
+	s.mu.Unlock()
+
+	if keep || loaded == "" {
+		return
+	}
+
+	speech.Unload()
+
+	s.mu.Lock()
+	s.loaded = ""
+	s.mu.Unlock()
+
+	logger.Info("Speech model unloaded")
 }
 
 func (s *Service) Cancel() {
@@ -194,4 +334,15 @@ func (s *Service) Close() {
 	if speech != nil {
 		speech.Close()
 	}
+}
+
+// SystemLanguage is the base code of the system locale.
+func SystemLanguage() string {
+	tag, err := locale.GetLocale()
+	if err != nil {
+		return ""
+	}
+	tag = strings.ReplaceAll(tag, "_", "-")
+	base, _, _ := strings.Cut(tag, "-")
+	return strings.ToLower(base)
 }

@@ -148,7 +148,3 @@ func (p *AnthropicProvider) GetName() string {
 func (p *AnthropicProvider) GetModel() string {
 	return p.Model
 }
-
-func (p *AnthropicProvider) GetTemperature() float64 {
-	return p.Temperature
-}

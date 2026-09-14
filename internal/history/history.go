@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
@@ -79,11 +80,13 @@ func (s *Store) Add(entry Entry) {
 
 	file, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
+		logger.Error("Failed to open history file", "path", s.path, "error", err)
 		return
 	}
 	defer file.Close()
 
 	if err := json.NewEncoder(file).Encode(entry); err != nil {
+		logger.Error("Failed to write history entry", "path", s.path, "error", err)
 		return
 	}
 	s.trimLocked()
@@ -124,11 +127,15 @@ func (s *Store) Recent(kind Kind) []Entry {
 	return entries
 }
 
-// Clear removes every entry.
-func (s *Store) Clear() {
+// Clear removes every entry. A missing file already means "empty" and is not an error.
+func (s *Store) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = os.Remove(s.path)
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		logger.Error("Failed to clear history file", "path", s.path, "error", err)
+		return err
+	}
+	return nil
 }
 
 // trimLocked rewrites the file without the oldest entries when over the cap. Called after each
@@ -141,6 +148,7 @@ func (s *Store) trimLocked() {
 
 	data, err := os.ReadFile(s.path)
 	if err != nil {
+		logger.Error("Failed to read history file for trimming", "path", s.path, "error", err)
 		return
 	}
 
@@ -149,5 +157,7 @@ func (s *Store) trimLocked() {
 		return
 	}
 	keep := strings.Join(lines[len(lines)-MaxEntries:], "\n") + "\n"
-	_ = os.WriteFile(s.path, []byte(keep), 0o644)
+	if err := os.WriteFile(s.path, []byte(keep), 0o644); err != nil {
+		logger.Error("Failed to trim history file", "path", s.path, "error", err)
+	}
 }

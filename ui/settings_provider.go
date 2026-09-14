@@ -152,7 +152,7 @@ func (w *MainWindow) testAPIConnection() {
 		model, _ := w.modelBinding.Get()
 		baseURL, _ := w.baseURLBinding.Get()
 
-		if apiKey == "" {
+		if apiKey == "" && settings.RequiresAPIKey() {
 			fyne.Do(func() {
 				w.statusBinding.Set("Error: API key is required")
 			})
@@ -286,7 +286,7 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 	errorLabel.Importance = widget.DangerImportance
 
 	fetchModelsBtn := widget.NewButton("Fetch Models", func() {
-		w.fetchModelsForCustomProvider(apiKeyEntry.Text, baseURLEntry.Text, modelEntry, errorLabel)
+		w.fetchModelsForCustomProvider(apiKeyEntry.Text, baseURLEntry.Text, requiresKey.Checked, modelEntry, errorLabel)
 	})
 
 	form := container.NewVBox(
@@ -412,9 +412,13 @@ func (w *MainWindow) showDeleteProviderConfirmation() {
 	)
 }
 
-func (w *MainWindow) fetchModelsForCustomProvider(apiKey, baseURL string, modelEntry *widget.Entry, statusLabel *widget.Label) {
-	if apiKey == "" || baseURL == "" {
-		statusLabel.SetText("API key and Base URL are required")
+func (w *MainWindow) fetchModelsForCustomProvider(apiKey, baseURL string, requiresAPIKey bool, modelEntry *widget.Entry, statusLabel *widget.Label) {
+	if baseURL == "" || (apiKey == "" && requiresAPIKey) {
+		if requiresAPIKey {
+			statusLabel.SetText("API key and Base URL are required")
+		} else {
+			statusLabel.SetText("Base URL is required")
+		}
 		return
 	}
 

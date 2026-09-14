@@ -162,7 +162,3 @@ func (p *OpenAIProvider) GetName() string {
 func (p *OpenAIProvider) GetModel() string {
 	return p.Model
 }
-
-func (p *OpenAIProvider) GetTemperature() float64 {
-	return p.Temperature
-}

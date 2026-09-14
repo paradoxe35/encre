@@ -56,18 +56,20 @@ type MainWindow struct {
 	secondaryLanguage *LanguagePicker
 	mentionsCheck     *widget.Check
 
-	speechModels      *ModelList
-	speechStoreRef    *stt.Store
-	historyStore      *history.Store
-	refreshHistory    func()
-	speechEngine      *widget.Select
-	speechKeepLoaded  *widget.Check
-	speechCleanUp     *widget.Check
-	microphone        *MicrophonePicker
-	speechRemote      *widget.Select
-	speechRemoteModel *widget.SelectEntry
-	speechRemoteURL   *widget.Entry
-	speechRemoteKey   *widget.Entry
+	speechModels        *ModelList
+	speechStoreRef      *stt.Store
+	historyStore        *history.Store
+	refreshHistory      func()
+	speechEngine        *widget.Select
+	speechLanguage      *widget.Select
+	speechLanguageCodes map[string]string
+	speechKeepLoaded    *widget.Check
+	speechCleanUp       *widget.Check
+	microphone          *MicrophonePicker
+	speechRemote        *widget.Select
+	speechRemoteModel   *widget.SelectEntry
+	speechRemoteURL     *widget.Entry
+	speechRemoteKey     *widget.Entry
 
 	baseURLContainer *fyne.Container
 	baseURLEntry     *widget.Entry

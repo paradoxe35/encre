@@ -158,6 +158,55 @@ func (s *FFISpeech) SetDevice(name string) error {
 	return nil
 }
 
+// SetLanguage sets the spoken language as an ISO code, empty to detect; it
+// applies to the next recording, not one in progress.
+func (s *FFISpeech) SetLanguage(code string) error {
+	var cCode *C.char
+	if code != "" {
+		cCode = C.CString(code)
+		defer C.free(unsafe.Pointer(cCode))
+	}
+
+	s.mu.Lock()
+	result := C.encre_stt_set_language(s.handle, cCode)
+	s.mu.Unlock()
+
+	if result != 0 {
+		return fmt.Errorf("%s", getLastError())
+	}
+	return nil
+}
+
+// SetCaptureOnly toggles capture-only recording: audio is captured but never handed to the
+// engine, for a remote transcriber that needs the raw take. Applies to the next recording.
+func (s *FFISpeech) SetCaptureOnly(enabled bool) error {
+	s.mu.Lock()
+	result := C.encre_stt_set_capture_only(s.handle, C.bool(enabled))
+	s.mu.Unlock()
+
+	if result != 0 {
+		return fmt.Errorf("%s", getLastError())
+	}
+	return nil
+}
+
+// StopPCM ends a capture-only recording and returns the audio as headerless
+// 16-bit signed little-endian PCM, mono, at 16 kHz.
+func (s *FFISpeech) StopPCM() ([]byte, error) {
+	var length C.uintptr_t
+
+	s.mu.Lock()
+	ptr := C.encre_stt_stop_pcm(s.handle, &length)
+	s.mu.Unlock()
+
+	if ptr == nil {
+		return nil, fmt.Errorf("%s", getLastError())
+	}
+	defer C.encre_stt_free_bytes(ptr, length)
+
+	return C.GoBytes(unsafe.Pointer(ptr), C.int(length)), nil
+}
+
 // InputDevices lists microphones; an empty result means none were found, not that enumeration failed.
 func InputDevices() []Device {
 	listed := C.encre_stt_devices()

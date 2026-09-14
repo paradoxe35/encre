@@ -86,6 +86,10 @@ func ModelDetails(model Model, host Machine, downloaded bool) string {
 	lines = append(lines, fmt.Sprintf("Size: %.0f MB", model.SizeMB()))
 	lines = append(lines, fmt.Sprintf("Speed: %s", SpeedLabel(model, host)))
 	lines = append(lines, streamingLine(model))
+	lines = append(lines, detectionLine(model))
+	if model.Translate {
+		lines = append(lines, "Translation: can translate speech into English")
+	}
 	if model.License != "" {
 		lines = append(lines, "License: "+model.License)
 	}
@@ -103,6 +107,15 @@ func ModelDetails(model Model, host Machine, downloaded bool) string {
 	lines = append(lines, "State: "+state)
 
 	return strings.Join(lines, "\n")
+}
+
+// A model that cannot detect transcribes as whatever language it is told, so
+// the picker is not optional for it.
+func detectionLine(model Model) string {
+	if model.LanguageDetect {
+		return "Language: detected automatically, or pick one"
+	}
+	return "Language: must be chosen; this model cannot detect it"
 }
 
 func streamingLine(model Model) string {

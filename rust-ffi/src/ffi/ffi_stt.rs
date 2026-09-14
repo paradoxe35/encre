@@ -233,6 +233,106 @@ pub unsafe extern "C" fn encre_stt_set_device(handle: SttHandle, name: *const c_
     FFIErrorCode::Success as c_int
 }
 
+/// Sets the spoken language as an ISO code; NULL or empty asks the model to
+/// detect, which only some can.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn encre_stt_set_language(handle: SttHandle, code: *const c_char) -> c_int {
+    let Some(recogniser) = recogniser(handle) else {
+        return FFIErrorCode::NullPointer as c_int;
+    };
+
+    let wanted = if code.is_null() {
+        None
+    } else {
+        match unsafe { c_str_to_string(code) } {
+            Ok(code) if !code.is_empty() => Some(code),
+            Ok(_) => None,
+            Err(e) => {
+                set_last_error(format!("Invalid language code: {e}"));
+                return FFIErrorCode::InvalidUtf8 as c_int;
+            }
+        }
+    };
+
+    recogniser.recorder.set_language(wanted);
+    FFIErrorCode::Success as c_int
+}
+
+/// Enables or disables capture-only mode: while on, recording never touches the
+/// engine, so `encre_stt_stop` fails and audio must be read back with
+/// `encre_stt_stop_pcm`. Takes effect on the next recording.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn encre_stt_set_capture_only(handle: SttHandle, enabled: bool) -> c_int {
+    let Some(recogniser) = recogniser(handle) else {
+        return FFIErrorCode::NullPointer as c_int;
+    };
+    recogniser.recorder.set_capture_only(enabled);
+    FFIErrorCode::Success as c_int
+}
+
+/// Stops a capture-only recording and returns the audio as headerless 16-bit
+/// signed little-endian PCM, mono, at `encre_SAMPLE_RATE`. Free with
+/// `encre_stt_free_bytes`. Null on failure; a silent take returns a valid
+/// zero-length buffer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn encre_stt_stop_pcm(handle: SttHandle, out_len: *mut usize) -> *mut u8 {
+    let Some(recogniser) = recogniser(handle) else {
+        return std::ptr::null_mut();
+    };
+    if out_len.is_null() {
+        set_last_error("Null length pointer provided".to_string());
+        return std::ptr::null_mut();
+    }
+
+    {
+        let mut recording = recogniser.recording.lock();
+        if !*recording {
+            set_last_error("Not recording".to_string());
+            return std::ptr::null_mut();
+        }
+        *recording = false;
+    }
+
+    let stopped = match recogniser.recorder.stop() {
+        Ok(stopped) => stopped,
+        Err(e) => {
+            set_last_error(e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+
+    let mut bytes = pcm16_bytes(&stopped.samples);
+    bytes.shrink_to_fit();
+    let len = bytes.len();
+    let ptr = bytes.as_mut_ptr();
+    std::mem::forget(bytes);
+    unsafe {
+        *out_len = len;
+    }
+    ptr
+}
+
+/// Frees a buffer returned by `encre_stt_stop_pcm`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn encre_stt_free_bytes(ptr: *mut u8, len: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Vec::from_raw_parts(ptr, len, len));
+    }
+}
+
+/// Converts samples in [-1.0, 1.0] to headerless 16-bit signed little-endian PCM.
+fn pcm16_bytes(samples: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(samples.len() * 2);
+    for &s in samples {
+        let sample = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+        bytes.extend_from_slice(&sample.to_le_bytes());
+    }
+    bytes
+}
+
 /// Input device names, newline separated, the default marked with a leading '*'.
 #[unsafe(no_mangle)]
 pub extern "C" fn encre_stt_devices() -> *mut c_char {
