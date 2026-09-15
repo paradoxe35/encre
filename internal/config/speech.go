@@ -38,7 +38,7 @@ type SpeechConfig struct {
 func defaultSpeech() SpeechConfig {
 	return SpeechConfig{
 		Engine:          SpeechLocal,
-		KeepModelLoaded: true,
+		KeepModelLoaded: false,
 	}
 }
 

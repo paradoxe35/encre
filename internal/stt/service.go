@@ -90,7 +90,12 @@ func (s *Service) engine() (speechEngine, error) {
 }
 
 // Prepare starts loading the model ahead of the first dictation; idempotent.
+// A model the user does not want kept in memory is loaded per take instead.
 func (s *Service) Prepare(cfg config.SpeechConfig) error {
+	if !cfg.KeepModelLoaded {
+		return nil
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

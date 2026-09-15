@@ -235,3 +235,21 @@ func TestModelPathRefusesWhatCannotBeLoaded(t *testing.T) {
 		t.Error("a model that is not downloaded was accepted")
 	}
 }
+
+func TestPrepareLoadsOnlyWhenTheModelIsKept(t *testing.T) {
+	service, fake, cfg := newTestService(t, false)
+	if err := service.Prepare(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands(fake.entries(), "use"); len(got) != 0 {
+		t.Errorf("preloaded %v although the model is not kept in memory", got)
+	}
+
+	cfg.KeepModelLoaded = true
+	if err := service.Prepare(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands(fake.entries(), "use"); len(got) != 1 {
+		t.Errorf("use commands = %v, want the model preloaded when kept", got)
+	}
+}
