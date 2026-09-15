@@ -183,7 +183,9 @@ jobs:
             cp assets/icon.png AppDir/encre.png
           fi
 
-          cat > AppDir/usr/share/applications/encre.desktop <<'EOF'
+          # Named after the Wayland app id so the dock finds the running window's
+          # icon there; StartupWMClass covers X11, where GLFW uses the window title.
+          cat > AppDir/usr/share/applications/me.pngwasi.encre.desktop <<'EOF'
           [Desktop Entry]
           Name=Encre
           GenericName=Text Revision Tool
@@ -195,11 +197,11 @@ jobs:
           Categories=Utility;Office;
           Keywords=text;revision;ai;
           StartupNotify=true
-          StartupWMClass=Encre Settings
+          StartupWMClass=Encre
           EOF
 
           # linuxdeploy needs it in the root too
-          cp AppDir/usr/share/applications/encre.desktop AppDir/encre.desktop
+          cp AppDir/usr/share/applications/me.pngwasi.encre.desktop AppDir/me.pngwasi.encre.desktop
 
           ARCH=x86_64 ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
 
@@ -271,7 +273,9 @@ jobs:
             cp assets/icon.png dist/deb/usr/share/pixmaps/encre.png
           fi
 
-          cat > dist/deb/usr/share/applications/encre.desktop <<EOF
+          # Named after the Wayland app id so the dock finds the running window's
+          # icon there; StartupWMClass covers X11, where GLFW uses the window title.
+          cat > dist/deb/usr/share/applications/me.pngwasi.encre.desktop <<EOF
           [Desktop Entry]
           Name=Encre
           GenericName=Text Revision Tool
@@ -283,7 +287,7 @@ jobs:
           Categories=Utility;Office;
           Keywords=text;revision;ai;
           StartupNotify=true
-          StartupWMClass=Encre Settings
+          StartupWMClass=Encre
           EOF
 
           dpkg-deb --build dist/deb encre-linux-${{ matrix.arch }}.deb

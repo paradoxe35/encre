@@ -86,7 +86,11 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 		application.reloadHotkeysFromConfig()
 	})
 
-	mainWindow.SetShowHideCallbacks(showInDock, hideFromDock)
+	mainWindow.SetShowHideCallbacks(func() {
+		showInDock()
+		// After Show, so the window exists and GLFW's own icon has been set.
+		applyNativeWindowIcons()
+	}, hideFromDock)
 
 	if desk, ok := app.(desktop.App); ok {
 		desk.SetSystemTrayIcon(resourceIconPng)

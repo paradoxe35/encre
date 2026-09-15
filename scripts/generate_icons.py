@@ -18,7 +18,7 @@ MARGIN = 0.04
 # packages, the window and tray icon), icon_1024.png (the macOS bundle, which
 # wants a retina source) and icon.ico (Windows). The per-size renders behind
 # the .ico are built in memory and never written.
-ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
 
 DROP = (
     (50, 5),
