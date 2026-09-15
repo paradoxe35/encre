@@ -18,15 +18,33 @@ import (
 
 var ErrNoModel = errors.New("no speech model selected - choose one in Settings")
 
+type speechEngine interface {
+	UseModel(path string) error
+	Unload()
+	SetDevice(name string) error
+	SetLanguage(code string) error
+	SetCaptureOnly(enabled bool) error
+	Start() error
+	Stop() (string, error)
+	StopPCM() ([]byte, error)
+	Cancel()
+	Close()
+}
+
 // Service turns hotkey edges into transcripts. The engine is created lazily so
 // an app that never dictates never opens an audio device.
+//
+// Rust owns what is loaded and runs its commands in order, so this side only
+// remembers what it last asked for and how many takes are still in flight.
 type Service struct {
-	store *Store
+	store     *Store
+	newEngine func() (speechEngine, error)
 
 	mu           sync.Mutex
-	speech       *input.FFISpeech
+	speech       speechEngine
 	recording    bool
-	loaded       string
+	takes        int
+	model        string
 	device       string
 	language     string
 	captureOnly  bool
@@ -34,13 +52,18 @@ type Service struct {
 	witaiLang    string
 	remoteCfg    config.SpeechConfig
 	keepLoaded   bool
-	pendingLoad  chan error
-	loadingPath  string
-	loadEpoch    uint64
 }
 
 func NewService() *Service {
-	return &Service{store: NewStore()}
+	return &Service{store: NewStore(), newEngine: newFFIEngine}
+}
+
+func newFFIEngine() (speechEngine, error) {
+	speech, err := input.NewFFISpeech()
+	if err != nil {
+		return nil, err
+	}
+	return speech, nil
 }
 
 func (s *Service) Store() *Store { return s.store }
@@ -48,25 +71,25 @@ func (s *Service) Store() *Store { return s.store }
 // OnLevel receives microphone level while recording, from a background thread.
 func (s *Service) OnLevel(handler func(float32)) { input.OnLevel(handler) }
 
-func (s *Service) engine() (*input.FFISpeech, error) {
+func (s *Service) engine() (speechEngine, error) {
 	if s.speech != nil {
 		return s.speech, nil
 	}
 
-	speech, err := input.NewFFISpeech()
+	speech, err := s.newEngine()
 	if err != nil {
 		return nil, err
 	}
 
 	s.speech = speech
-	s.loaded = ""
+	s.model = ""
 	s.device = ""
 	s.language = ""
 	s.captureOnly = false
 	return speech, nil
 }
 
-// Prepare loads the model and opens the microphone ahead of the first dictation; idempotent.
+// Prepare starts loading the model ahead of the first dictation; idempotent.
 func (s *Service) Prepare(cfg config.SpeechConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -83,9 +106,9 @@ func (s *Service) Prepare(cfg config.SpeechConfig) error {
 	return nil
 }
 
-// applyEngine sets up the selected transcription backend: a resident local model, or
+// applyEngine sets up the selected transcription backend: a local model, or
 // capture-only audio for witai/remote, which transcribe from the raw take.
-func (s *Service) applyEngine(speech *input.FFISpeech, cfg config.SpeechConfig) error {
+func (s *Service) applyEngine(speech speechEngine, cfg config.SpeechConfig) error {
 	// A build with no embedded keys hides Wit.ai in the UI, but a config carried
 	// over from a build that had them can still name it; fall back to local.
 	engine := cfg.Engine
@@ -93,6 +116,7 @@ func (s *Service) applyEngine(speech *input.FFISpeech, cfg config.SpeechConfig) 
 		engine = config.SpeechLocal
 	}
 	s.activeEngine = engine
+	s.keepLoaded = cfg.KeepModelLoaded
 
 	switch engine {
 	case config.SpeechWitAI:
@@ -109,97 +133,25 @@ func (s *Service) applyEngine(speech *input.FFISpeech, cfg config.SpeechConfig) 
 		return nil
 	}
 
-	s.keepLoaded = cfg.KeepModelLoaded
-
 	path, err := s.modelPath(cfg)
 	if err != nil {
 		return err
 	}
 	s.applyLanguage(speech, cfg)
-
-	// Resident already: the take can stream, which transcribes as it is spoken.
-	if s.loaded == path {
-		return s.applyCaptureOnly(speech, false)
-	}
-
-	// Not resident: capture rather than wait for the load, or the first words go
-	// missing while the model comes up. The load runs alongside and is waited on
-	// at stop, when it has usually finished.
-	if err := s.applyCaptureOnly(speech, true); err != nil {
+	if err := s.applyCaptureOnly(speech, false); err != nil {
 		return err
 	}
-	s.beginLoad(speech, path)
+
+	if s.model != path {
+		if err := speech.UseModel(path); err != nil {
+			return err
+		}
+		s.model = path
+	}
 	return nil
 }
 
-// modelLoader is the part of the engine beginLoad needs, so the concurrency
-// around it can be exercised without an audio device.
-type modelLoader interface {
-	Load(path string) error
-}
-
-// beginLoad loads the model on its own goroutine. Rust runs the engine on a
-// thread of its own, so this does not hold up the capture that follows.
-func (s *Service) beginLoad(speech modelLoader, path string) {
-	if s.pendingLoad != nil && s.loadingPath == path {
-		return
-	}
-	s.dropPendingLoad()
-
-	done := make(chan error, 1)
-	s.pendingLoad = done
-	s.loadingPath = path
-	s.loadEpoch++
-	epoch := s.loadEpoch
-
-	go func() {
-		err := speech.Load(path)
-
-		s.mu.Lock()
-		// Only the newest load says what is resident: a superseded one finishing
-		// late would otherwise name a model the engine has already replaced.
-		if s.loadEpoch == epoch {
-			if err == nil {
-				s.loaded = path
-			} else {
-				s.loaded = ""
-			}
-		}
-		s.mu.Unlock()
-
-		done <- err
-	}()
-}
-
-// dropPendingLoad releases a load no take is waiting for any more; the caller
-// holds the lock. The load itself runs on, and reports what it loaded unless a
-// newer one has since superseded it.
-func (s *Service) dropPendingLoad() {
-	pending := s.pendingLoad
-	s.pendingLoad = nil
-	s.loadingPath = ""
-
-	if pending != nil {
-		go func() { <-pending }()
-	}
-}
-
-// awaitLoad blocks until a load started for this take has finished.
-func (s *Service) awaitLoad() error {
-	s.mu.Lock()
-	pending := s.pendingLoad
-	s.pendingLoad = nil
-	s.loadingPath = ""
-	s.mu.Unlock()
-
-	if pending == nil {
-		return nil
-	}
-	return <-pending
-}
-
-// applyCaptureOnly is a no-op when nothing changed, matching applyDevice/applyLanguage.
-func (s *Service) applyCaptureOnly(speech *input.FFISpeech, capture bool) error {
+func (s *Service) applyCaptureOnly(speech speechEngine, capture bool) error {
 	if s.captureOnly == capture {
 		return nil
 	}
@@ -210,8 +162,7 @@ func (s *Service) applyCaptureOnly(speech *input.FFISpeech, capture bool) error 
 	return nil
 }
 
-// applyDevice is a no-op when nothing changed, so a warmed stream isn't torn down and reopened every dictation.
-func (s *Service) applyDevice(speech *input.FFISpeech, cfg config.SpeechConfig) {
+func (s *Service) applyDevice(speech speechEngine, cfg config.SpeechConfig) {
 	if s.device == cfg.InputDevice {
 		return
 	}
@@ -223,7 +174,7 @@ func (s *Service) applyDevice(speech *input.FFISpeech, cfg config.SpeechConfig) 
 }
 
 // applyLanguage tells the engine what to listen for; see TranscribeLanguage.
-func (s *Service) applyLanguage(speech *input.FFISpeech, cfg config.SpeechConfig) {
+func (s *Service) applyLanguage(speech speechEngine, cfg config.SpeechConfig) {
 	model, ok := FindModel(cfg.ModelID)
 	if !ok {
 		return
@@ -240,8 +191,7 @@ func (s *Service) applyLanguage(speech *input.FFISpeech, cfg config.SpeechConfig
 	s.language = code
 }
 
-// modelPath resolves the file the take will be transcribed with, and refuses
-// early on the cases a load could not recover from anyway.
+// modelPath refuses early on the cases a load could not recover from anyway.
 func (s *Service) modelPath(cfg config.SpeechConfig) (string, error) {
 	if cfg.ModelID == "" {
 		return "", ErrNoModel
@@ -258,7 +208,6 @@ func (s *Service) modelPath(cfg config.SpeechConfig) (string, error) {
 	return s.store.Path(model), nil
 }
 
-// StartRecording loads the model too, so the first dictation needs no setup.
 func (s *Service) StartRecording(cfg config.SpeechConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -277,11 +226,11 @@ func (s *Service) StartRecording(cfg config.SpeechConfig) error {
 
 	s.applyDevice(speech, cfg)
 	if err := speech.Start(); err != nil {
-		s.dropPendingLoad()
 		return err
 	}
 
 	s.recording = true
+	s.takes++
 	return nil
 }
 
@@ -295,6 +244,7 @@ func (s *Service) StopRecording() (string, error) {
 	if speech == nil || !recording {
 		return "", errors.New("not recording")
 	}
+	defer s.finishTake(speech)
 
 	switch activeEngine {
 	case config.SpeechRemote:
@@ -303,16 +253,12 @@ func (s *Service) StopRecording() (string, error) {
 		return s.stopWitAI(speech, lang)
 	}
 
-	// Stop before awaiting the load: the batch pass queues behind the load anyway,
-	// and waiting first would keep the microphone open until the load finished.
 	text, err := speech.Stop()
-
-	if loadErr := s.awaitLoad(); loadErr != nil {
-		return "", loadErr
-	}
-
-	s.unloadIfNotKept(speech)
 	if err != nil {
+		// Ask for the model again next time: a failed load surfaces here.
+		s.mu.Lock()
+		s.model = ""
+		s.mu.Unlock()
 		return "", err
 	}
 
@@ -320,7 +266,7 @@ func (s *Service) StopRecording() (string, error) {
 	return text, nil
 }
 
-func (s *Service) stopWitAI(speech *input.FFISpeech, lang string) (string, error) {
+func (s *Service) stopWitAI(speech speechEngine, lang string) (string, error) {
 	pcm, err := speech.StopPCM()
 	if err != nil {
 		return "", err
@@ -339,7 +285,7 @@ func (s *Service) stopWitAI(speech *input.FFISpeech, lang string) (string, error
 	return text, nil
 }
 
-func (s *Service) stopRemote(speech *input.FFISpeech, cfg config.SpeechConfig) (string, error) {
+func (s *Service) stopRemote(speech speechEngine, cfg config.SpeechConfig) (string, error) {
 	pcm, err := speech.StopPCM()
 	if err != nil {
 		return "", err
@@ -357,64 +303,35 @@ func (s *Service) stopRemote(speech *input.FFISpeech, cfg config.SpeechConfig) (
 	return text, nil
 }
 
-type modelUnloader interface {
-	Unload()
-}
-
-// A take already recording on the model keeps it; that take's own stop unloads.
-func (s *Service) unloadIfNotKept(speech modelUnloader) {
+// finishTake unloads once the last take is out when the model is not kept.
+// Sent under the lock, so a take starting afterwards asks for the model again
+// and its load is queued behind the unload.
+func (s *Service) finishTake(speech speechEngine) {
 	s.mu.Lock()
-	if s.keepLoaded || s.loaded == "" || s.recording {
-		s.mu.Unlock()
+	defer s.mu.Unlock()
+
+	s.takes--
+	if s.keepLoaded || s.model == "" || s.takes > 0 {
 		return
 	}
-	s.loaded = ""
-	s.mu.Unlock()
-
+	s.model = ""
 	speech.Unload()
 	logger.Info("Speech model unloaded")
 }
 
 func (s *Service) Cancel() {
 	s.mu.Lock()
-	speech := s.speech
+	speech, recording := s.speech, s.recording
 	s.recording = false
-	s.dropPendingLoad()
 	s.mu.Unlock()
 
-	if speech != nil {
-		speech.Cancel()
+	if speech == nil {
+		return
 	}
-}
-
-// TranscribeFile verifies a model against a 16 kHz mono WAV.
-func (s *Service) TranscribeFile(cfg config.SpeechConfig, path string) (string, error) {
-	s.mu.Lock()
-	speech, err := s.engine()
-	var modelFile string
-	if err == nil {
-		modelFile, err = s.modelPath(cfg)
+	speech.Cancel()
+	if recording {
+		s.finishTake(speech)
 	}
-	resident := s.loaded == modelFile
-	s.mu.Unlock()
-
-	if err != nil {
-		return "", err
-	}
-
-	if !resident {
-		if err := speech.Load(modelFile); err != nil {
-			s.mu.Lock()
-			s.loaded = ""
-			s.mu.Unlock()
-			return "", err
-		}
-		s.mu.Lock()
-		s.loaded = modelFile
-		s.mu.Unlock()
-	}
-
-	return speech.TranscribeFile(path)
 }
 
 // Devices lists microphones; may be the first call that opens an audio device, since the engine is lazy.
@@ -427,6 +344,7 @@ func (s *Service) Close() {
 	speech := s.speech
 	s.speech = nil
 	s.recording = false
+	s.takes = 0
 	s.mu.Unlock()
 
 	if speech != nil {

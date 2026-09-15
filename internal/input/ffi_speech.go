@@ -66,13 +66,14 @@ func speechLevelGateway(rms C.float) {
 	}
 }
 
-// Load keeps a model resident. Idempotent for the same path.
-func (s *FFISpeech) Load(path string) error {
+// UseModel selects the model for the next takes and starts loading it. A load
+// failure is reported by the first Stop that needs the model.
+func (s *FFISpeech) UseModel(path string) error {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
 
 	s.mu.RLock()
-	result := C.encre_stt_load(s.handle, cPath)
+	result := C.encre_stt_use_model(s.handle, cPath)
 	s.mu.RUnlock()
 
 	if result != 0 {
@@ -112,18 +113,6 @@ func (s *FFISpeech) Cancel() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	C.encre_stt_cancel(s.handle)
-}
-
-// TranscribeFile reads a 16 kHz mono WAV, for verifying a model without a microphone.
-func (s *FFISpeech) TranscribeFile(path string) (string, error) {
-	cPath := C.CString(path)
-	defer C.free(unsafe.Pointer(cPath))
-
-	s.mu.RLock()
-	text := C.encre_stt_transcribe_file(s.handle, cPath)
-	s.mu.RUnlock()
-
-	return takeString(text)
 }
 
 func (s *FFISpeech) Close() {

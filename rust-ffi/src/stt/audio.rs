@@ -1,13 +1,14 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, StreamConfig};
+use parking_lot::{Mutex, MutexGuard};
 
 use super::engine::Engine;
 
@@ -44,18 +45,19 @@ struct Settings {
     device: Option<String>,
     /// None asks the model to detect.
     language: Option<String>,
-    /// Capture without the engine, for a remote service or a model not resident yet.
+    /// Capture without the engine, for a remote service that transcribes the audio itself.
     capture_only: bool,
+    /// The model takes should use. Streaming waits until it is the one resident;
+    /// until then a take is captured and transcribed behind the load.
+    model: Option<PathBuf>,
 }
 
 /// Handled on their own thread, so a load or a transcription can run while the
 /// next take is already being captured.
 pub enum EngineCommand {
-    /// The reply is Ok(streaming-capable) on a successful load; Err carries
-    /// the load failure.
-    Load(PathBuf, Sender<Result<bool>>),
+    /// A failure is kept by the engine and reported by the transcription that needed it.
+    Load(PathBuf),
     Unload,
-    TranscribeFile(PathBuf, Option<String>, Sender<Result<String>>),
     TranscribeSamples(Vec<f32>, Option<String>, Sender<Result<String>>),
     Shutdown,
 }
@@ -100,8 +102,8 @@ impl Recorder {
         }
     }
 
-    fn settings(&self) -> std::sync::MutexGuard<'_, Settings> {
-        self.settings.lock().unwrap_or_else(|e| e.into_inner())
+    fn settings(&self) -> MutexGuard<'_, Settings> {
+        self.settings.lock()
     }
 
     pub fn set_device(&self, name: Option<String>) {
@@ -116,16 +118,15 @@ impl Recorder {
         self.settings().capture_only = enabled;
     }
 
-    /// Ok(streaming-capable) on success.
-    pub fn load(&self, path: PathBuf) -> Result<bool> {
-        let (tx, rx) = channel();
-        self.engine_commands
-            .send(EngineCommand::Load(path, tx))
-            .map_err(|_| anyhow!("engine thread is gone"))?;
-        rx.recv().map_err(|_| anyhow!("engine dropped the reply"))?
+    /// Selects the model for the next takes and queues its load. Returns at
+    /// once; anything queued after it, such as a take's batch pass, runs behind.
+    pub fn use_model(&self, path: PathBuf) {
+        self.settings().model = Some(path.clone());
+        let _ = self.engine_commands.send(EngineCommand::Load(path));
     }
 
     pub fn unload(&self) {
+        self.settings().model = None;
         let _ = self.engine_commands.send(EngineCommand::Unload);
     }
 
@@ -135,16 +136,6 @@ impl Recorder {
         let (tx, rx) = channel();
         self.engine_commands
             .send(EngineCommand::TranscribeSamples(samples, language, tx))
-            .map_err(|_| anyhow!("engine thread is gone"))?;
-        rx.recv().map_err(|_| anyhow!("engine dropped the reply"))?
-    }
-
-    /// Transcribes a WAV with the resident model, for settings verification.
-    pub fn transcribe_file(&self, path: PathBuf) -> Result<String> {
-        let language = self.settings().language.clone();
-        let (tx, rx) = channel();
-        self.engine_commands
-            .send(EngineCommand::TranscribeFile(path, language, tx))
             .map_err(|_| anyhow!("engine thread is gone"))?;
         rx.recv().map_err(|_| anyhow!("engine dropped the reply"))?
     }
@@ -188,7 +179,7 @@ fn run(
     loop {
         match commands.recv() {
             Ok(Command::Start) => {
-                let snapshot = settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let snapshot = settings.lock().clone();
                 if !record(&commands, levels.clone(), &engine, snapshot) {
                     return;
                 }
@@ -202,39 +193,26 @@ fn run(
 fn run_engine(commands: Receiver<EngineCommand>, engine: Arc<Mutex<Engine>>) {
     loop {
         match commands.recv() {
-            Ok(EngineCommand::Load(path, reply)) => {
-                let mut engine = lock(&engine);
-                let _ = reply.send(engine.load(&path).map(|_| engine.supports_streaming()));
+            Ok(EngineCommand::Load(path)) => {
+                if let Err(e) = engine.lock().load(&path) {
+                    tracing::warn!("model load failed: {e}");
+                }
             }
-            Ok(EngineCommand::Unload) => lock(&engine).unload(),
+            Ok(EngineCommand::Unload) => engine.lock().unload(),
             Ok(EngineCommand::TranscribeSamples(samples, language, reply)) => {
-                let _ = reply.send(lock(&engine).transcribe(&samples, language.as_deref()));
-            }
-            Ok(EngineCommand::TranscribeFile(path, language, reply)) => {
-                let mut engine = lock(&engine);
-                let _ = reply.send(
-                    crate::stt::engine::read_wav(&path)
-                        .and_then(|samples| engine.transcribe(&samples, language.as_deref())),
-                );
+                let _ = reply.send(engine.lock().transcribe(&samples, language.as_deref()));
             }
             Ok(EngineCommand::Shutdown) | Err(_) => return,
         }
     }
 }
 
-/// A panic mid-transcription poisons the engine but does not corrupt it, and
-/// refusing to dictate afterwards would be worse than carrying on.
-fn lock(engine: &Arc<Mutex<Engine>>) -> std::sync::MutexGuard<'_, Engine> {
-    engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 /// Runs one recording session and returns when it ends, `false` only on shutdown.
 ///
-/// Only a streaming take borrows the engine; every other take is captured on
-/// its own and transcribed through the engine thread afterwards, so a take
-/// never holds the model while a load or another transcription waits on it.
+/// A streaming take holds the engine for its whole duration, so it only starts
+/// when the engine is free and holds the wanted model. Every other take is
+/// captured on its own and transcribed through the engine thread afterwards,
+/// behind whatever load is queued.
 fn record(
     commands: &Receiver<Command>,
     levels: Sender<f32>,
@@ -245,15 +223,21 @@ fn record(
         device,
         language,
         capture_only,
+        model,
     } = settings;
 
-    if !capture_only {
+    if !capture_only && model.is_some() {
         match engine.try_lock() {
-            Ok(mut guard) => match guard.stream_begin(language.as_deref()) {
-                Ok(stream) => return record_streaming(commands, levels, device, language, stream),
-                Err(e) => tracing::debug!("streaming unavailable, capturing for a batch pass: {e}"),
-            },
-            Err(_) => tracing::debug!("engine busy, capturing for a later pass"),
+            Some(mut guard) if guard.resident() == model.as_deref() => {
+                match guard.stream_begin(language.as_deref()) {
+                    Ok(stream) => {
+                        return record_streaming(commands, levels, device, language, stream);
+                    }
+                    Err(e) => tracing::debug!("streaming unavailable, capturing for a batch pass: {e}"),
+                }
+            }
+            Some(_) => tracing::debug!("model not resident yet, capturing for a later pass"),
+            None => tracing::debug!("engine busy, capturing for a later pass"),
         }
     }
 
@@ -754,17 +738,23 @@ impl Pipeline {
 mod tests {
     use super::*;
 
-    /// A failed load must reach the host as an error, not be masked as success.
+    /// A failed load is reported by the transcription that needed it, with the
+    /// reason, not as a bare "no model loaded".
     #[test]
-    fn load_reports_failure() {
+    fn load_failure_reaches_the_transcription() {
         let (levels, _level_rx) = channel();
         let recorder = Recorder::spawn(levels);
 
         let missing = std::env::temp_dir().join("encre-nonexistent-model.gguf");
-        let result = recorder.load(missing);
+        recorder.use_model(missing.clone());
+        let result = recorder.transcribe_samples(vec![0.0; 1600], None);
 
         recorder.shutdown();
-        assert!(result.is_err(), "loading a missing file must fail");
+        let message = result.expect_err("transcribing without a model must fail").to_string();
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "error should name the file that failed to load, got: {message}"
+        );
     }
 }
 
@@ -780,13 +770,18 @@ mod settings_tests {
         recorder.set_language(Some("fr".to_owned()));
         recorder.set_device(Some("USB Microphone".to_owned()));
         recorder.set_capture_only(true);
+        recorder.use_model(PathBuf::from("/models/a.gguf"));
 
         let snapshot = recorder.settings().clone();
+        recorder.unload();
+        let after_unload = recorder.settings().model.clone();
         recorder.shutdown();
 
         assert_eq!(snapshot.language.as_deref(), Some("fr"));
         assert_eq!(snapshot.device.as_deref(), Some("USB Microphone"));
         assert!(snapshot.capture_only);
+        assert_eq!(snapshot.model.as_deref(), Some(std::path::Path::new("/models/a.gguf")));
+        assert!(after_unload.is_none(), "unload forgets the wanted model");
     }
 }
 

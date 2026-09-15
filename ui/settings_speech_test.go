@@ -57,6 +57,7 @@ func newEngineWindow(service, model, saved, localModelID string) *MainWindow {
 	speech.Language = saved
 	speech.ModelID = localModelID
 	w.config.SetSpeechSettings(speech)
+	w.speechModelDraft = localModelID
 
 	w.speechLanguage = widget.NewSelect(nil, nil)
 	w.speechLanguageEntry = widget.NewSelectEntry(nil)
@@ -401,5 +402,22 @@ func TestBuildingTheSpeechSectionKeepsTheSavedLanguage(t *testing.T) {
 	}
 	if w.languageSetKey != "local:"+local.ID {
 		t.Errorf("set key = %q; the tab should end on the saved engine", w.languageSetKey)
+	}
+
+	other := englishOnlyModel(t)
+	w.speechModels.onSelect(other)
+	if w.speechModelDraft != other.ID {
+		t.Errorf("picked model draft = %q, want %q", w.speechModelDraft, other.ID)
+	}
+	if got := w.config.SpeechSettings().ModelID; got != local.ID {
+		t.Errorf("picking a model wrote %q to the config before Save", got)
+	}
+	if got := w.selectedSpeechLanguage(); got != "en" {
+		t.Errorf("picker holds %q after moving to an English-only model, want en", got)
+	}
+
+	w.speechModels.onDeleted(other)
+	if w.speechModelDraft != "" {
+		t.Errorf("deleting the picked model left the draft at %q", w.speechModelDraft)
 	}
 }

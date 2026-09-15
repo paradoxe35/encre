@@ -13,6 +13,8 @@ use transcribe_cpp::{RunOptions, StreamOptions};
 /// reject `stream_begin` and the host falls back to [`Engine::transcribe`].
 pub struct Engine {
     loaded: Option<Loaded>,
+    /// Why the last load failed, reported by the transcription that needed it.
+    load_error: Option<String>,
 }
 
 struct Loaded {
@@ -22,11 +24,18 @@ struct Loaded {
 
 impl Engine {
     pub fn new() -> Self {
-        Self { loaded: None }
+        Self {
+            loaded: None,
+            load_error: None,
+        }
     }
 
     pub fn unload(&mut self) {
         self.loaded = None;
+    }
+
+    pub fn resident(&self) -> Option<&Path> {
+        self.loaded.as_ref().map(|l| l.path.as_path())
     }
 
     /// Idempotent for the resident model. The old model is freed before the new
@@ -37,26 +46,40 @@ impl Engine {
         }
 
         self.loaded = None;
+        self.load_error = None;
 
+        let result = Self::open(path);
+        match &result {
+            Ok(_) => {}
+            Err(e) => self.load_error = Some(e.to_string()),
+        }
+        self.loaded = Some(result?);
+        Ok(())
+    }
+
+    fn open(path: &Path) -> Result<Loaded> {
         let model =
             transcribe_cpp::Model::load_with(path, &transcribe_cpp::ModelOptions::default())
                 .map_err(|e| anyhow!("failed to load {}: {e}", path.display()))?;
         let session = model
             .session_with(&transcribe_cpp::SessionOptions::default())
             .map_err(|e| anyhow!("failed to open a session: {e}"))?;
-
-        self.loaded = Some(Loaded {
+        Ok(Loaded {
             path: path.to_path_buf(),
             session,
-        });
-        Ok(())
+        })
+    }
+
+    fn unavailable(&self) -> anyhow::Error {
+        match &self.load_error {
+            Some(reason) => anyhow!("{reason}"),
+            None => anyhow!("no model loaded"),
+        }
     }
 
     pub fn transcribe(&mut self, samples: &[f32], language: Option<&str>) -> Result<String> {
-        let loaded = self
-            .loaded
-            .as_mut()
-            .ok_or_else(|| anyhow!("no model loaded"))?;
+        let unavailable = self.unavailable();
+        let loaded = self.loaded.as_mut().ok_or(unavailable)?;
 
         let options = RunOptions {
             language: language.map(str::to_owned),
@@ -82,10 +105,8 @@ impl Engine {
     /// must be fed and finalized by the same owner with no other `run` call
     /// in between; the recorder thread guarantees that.
     pub fn stream_begin(&mut self, language: Option<&str>) -> Result<transcribe_cpp::Stream<'_>> {
-        let loaded = self
-            .loaded
-            .as_mut()
-            .ok_or_else(|| anyhow!("no model loaded"))?;
+        let unavailable = self.unavailable();
+        let loaded = self.loaded.as_mut().ok_or(unavailable)?;
 
         let options = RunOptions {
             language: language.map(str::to_owned),
@@ -96,24 +117,4 @@ impl Engine {
             .stream(&options, &StreamOptions::default())
             .map_err(|e| anyhow!("failed to begin stream: {e}"))
     }
-}
-
-/// Reads a 16 kHz mono 16-bit WAV, the format the engine expects.
-pub fn read_wav(path: &Path) -> Result<Vec<f32>> {
-    let mut reader = hound::WavReader::open(path)?;
-    let spec = reader.spec();
-
-    if spec.channels != 1 || spec.sample_rate != 16_000 {
-        return Err(anyhow!(
-            "expected 16 kHz mono, got {} Hz and {} channels",
-            spec.sample_rate,
-            spec.channels
-        ));
-    }
-
-    Ok(reader
-        .samples::<i16>()
-        .filter_map(Result::ok)
-        .map(|s| s as f32 / i16::MAX as f32)
-        .collect())
 }

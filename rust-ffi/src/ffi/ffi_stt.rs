@@ -60,10 +60,10 @@ pub unsafe extern "C" fn encre_stt_free(handle: SttHandle) {
     recogniser.recorder.shutdown();
 }
 
-/// Loads a model and keeps it resident. Idempotent for the same path, so the
-/// host may call it on every dictation.
+/// Selects the model for the next takes and starts loading it. Returns at
+/// once; a load failure is reported by the first transcription that needs it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn encre_stt_load(handle: SttHandle, path: *const c_char) -> c_int {
+pub unsafe extern "C" fn encre_stt_use_model(handle: SttHandle, path: *const c_char) -> c_int {
     let Some(recogniser) = recogniser(handle) else {
         return FFIErrorCode::NullPointer as c_int;
     };
@@ -72,19 +72,14 @@ pub unsafe extern "C" fn encre_stt_load(handle: SttHandle, path: *const c_char) 
         return FFIErrorCode::NullPointer as c_int;
     }
 
-    let path = match unsafe { c_str_to_string(path) } {
-        Ok(path) => path,
+    match unsafe { c_str_to_string(path) } {
+        Ok(path) => {
+            recogniser.recorder.use_model(PathBuf::from(path));
+            FFIErrorCode::Success as c_int
+        }
         Err(e) => {
             set_last_error(format!("Invalid model path: {e}"));
-            return FFIErrorCode::InvalidUtf8 as c_int;
-        }
-    };
-
-    match recogniser.recorder.load(PathBuf::from(&path)) {
-        Ok(_) => FFIErrorCode::Success as c_int,
-        Err(e) => {
-            set_last_error(e.to_string());
-            FFIErrorCode::OperationFailed as c_int
+            FFIErrorCode::InvalidUtf8 as c_int
         }
     }
 }
@@ -179,43 +174,10 @@ fn end_take(recogniser: &SpeechRecogniser) -> anyhow::Result<audio::Stopped> {
         if !*recording {
             return Err(anyhow::anyhow!("Not recording"));
         }
-        let pending = recogniser.recorder.begin_stop()?;
         *recording = false;
-        pending
+        recogniser.recorder.begin_stop()?
     };
     Recorder::await_stop(pending)
-}
-
-/// Transcribes a 16 kHz mono WAV without touching the microphone, so a model
-/// can be verified from settings.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn encre_stt_transcribe_file(
-    handle: SttHandle,
-    path: *const c_char,
-) -> *mut c_char {
-    let Some(recogniser) = recogniser(handle) else {
-        return std::ptr::null_mut();
-    };
-    if path.is_null() {
-        set_last_error("Null audio path provided".to_string());
-        return std::ptr::null_mut();
-    }
-
-    let path = match unsafe { c_str_to_string(path) } {
-        Ok(path) => path,
-        Err(e) => {
-            set_last_error(format!("Invalid audio path: {e}"));
-            return std::ptr::null_mut();
-        }
-    };
-
-    match recogniser.recorder.transcribe_file(PathBuf::from(&path)) {
-        Ok(text) => string_to_c_str(text),
-        Err(e) => {
-            set_last_error(e.to_string());
-            std::ptr::null_mut()
-        }
-    }
 }
 
 /// Selects the capture device by name. Null or empty means the system default.

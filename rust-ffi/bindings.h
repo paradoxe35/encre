@@ -127,10 +127,10 @@ encre_SttHandle encre_stt_new(encre_LevelCallback level);
 void encre_stt_free(encre_SttHandle handle);
 
 /**
- * Loads a model and keeps it resident. Idempotent for the same path, so the
- * host may call it on every dictation.
+ * Selects the model for the next takes and starts loading it. Returns at
+ * once; a load failure is reported by the first transcription that needs it.
  */
-int encre_stt_load(encre_SttHandle handle, const char *path);
+int encre_stt_use_model(encre_SttHandle handle, const char *path);
 
 int encre_stt_unload(encre_SttHandle handle);
 
@@ -143,12 +143,6 @@ int encre_stt_start(encre_SttHandle handle);
 char *encre_stt_stop(encre_SttHandle handle);
 
 int encre_stt_cancel(encre_SttHandle handle);
-
-/**
- * Transcribes a 16 kHz mono WAV without touching the microphone, so a model
- * can be verified from settings.
- */
-char *encre_stt_transcribe_file(encre_SttHandle handle, const char *path);
 
 /**
  * Selects the capture device by name. Null or empty means the system default.

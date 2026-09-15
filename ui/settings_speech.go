@@ -126,21 +126,27 @@ func (w *MainWindow) speechHeader() fyne.CanvasObject {
 func (w *MainWindow) localSpeechPane() *fyne.Container {
 	catalog := stt.Models()
 	store := w.speechStore()
-	active := widget.NewLabel(activeModelText(w.config.SpeechSettings().ModelID, catalog.Models, store.Downloaded))
+	w.speechModelDraft = w.config.SpeechSettings().ModelID
+	active := widget.NewLabel(activeModelText(w.speechModelDraft, catalog.Models, store.Downloaded))
 	active.TextStyle.Bold = true
 
-	w.speechModels = NewModelList(w.speechStore(), w.Window, w.config.SpeechSettings().ModelID,
+	w.speechModels = NewModelList(w.speechStore(), w.Window, w.speechModelDraft,
 		func(model stt.Model) {
-			speech := w.config.SpeechSettings()
-			speech.ModelID = model.ID
-			w.config.SetSpeechSettings(speech)
+			w.speechModelDraft = model.ID
 			active.SetText(activeModelText(model.ID, stt.Catalogue(), store.Downloaded))
-			// Settles the language through the same rule every other engine uses.
 			w.refreshLanguages(config.SpeechLocal)
 			w.markDirty()
 			w.statusBinding.Set("Speech model set to " + model.Name)
 		})
 	w.speechModels.SetActiveChanged(active.SetText)
+	w.speechModels.SetDeleted(func(model stt.Model) {
+		if model.ID != w.speechModelDraft {
+			return
+		}
+		w.speechModelDraft = ""
+		w.refreshLanguages(config.SpeechLocal)
+		w.markDirty()
+	})
 
 	summary := widget.NewLabel(fmt.Sprintf("%d models", len(catalog.Models)))
 	summary.TextStyle.Italic = true
@@ -272,11 +278,10 @@ func (w *MainWindow) buildSpeechOptions() {
 	w.speechCleanUp = w.dirtyCheck("Tidy the transcript with AI", speech.CleanUp)
 }
 
-// key tells a real change of set from a redraw; codes is only needed on a change.
+// key tells a real change of set from a redraw; resolve is only needed on a change.
 type languageSet struct {
 	key     string
-	codes   func() []string
-	detects bool
+	resolve func() (codes []string, detects bool)
 }
 
 // currentLanguageSet reads the engine, and for a hosted service the provider and
@@ -286,24 +291,27 @@ func (w *MainWindow) currentLanguageSet(engine config.SpeechEngine) languageSet 
 	case config.SpeechWitAI:
 		if witai.Available() {
 			// A Wit app is built for one language, so it never detects.
-			return languageSet{key: "witai", codes: witai.Languages}
+			return languageSet{key: "witai", resolve: func() ([]string, bool) { return witai.Languages(), false }}
 		}
 
 	case config.SpeechRemote:
 		preset, _ := stt.PresetByName(w.speechRemote.Selected)
 		model := w.speechRemoteModel.Text
 		return languageSet{
-			key:     "remote:" + stt.LanguageSetName(preset.ID, model),
-			codes:   func() []string { return stt.Codes(stt.LanguagesFor(preset.ID, model)) },
-			detects: true,
+			key: "remote:" + stt.LanguageSetName(preset.ID, model),
+			resolve: func() ([]string, bool) {
+				return stt.Codes(stt.LanguagesFor(preset.ID, model)), true
+			},
 		}
 	}
 
-	model, _ := stt.FindModel(w.config.SpeechSettings().ModelID)
+	modelID := w.speechModelDraft
 	return languageSet{
-		key:     "local:" + model.ID,
-		codes:   func() []string { return model.Languages },
-		detects: model.LanguageDetect,
+		key: "local:" + modelID,
+		resolve: func() ([]string, bool) {
+			model, _ := stt.FindModel(modelID)
+			return model.Languages, model.LanguageDetect
+		},
 	}
 }
 
@@ -322,7 +330,8 @@ func (w *MainWindow) refreshLanguages(engine config.SpeechEngine) {
 
 	default:
 		w.languageSetKey = set.key
-		w.speechLanguageDraft = stt.SwitchLanguage(set.codes(), set.detects,
+		codes, detects := set.resolve()
+		w.speechLanguageDraft = stt.SwitchLanguage(codes, detects,
 			w.selectedSpeechLanguage(), stt.SystemLanguage())
 	}
 
@@ -423,7 +432,7 @@ func (w *MainWindow) refreshSpeechLanguages() {
 	if w.speechLanguage == nil {
 		return
 	}
-	model, known := stt.FindModel(w.config.SpeechSettings().ModelID)
+	model, known := stt.FindModel(w.speechModelDraft)
 
 	names := make([]string, 0, len(model.Languages))
 	codeByName := make(map[string]string, len(model.Languages))
@@ -538,6 +547,7 @@ func (w *MainWindow) applySpeechSettings() {
 	speech := &current
 
 	speech.Engine = engineFromLabel(w.speechEngine.Selected)
+	speech.ModelID = w.speechModelDraft
 
 	speech.InputDevice = w.microphone.Device()
 	speech.Language = w.selectedSpeechLanguage()

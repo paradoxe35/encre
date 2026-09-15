@@ -67,6 +67,7 @@ type MainWindow struct {
 	speechLanguageCodes map[string]string
 	languageSetKey      string
 	speechLanguageDraft string
+	speechModelDraft    string
 	speechKeepLoaded    *widget.Check
 	speechCleanUp       *widget.Check
 	microphone          *MicrophonePicker

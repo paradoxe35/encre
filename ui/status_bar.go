@@ -6,9 +6,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -32,23 +30,7 @@ func (w *MainWindow) createStatusBar() fyne.CanvasObject {
 
 func (w *MainWindow) showStatusDetail() {
 	text, _ := w.statusBinding.Get()
-
-	message := widget.NewLabel(text)
-	message.Wrapping = fyne.TextWrapWord
-
-	copyButton := widget.NewButtonWithIcon("Copy", theme.ContentCopyIcon(), func() {
-		w.app.Clipboard().SetContent(text)
-	})
-
-	content := container.NewBorder(nil,
-		container.NewHBox(layout.NewSpacer(), copyButton),
-		nil, nil,
-		container.NewScroll(message),
-	)
-
-	detail := dialog.NewCustom("Status", "Close", content, w.Window)
-	detail.Resize(fyne.NewSize(460, 280))
-	detail.Show()
+	showTextDialog(w.Window, "Status", text, fyne.NewSize(460, 280))
 }
 
 // statusIcon is an info icon that becomes clickable, with a pointer cursor,

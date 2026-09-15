@@ -23,6 +23,7 @@ type ModelList struct {
 	window          fyne.Window
 	selected        string
 	onSelect        func(stt.Model)
+	onDeleted       func(stt.Model)
 	onActiveChanged func(string)
 
 	mu       sync.Mutex
@@ -297,23 +298,20 @@ func (m *ModelList) confirmDelete(model stt.Model) {
 					m.onActiveChanged(activeModelText(m.selected, stt.Catalogue(), m.store.Downloaded))
 				}
 			}
+			if m.onDeleted != nil {
+				m.onDeleted(model)
+			}
 			m.list.Refresh()
 		}, m.window)
 }
 
+func (m *ModelList) SetDeleted(callback func(stt.Model)) {
+	m.onDeleted = callback
+}
+
 // showModelDetails opens the facts about a model, with languages shown by name rather than code.
 func showModelDetails(window fyne.Window, model stt.Model, host stt.Machine, downloaded bool) {
-	body := widget.NewLabel(stt.ModelDetails(model, host, downloaded))
-	body.Wrapping = fyne.TextWrapWord
-	body.Selectable = true
-
-	// A multilingual model can list dozens of languages, taller than the dialog, so it scrolls.
-	content := container.NewVScroll(body)
-	content.SetMinSize(fyne.NewSize(400, 320))
-
-	d := dialog.NewCustom(model.Name, "Close", content, window)
-	d.Resize(fyne.NewSize(420, 360))
-	d.Show()
+	showTextDialog(window, model.Name, stt.ModelDetails(model, host, downloaded), fyne.NewSize(420, 360))
 }
 
 func errorsIsCancelled(err error) bool {

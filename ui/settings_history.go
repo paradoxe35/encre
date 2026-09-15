@@ -194,13 +194,7 @@ func showHistoryDetail(window fyne.Window, entry history.Entry) {
 	}
 	lines = append(lines, "", entry.At.Format("2 January 2006 at 15:04"))
 
-	body := widget.NewLabel(strings.Join(lines, "\n"))
-	body.Wrapping = fyne.TextWrapWord
-	body.Selectable = true
-
-	dialog := dialog.NewCustom("History entry", "Close", body, window)
-	dialog.Resize(fyne.NewSize(460, 380))
-	dialog.Show()
+	showTextDialog(window, "History entry", strings.Join(lines, "\n"), fyne.NewSize(460, 380))
 }
 
 func nonEmpty(values ...string) []string {

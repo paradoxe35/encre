@@ -44,6 +44,7 @@ var enumWindowsCallback = windows.NewCallback(func(hwnd windows.HWND, _ uintptr)
 		return 1 // keep enumerating
 	}
 
+	// The handles WM_SETICON returns are GLFW's, which destroys them itself.
 	if windowIcons.big != 0 {
 		procSendMessageW.Call(uintptr(hwnd), wmSetIcon, iconBig, uintptr(windowIcons.big))
 	}
@@ -96,7 +97,7 @@ func createIcon(frames []icoFrame, size int) windows.Handle {
 	handle, _, err := procCreateIconFromResourceEx.Call(
 		uintptr(unsafe.Pointer(&frame.data[0])),
 		uintptr(len(frame.data)),
-		1,
+		1, // an icon, not a cursor
 		iconResourceVersion,
 		uintptr(frame.width),
 		uintptr(frame.height),

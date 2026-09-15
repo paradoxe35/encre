@@ -79,12 +79,7 @@ func geminiTranscribeSpeech(ctx context.Context, cfg config.SpeechConfig, wav []
 		return "", err
 	}
 
-	base := strings.TrimRight(cfg.RemoteBaseURL, "/")
-	if base == "" {
-		base = geminiTranscribeBaseURL
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1beta/interactions",
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, geminiBaseURL(cfg)+"/v1beta/interactions",
 		bytes.NewReader(payload))
 	if err != nil {
 		return "", err

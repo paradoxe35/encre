@@ -151,6 +151,8 @@ func geminiTranscribe(ctx context.Context, cfg config.SpeechConfig, wav []byte) 
 	_, refused := geminiThinkingRefused.Load(key)
 	quiet := !refused && thinkingConfigFor(cfg.RemoteModel) != nil
 
+	// Matched on status, never message text: providers word refusals differently.
+	// Remembered only once dropping the field is confirmed to fix it.
 	text, err := sendGemini(ctx, cfg, request, quiet)
 	if quiet && isBadRequest(err) {
 		text, err = sendGemini(ctx, cfg, request, false)
@@ -162,7 +164,15 @@ func geminiTranscribe(ctx context.Context, cfg config.SpeechConfig, wav []byte) 
 }
 
 func geminiThinkingKey(cfg config.SpeechConfig) string {
-	return strings.TrimRight(cfg.RemoteBaseURL, "/") + "|" + strings.ToLower(strings.TrimSpace(cfg.RemoteModel))
+	return geminiBaseURL(cfg) + "|" + strings.ToLower(strings.TrimSpace(cfg.RemoteModel))
+}
+
+func geminiBaseURL(cfg config.SpeechConfig) string {
+	base := strings.TrimRight(cfg.RemoteBaseURL, "/")
+	if base == "" {
+		return geminiTranscribeBaseURL
+	}
+	return base
 }
 
 func geminiPromptFor(language string) string {
@@ -184,11 +194,7 @@ func sendGemini(ctx context.Context, cfg config.SpeechConfig, request geminiRequ
 		return "", err
 	}
 
-	base := strings.TrimRight(cfg.RemoteBaseURL, "/")
-	if base == "" {
-		base = geminiTranscribeBaseURL
-	}
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", base, cfg.RemoteModel)
+	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", geminiBaseURL(cfg), cfg.RemoteModel)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {

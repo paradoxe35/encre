@@ -12,7 +12,8 @@ import (
 
 func newStatusWindow(t *testing.T) (*MainWindow, *statusIcon) {
 	t.Helper()
-	w := &MainWindow{app: test.NewApp(), statusBinding: binding.NewString()}
+	test.NewApp()
+	w := &MainWindow{statusBinding: binding.NewString()}
 	w.Window = test.NewWindow(nil)
 	t.Cleanup(w.Window.Close)
 
