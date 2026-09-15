@@ -238,3 +238,44 @@ func TestSupersededLoadDoesNotClaimResidency(t *testing.T) {
 		t.Errorf("loaded = %q, want the model that actually replaced it", service.loaded)
 	}
 }
+
+type stubUnloader struct{ calls int }
+
+func (u *stubUnloader) Unload() { u.calls++ }
+
+func TestUnloadWaitsForTheTakeInProgress(t *testing.T) {
+	service := NewService()
+	service.keepLoaded = false
+	service.loaded = "/models/whisper.gguf"
+	unloader := &stubUnloader{}
+
+	service.recording = true
+	service.unloadIfNotKept(unloader)
+	if unloader.calls != 0 {
+		t.Fatal("unloaded while a take was recording")
+	}
+	if service.loaded == "" {
+		t.Fatal("forgot the resident model while a take still needs it")
+	}
+
+	service.recording = false
+	service.unloadIfNotKept(unloader)
+	if unloader.calls != 1 {
+		t.Fatalf("unload calls = %d, want 1 once the takes are done", unloader.calls)
+	}
+	if service.loaded != "" {
+		t.Errorf("loaded = %q, want cleared so the next take reloads", service.loaded)
+	}
+}
+
+func TestUnloadSkippedWhenKept(t *testing.T) {
+	service := NewService()
+	service.keepLoaded = true
+	service.loaded = "/models/whisper.gguf"
+	unloader := &stubUnloader{}
+
+	service.unloadIfNotKept(unloader)
+	if unloader.calls != 0 || service.loaded == "" {
+		t.Error("a kept model was unloaded")
+	}
+}

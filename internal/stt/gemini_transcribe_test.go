@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -459,5 +460,65 @@ func TestGeminiLiveModelIsRefusedWithAdvice(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "gemini-3.5-transcribe") {
 		t.Errorf("error = %q, want it to name the working model", err)
+	}
+}
+
+func TestGeminiUnknownModelDoesNotRetry(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":{"message":"audio is malformed"}}`)
+	}))
+	defer server.Close()
+
+	cfg := geminiConfig(server.URL)
+	cfg.RemoteModel = "gemini-flash-latest"
+
+	if _, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2}); err == nil {
+		t.Fatal("expected the 400 to surface")
+	}
+	if attempts != 1 {
+		t.Errorf("attempts = %d, want no retry with nothing to drop", attempts)
+	}
+}
+
+func TestGeminiRemembersARefusedThinkingConfig(t *testing.T) {
+	var attempts int
+	var sentConfig []bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		body, _ := io.ReadAll(r.Body)
+		var request geminiRequest
+		json.Unmarshal(body, &request)
+		quiet := request.GenerationConfig != nil && request.GenerationConfig.ThinkingConfig != nil
+		sentConfig = append(sentConfig, quiet)
+
+		if quiet {
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, `{"error":{"message":"thinkingLevel minimal is not supported"}}`)
+			return
+		}
+		io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`)
+	}))
+	defer server.Close()
+
+	cfg := geminiConfig(server.URL)
+	for take := range 2 {
+		text, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2})
+		if err != nil {
+			t.Fatalf("take %d: %v", take, err)
+		}
+		if text != "ok" {
+			t.Fatalf("take %d: text = %q", take, text)
+		}
+	}
+
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 2 for the first take and 1 for the second", attempts)
+	}
+	if want := []bool{true, false, false}; !slices.Equal(sentConfig, want) {
+		t.Errorf("thinking config per attempt = %v, want %v", sentConfig, want)
 	}
 }

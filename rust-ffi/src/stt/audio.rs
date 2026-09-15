@@ -31,16 +31,21 @@ const RESAMPLER_CHUNK: usize = 1024;
 const DRAIN_INTERVAL: Duration = Duration::from_millis(20);
 
 pub enum Command {
-    /// None means the system default. Takes effect on the next recording, so a
-    /// change mid-take cannot truncate what is being said.
-    SetDevice(Option<String>),
-    /// When true, `record` never touches the engine: it only captures, for a
-    /// remote engine that transcribes the raw audio itself.
-    SetCaptureOnly(bool),
     Start,
     Stop(Sender<Stopped>),
     Cancel,
     Shutdown,
+}
+
+/// Read at the start of each take; a change mid-take applies to the next one.
+#[derive(Clone, Default)]
+struct Settings {
+    /// None means the system default.
+    device: Option<String>,
+    /// None asks the model to detect.
+    language: Option<String>,
+    /// Capture without the engine, for a remote service or a model not resident yet.
+    capture_only: bool,
 }
 
 /// Handled on their own thread, so a load or a transcription can run while the
@@ -62,6 +67,8 @@ pub enum EngineCommand {
 pub struct Stopped {
     pub samples: Vec<f32>,
     pub text: Result<Option<String>, String>,
+    /// The language in force when the take was recorded.
+    pub language: Option<String>,
 }
 
 /// Owns the capture stream on its own thread. cpal delivers audio on a realtime
@@ -70,20 +77,18 @@ pub struct Stopped {
 pub struct Recorder {
     commands: Sender<Command>,
     engine_commands: Sender<EngineCommand>,
-    /// Shared because a take can be captured on one thread and transcribed on
-    /// the other, and both need the same answer. None asks the model to detect.
-    language: Arc<Mutex<Option<String>>>,
+    settings: Arc<Mutex<Settings>>,
 }
 
 impl Recorder {
     pub fn spawn(levels: Sender<f32>) -> Self {
         let engine = Arc::new(Mutex::new(Engine::new()));
-        let language: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let settings = Arc::new(Mutex::new(Settings::default()));
 
         let (tx, rx) = channel();
         let recorder_engine = engine.clone();
-        let recorder_language = language.clone();
-        thread::spawn(move || run(rx, levels, recorder_engine, recorder_language));
+        let recorder_settings = settings.clone();
+        thread::spawn(move || run(rx, levels, recorder_engine, recorder_settings));
 
         let (engine_tx, engine_rx) = channel();
         thread::spawn(move || run_engine(engine_rx, engine));
@@ -91,20 +96,24 @@ impl Recorder {
         Self {
             commands: tx,
             engine_commands: engine_tx,
-            language: language.clone(),
+            settings,
         }
     }
 
+    fn settings(&self) -> std::sync::MutexGuard<'_, Settings> {
+        self.settings.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn set_device(&self, name: Option<String>) {
-        let _ = self.commands.send(Command::SetDevice(name));
+        self.settings().device = name;
     }
 
     pub fn set_language(&self, code: Option<String>) {
-        *self.language.lock().unwrap_or_else(|e| e.into_inner()) = code;
+        self.settings().language = code;
     }
 
     pub fn set_capture_only(&self, enabled: bool) {
-        let _ = self.commands.send(Command::SetCaptureOnly(enabled));
+        self.settings().capture_only = enabled;
     }
 
     /// Ok(streaming-capable) on success.
@@ -120,9 +129,9 @@ impl Recorder {
         let _ = self.engine_commands.send(EngineCommand::Unload);
     }
 
-    /// Transcribes samples the recorder handed back.
-    pub fn transcribe_samples(&self, samples: Vec<f32>) -> Result<String> {
-        let language = self.language();
+    /// Queued behind any load in progress, so a take captured while its model
+    /// was coming up is transcribed once it is there.
+    pub fn transcribe_samples(&self, samples: Vec<f32>, language: Option<String>) -> Result<String> {
         let (tx, rx) = channel();
         self.engine_commands
             .send(EngineCommand::TranscribeSamples(samples, language, tx))
@@ -130,16 +139,9 @@ impl Recorder {
         rx.recv().map_err(|_| anyhow!("engine dropped the reply"))?
     }
 
-    fn language(&self) -> Option<String> {
-        self.language
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-    }
-
     /// Transcribes a WAV with the resident model, for settings verification.
     pub fn transcribe_file(&self, path: PathBuf) -> Result<String> {
-        let language = self.language();
+        let language = self.settings().language.clone();
         let (tx, rx) = channel();
         self.engine_commands
             .send(EngineCommand::TranscribeFile(path, language, tx))
@@ -160,13 +162,20 @@ impl Recorder {
         let _ = self.engine_commands.send(EngineCommand::Shutdown);
     }
 
-    /// Stops capture and returns what the recording produced.
-    pub fn stop(&self) -> Result<Stopped> {
+    /// Split from `await_stop` so a caller can send under its own lock without
+    /// holding it through transcription.
+    pub fn begin_stop(&self) -> Result<Receiver<Stopped>> {
         let (tx, rx) = channel();
         self.commands
             .send(Command::Stop(tx))
             .map_err(|_| anyhow!("recorder thread is gone"))?;
-        rx.recv().map_err(|_| anyhow!("recorder dropped the reply"))
+        Ok(rx)
+    }
+
+    pub fn await_stop(pending: Receiver<Stopped>) -> Result<Stopped> {
+        pending
+            .recv()
+            .map_err(|_| anyhow!("recorder dropped the reply"))
     }
 }
 
@@ -174,29 +183,18 @@ fn run(
     commands: Receiver<Command>,
     levels: Sender<f32>,
     engine: Arc<Mutex<Engine>>,
-    language: Arc<Mutex<Option<String>>>,
+    settings: Arc<Mutex<Settings>>,
 ) {
-    let mut preferred: Option<String> = None;
-    let mut capture_only = false;
-
     loop {
         match commands.recv() {
-            Ok(Command::SetDevice(name)) => preferred = name,
-            Ok(Command::SetCaptureOnly(enabled)) => capture_only = enabled,
             Ok(Command::Start) => {
-                if !record(
-                    &commands,
-                    levels.clone(),
-                    &engine,
-                    preferred.clone(),
-                    language.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-                    capture_only,
-                ) {
+                let snapshot = settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                if !record(&commands, levels.clone(), &engine, snapshot) {
                     return;
                 }
             }
+            Ok(Command::Stop(_)) | Ok(Command::Cancel) => {}
             Ok(Command::Shutdown) | Err(_) => return,
-            _ => {}
         }
     }
 }
@@ -206,7 +204,6 @@ fn run_engine(commands: Receiver<EngineCommand>, engine: Arc<Mutex<Engine>>) {
         match commands.recv() {
             Ok(EngineCommand::Load(path, reply)) => {
                 let mut engine = lock(&engine);
-                engine.unload();
                 let _ = reply.send(engine.load(&path).map(|_| engine.supports_streaming()));
             }
             Ok(EngineCommand::Unload) => lock(&engine).unload(),
@@ -235,34 +232,32 @@ fn lock(engine: &Arc<Mutex<Engine>>) -> std::sync::MutexGuard<'_, Engine> {
 
 /// Runs one recording session and returns when it ends, `false` only on shutdown.
 ///
-/// Capture never needs the engine, so a take whose model is still loading, or
-/// whose engine is busy with an earlier take, is captured and handed back as
-/// samples for the host to transcribe afterwards.
+/// Only a streaming take borrows the engine; every other take is captured on
+/// its own and transcribed through the engine thread afterwards, so a take
+/// never holds the model while a load or another transcription waits on it.
 fn record(
     commands: &Receiver<Command>,
     levels: Sender<f32>,
     engine: &Arc<Mutex<Engine>>,
-    preferred: Option<String>,
-    language: Option<String>,
-    capture_only: bool,
+    settings: Settings,
 ) -> bool {
-    if capture_only {
-        return record_batch(commands, levels, None, preferred, language);
+    let Settings {
+        device,
+        language,
+        capture_only,
+    } = settings;
+
+    if !capture_only {
+        match engine.try_lock() {
+            Ok(mut guard) => match guard.stream_begin(language.as_deref()) {
+                Ok(stream) => return record_streaming(commands, levels, device, language, stream),
+                Err(e) => tracing::debug!("streaming unavailable, capturing for a batch pass: {e}"),
+            },
+            Err(_) => tracing::debug!("engine busy, capturing for a later pass"),
+        }
     }
 
-    let Ok(mut guard) = engine.try_lock() else {
-        tracing::debug!("engine busy, capturing for a later pass");
-        return record_batch(commands, levels, None, preferred, language);
-    };
-
-    // Dropped explicitly so the borrow ends before the engine is handed on.
-    let started = guard.stream_begin(language.as_deref());
-    if let Ok(stream) = started {
-        return record_streaming(commands, levels, preferred, stream);
-    }
-    drop(started);
-    tracing::debug!("streaming unavailable, using batch transcription");
-    record_batch(commands, levels, Some(&mut guard), preferred, language)
+    record_batch(commands, levels, device, language)
 }
 
 /// Recording session with a live model stream. `stream` borrows the engine's
@@ -270,10 +265,11 @@ fn record(
 fn record_streaming(
     commands: &Receiver<Command>,
     levels: Sender<f32>,
-    preferred: Option<String>,
+    device: Option<String>,
+    language: Option<String>,
     live: transcribe_cpp::Stream<'_>,
 ) -> bool {
-    let mut stream = StreamGuard::open(levels, preferred.as_deref()).ok();
+    let mut stream = StreamGuard::open(levels, device.as_deref()).ok();
     let mut pipeline = Pipeline::new();
     pipeline.reset(stream.as_ref().map(|s| s.rate).unwrap_or(SAMPLE_RATE));
     // Kept as well as streamed: a feed failure would otherwise silently drop
@@ -299,6 +295,7 @@ fn record_streaming(
                         let _ = reply.send(Stopped {
                             samples: spoken,
                             text: Ok(None),
+                            language,
                         });
                         return true;
                     }
@@ -309,6 +306,7 @@ fn record_streaming(
                     let _ = reply.send(Stopped {
                         samples: Vec::new(),
                         text,
+                        language,
                     });
                     return true;
                 }
@@ -338,16 +336,14 @@ fn record_streaming(
     }
 }
 
-/// Recording session without streaming. With no engine it only captures, and
-/// the samples go back to the host to transcribe.
+/// Capture only; the host transcribes the samples afterwards.
 fn record_batch(
     commands: &Receiver<Command>,
     levels: Sender<f32>,
-    mut engine: Option<&mut Engine>,
-    preferred: Option<String>,
+    device: Option<String>,
     language: Option<String>,
 ) -> bool {
-    let mut stream = StreamGuard::open(levels, preferred.as_deref()).ok();
+    let mut stream = StreamGuard::open(levels, device.as_deref()).ok();
     let mut pipeline = Pipeline::new();
     pipeline.reset(stream.as_ref().map(|s| s.rate).unwrap_or(SAMPLE_RATE));
     let mut batched: Vec<f32> = Vec::new();
@@ -358,24 +354,14 @@ fn record_batch(
             Err(RecvTimeoutError::Timeout) => {}
             Ok(command) => match command {
                 Command::Stop(reply) => {
-                    let samples = drain(&mut stream, &mut pipeline);
-                    batched.extend_from_slice(&samples);
-                    let samples = std::mem::take(&mut batched);
+                    let tail = drain(&mut stream, &mut pipeline);
+                    batched.extend_from_slice(&tail);
 
-                    let text = match &mut engine {
-                        Some(engine) if !samples.is_empty() => engine
-                            .transcribe(&samples, language.as_deref())
-                            .map(Some)
-                            .map_err(|e| format!("batch transcription failed: {e}")),
-                        _ => Ok(None),
-                    };
-                    let samples = if matches!(text, Ok(Some(_))) {
-                        Vec::new()
-                    } else {
-                        samples
-                    };
-
-                    let _ = reply.send(Stopped { samples, text });
+                    let _ = reply.send(Stopped {
+                        samples: std::mem::take(&mut batched),
+                        text: Ok(None),
+                        language,
+                    });
                     return true;
                 }
                 Command::Cancel => {
@@ -783,6 +769,28 @@ mod tests {
 }
 
 #[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn settings_are_kept_until_read() {
+        let (levels, _level_rx) = channel();
+        let recorder = Recorder::spawn(levels);
+
+        recorder.set_language(Some("fr".to_owned()));
+        recorder.set_device(Some("USB Microphone".to_owned()));
+        recorder.set_capture_only(true);
+
+        let snapshot = recorder.settings().clone();
+        recorder.shutdown();
+
+        assert_eq!(snapshot.language.as_deref(), Some("fr"));
+        assert_eq!(snapshot.device.as_deref(), Some("USB Microphone"));
+        assert!(snapshot.capture_only);
+    }
+}
+
+#[cfg(test)]
 mod degraded_tests {
     use super::*;
 
@@ -792,6 +800,7 @@ mod degraded_tests {
         let stopped = Stopped {
             samples: vec![0.1, 0.2, 0.3],
             text: Ok(None),
+            language: None,
         };
 
         assert!(
@@ -811,6 +820,7 @@ mod degraded_tests {
         let stopped = Stopped {
             samples: Vec::new(),
             text: Ok(None),
+            language: None,
         };
         assert!(stopped.samples.is_empty());
     }

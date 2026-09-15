@@ -11,9 +11,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/paradoxe35/encre/internal/config"
 )
+
+// Endpoint and model pairs that rejected the quiet request, so the re-upload is paid once.
+var geminiThinkingRefused sync.Map
 
 // Gemini counts the whole request, base64 included, against 20 MB. Staying under
 // it leaves room for the prompt; at 16 kHz mono that is still about six minutes.
@@ -143,13 +147,22 @@ func geminiTranscribe(ctx context.Context, cfg config.SpeechConfig, wav []byte) 
 		}},
 	}
 
-	// Thinking is latency the user waits through with a half-typed sentence, but
-	// a model that cannot switch it off rejects the field outright.
-	text, err := sendGemini(ctx, cfg, request, true)
-	if isBadRequest(err) {
-		return sendGemini(ctx, cfg, request, false)
+	key := geminiThinkingKey(cfg)
+	_, refused := geminiThinkingRefused.Load(key)
+	quiet := !refused && thinkingConfigFor(cfg.RemoteModel) != nil
+
+	text, err := sendGemini(ctx, cfg, request, quiet)
+	if quiet && isBadRequest(err) {
+		text, err = sendGemini(ctx, cfg, request, false)
+		if err == nil {
+			geminiThinkingRefused.Store(key, true)
+		}
 	}
 	return text, err
+}
+
+func geminiThinkingKey(cfg config.SpeechConfig) string {
+	return strings.TrimRight(cfg.RemoteBaseURL, "/") + "|" + strings.ToLower(strings.TrimSpace(cfg.RemoteModel))
 }
 
 func geminiPromptFor(language string) string {

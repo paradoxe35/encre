@@ -66,6 +66,7 @@ type MainWindow struct {
 	speechLanguageBox   *fyne.Container
 	speechLanguageCodes map[string]string
 	languageSetKey      string
+	speechLanguageDraft string
 	speechKeepLoaded    *widget.Check
 	speechCleanUp       *widget.Check
 	microphone          *MicrophonePicker

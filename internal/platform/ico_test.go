@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// buildICO assembles an icon file whose frames are just filler bytes, enough
-// for the directory logic under test.
 func buildICO(sizes ...int) []byte {
 	header := make([]byte, icoHeaderSize+len(sizes)*icoEntrySize)
 	binary.LittleEndian.PutUint16(header[2:4], 1)
@@ -80,8 +78,6 @@ func TestPickFramePrefersExactThenLarger(t *testing.T) {
 	}
 }
 
-// The shipped icon must carry the sizes Windows asks for at common scale
-// factors, so the small icon is never a shrunk 256 px render.
 func TestShippedIconHasWindowsSizes(t *testing.T) {
 	ico, err := os.ReadFile(filepath.Join("..", "..", "assets", "icon.ico"))
 	if err != nil {
@@ -97,7 +93,6 @@ func TestShippedIconHasWindowsSizes(t *testing.T) {
 	for _, frame := range frames {
 		have[frame.width] = true
 	}
-	// 100%, 125%, 150% and 200% scaling, small and big.
 	for _, size := range []int{16, 20, 24, 32, 40, 48, 64} {
 		if !have[size] {
 			t.Errorf("assets/icon.ico has no %d px frame; run scripts/generate_icons.py", size)

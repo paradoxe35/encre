@@ -37,10 +37,12 @@ func (w *MainWindow) speechLanguageCode(label string) string {
 	return strings.TrimSpace(label)
 }
 
-// selectedSpeechLanguage reads the picker that is currently on screen.
 func (w *MainWindow) selectedSpeechLanguage() string {
 	if w.speechLanguageEntry != nil && w.speechLanguageEntry.Visible() {
 		return w.speechLanguageCode(w.speechLanguageEntry.Text)
+	}
+	if w.speechLanguage == nil {
+		return w.speechLanguageDraft
 	}
 	return w.speechLanguageCode(w.speechLanguage.Selected)
 }
@@ -270,12 +272,10 @@ func (w *MainWindow) buildSpeechOptions() {
 	w.speechCleanUp = w.dirtyCheck("Tidy the transcript with AI", speech.CleanUp)
 }
 
-// languageSet is what the engine currently configured can do. key identifies it
-// so a real change can be told from a redraw, and from a model name being typed
-// one letter at a time.
+// key tells a real change of set from a redraw; codes is only needed on a change.
 type languageSet struct {
 	key     string
-	codes   []string
+	codes   func() []string
 	detects bool
 }
 
@@ -286,15 +286,15 @@ func (w *MainWindow) currentLanguageSet(engine config.SpeechEngine) languageSet 
 	case config.SpeechWitAI:
 		if witai.Available() {
 			// A Wit app is built for one language, so it never detects.
-			return languageSet{key: "witai", codes: witai.Languages()}
+			return languageSet{key: "witai", codes: witai.Languages}
 		}
 
 	case config.SpeechRemote:
 		preset, _ := stt.PresetByName(w.speechRemote.Selected)
-		name := stt.LanguageSetName(preset.ID, w.speechRemoteModel.Text)
+		model := w.speechRemoteModel.Text
 		return languageSet{
-			key:     "remote:" + name,
-			codes:   stt.Codes(stt.LanguagesFor(preset.ID, w.speechRemoteModel.Text)),
+			key:     "remote:" + stt.LanguageSetName(preset.ID, model),
+			codes:   func() []string { return stt.Codes(stt.LanguagesFor(preset.ID, model)) },
 			detects: true,
 		}
 	}
@@ -302,31 +302,28 @@ func (w *MainWindow) currentLanguageSet(engine config.SpeechEngine) languageSet 
 	model, _ := stt.FindModel(w.config.SpeechSettings().ModelID)
 	return languageSet{
 		key:     "local:" + model.ID,
-		codes:   model.Languages,
+		codes:   func() []string { return model.Languages },
 		detects: model.LanguageDetect,
 	}
 }
 
-// refreshLanguages settles the language for the engine now in effect, then
-// redraws the picker from it.
-//
-// Every engine goes through one rule: leave a detecting engine to detect, and
-// on one that cannot, keep the language if it can serve it, else fall back.
-// Writing the result to the config rather than only showing it keeps the picker
-// reading from a single place, so a second switch starts from the first.
+// The settled language is draft state until Save; the config a dictation reads
+// must not change because the dropdown was looked at.
 func (w *MainWindow) refreshLanguages(engine config.SpeechEngine) {
 	set := w.currentLanguageSet(engine)
 
-	if w.languageSetKey == "" {
-		// First draw of the session: show what was saved, do not re-decide it.
+	switch {
+	case w.initializing || w.languageSetKey == "":
 		w.languageSetKey = set.key
-	} else if set.key != w.languageSetKey {
-		w.languageSetKey = set.key
+		w.speechLanguageDraft = w.config.SpeechSettings().Language
 
-		speech := w.config.SpeechSettings()
-		speech.Language = stt.SwitchLanguage(set.codes, set.detects,
-			speech.Language, stt.SystemLanguage())
-		w.config.SetSpeechSettings(speech)
+	case set.key == w.languageSetKey:
+		return
+
+	default:
+		w.languageSetKey = set.key
+		w.speechLanguageDraft = stt.SwitchLanguage(set.codes(), set.detects,
+			w.selectedSpeechLanguage(), stt.SystemLanguage())
 	}
 
 	switch engine {
@@ -374,7 +371,7 @@ func (w *MainWindow) refreshRemoteLanguages() {
 
 	// Carry the choice across a change of service: fr-FR and fr are one request.
 	selected := detectLanguageLabel
-	if code := stt.MatchLanguage(languages, w.config.SpeechSettings().Language); code != "" {
+	if code := stt.MatchLanguage(languages, w.speechLanguageDraft); code != "" {
 		for _, language := range languages {
 			if language.Code == code {
 				selected = language.Name
@@ -403,11 +400,10 @@ func (w *MainWindow) showFreeformLanguages() {
 	w.speechLanguageCodes = codeByName
 	w.speechLanguageEntry.SetOptions(labels)
 
-	current := w.config.SpeechSettings().Language
-	if current == "" {
+	if w.speechLanguageDraft == "" {
 		w.speechLanguageEntry.SetText(detectLanguageLabel)
 	} else {
-		w.speechLanguageEntry.SetText(stt.LanguageName(current))
+		w.speechLanguageEntry.SetText(stt.LanguageName(w.speechLanguageDraft))
 	}
 
 	w.speechLanguage.Hide()
@@ -446,7 +442,7 @@ func (w *MainWindow) refreshSpeechLanguages() {
 	w.speechLanguage.Options = labels
 	w.speechLanguageCodes = codeByName
 	w.showFixedLanguages()
-	w.speechLanguage.SetSelected(speechLanguageLabel(model, w.config.SpeechSettings().Language))
+	w.speechLanguage.SetSelected(speechLanguageLabel(model, w.speechLanguageDraft))
 }
 
 // refreshWitAILanguages lists the languages with an embedded key; there is no
@@ -470,7 +466,7 @@ func (w *MainWindow) refreshWitAILanguages() {
 	w.speechLanguageCodes = codeByName
 	w.showFixedLanguages()
 
-	selected := stt.LanguageName(w.config.SpeechSettings().Language)
+	selected := stt.LanguageName(w.speechLanguageDraft)
 	if _, ok := codeByName[selected]; !ok {
 		selected = witaiFallbackLanguage(labels, codeByName)
 	}

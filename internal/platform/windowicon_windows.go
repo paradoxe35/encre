@@ -26,22 +26,17 @@ const (
 	smCxIcon   = 11
 	smCxSmIcon = 49
 
-	// The only icon format version there is.
 	iconResourceVersion = 0x00030000
-
-	// GLFW registers every window it creates under this class; Fyne creates no others.
-	glfwWindowClass = "GLFW30"
+	glfwWindowClass     = "GLFW30"
 )
 
-// windowIcons is what the last SetWindowIcons installed. Windows keeps drawing
-// from the handle, so they live until the next call replaces them.
+// Windows keeps drawing from these handles, so they live until replaced.
 var windowIcons struct {
 	big, small windows.Handle
 	applied    int
 }
 
-// enumWindowsCallback is created once: every NewCallback takes a slot from a
-// small process-wide pool that is never given back.
+// Created once: NewCallback slots are never given back.
 var enumWindowsCallback = windows.NewCallback(func(hwnd windows.HWND, _ uintptr) uintptr {
 	var owner uint32
 	windows.GetWindowThreadProcessId(hwnd, &owner)
@@ -49,7 +44,6 @@ var enumWindowsCallback = windows.NewCallback(func(hwnd windows.HWND, _ uintptr)
 		return 1 // keep enumerating
 	}
 
-	// The handles WM_SETICON returns are GLFW's; it destroys them itself.
 	if windowIcons.big != 0 {
 		procSendMessageW.Call(uintptr(hwnd), wmSetIcon, iconBig, uintptr(windowIcons.big))
 	}
@@ -60,10 +54,8 @@ var enumWindowsCallback = windows.NewCallback(func(hwnd windows.HWND, _ uintptr)
 	return 1
 })
 
-// SetWindowIcons gives every GLFW window in this process the frame from ico
-// that matches each size Windows asks for. Fyne offers GLFW one 256 px image,
-// which GLFW then installs as the 16 px icon too, and Task Manager draws that
-// at its full size. Call after the window is shown, from Fyne's main goroutine.
+// SetWindowIcons replaces the single 256 px image GLFW installs for every
+// size, which Task Manager draws at full size, with the frame drawn for each.
 func SetWindowIcons(ico []byte) {
 	frames, err := icoFrames(ico)
 	if err != nil {
@@ -95,8 +87,6 @@ func SetWindowIcons(ico []byte) {
 		"big_px", systemMetric(smCxIcon), "small_px", systemMetric(smCxSmIcon))
 }
 
-// createIcon builds an HICON from the frame nearest to size pixels, at the
-// frame's own size: Windows scales at draw time when the two differ.
 func createIcon(frames []icoFrame, size int) windows.Handle {
 	frame, ok := pickFrame(frames, size)
 	if !ok {
@@ -106,7 +96,7 @@ func createIcon(frames []icoFrame, size int) windows.Handle {
 	handle, _, err := procCreateIconFromResourceEx.Call(
 		uintptr(unsafe.Pointer(&frame.data[0])),
 		uintptr(len(frame.data)),
-		1, // an icon, not a cursor
+		1,
 		iconResourceVersion,
 		uintptr(frame.width),
 		uintptr(frame.height),

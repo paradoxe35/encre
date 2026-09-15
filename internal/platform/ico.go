@@ -5,8 +5,6 @@ import (
 	"fmt"
 )
 
-// icoFrame is one image inside an .ico file, in the form Windows' icon APIs
-// take: a BITMAPINFOHEADER-led DIB or a PNG stream, without the directory.
 type icoFrame struct {
 	width  int
 	height int
@@ -18,8 +16,6 @@ const (
 	icoEntrySize  = 16
 )
 
-// icoFrames lists the images in an .ico file. It reads only the directory;
-// the frame bytes are sliced from ico and share its memory.
 func icoFrames(ico []byte) ([]icoFrame, error) {
 	if len(ico) < icoHeaderSize {
 		return nil, fmt.Errorf("ico: %d bytes is too short for a header", len(ico))
@@ -40,7 +36,6 @@ func icoFrames(ico []byte) ([]icoFrame, error) {
 	for i := range count {
 		entry := ico[icoHeaderSize+i*icoEntrySize:]
 
-		// A zero byte means 256: the field cannot hold it.
 		width, height := int(entry[0]), int(entry[1])
 		if width == 0 {
 			width = 256
@@ -60,9 +55,7 @@ func icoFrames(ico []byte) ([]icoFrame, error) {
 	return frames, nil
 }
 
-// pickFrame chooses the image to show at size pixels: the exact size when
-// there is one, else the smallest that is larger, so Windows shrinks rather
-// than stretches. With nothing large enough, the largest there is.
+// Exact size, else the smallest larger one, else the largest there is.
 func pickFrame(frames []icoFrame, size int) (icoFrame, bool) {
 	var best icoFrame
 	found := false
@@ -79,7 +72,6 @@ func pickFrame(frames []icoFrame, size int) (icoFrame, bool) {
 		case !found:
 			best, found = frame, true
 		case best.width < size && frame.width > best.width:
-			// Anything larger beats a frame that would have to be stretched.
 			best = frame
 		case best.width > size && frame.width >= size && frame.width < best.width:
 			best = frame

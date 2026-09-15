@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/stt"
@@ -86,7 +88,7 @@ func TestRefreshRemoteLanguagesPerService(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.service+"/"+tc.model, func(t *testing.T) {
 			w := newLanguageWindow(tc.service, tc.model, "fr")
-			w.refreshRemoteLanguages()
+			w.refreshLanguages(config.SpeechRemote)
 
 			if w.speechLanguageEntry.Visible() != tc.wantFreeText {
 				t.Fatalf("free text = %v, want %v", w.speechLanguageEntry.Visible(), tc.wantFreeText)
@@ -112,13 +114,13 @@ func TestRefreshRemoteLanguagesPerService(t *testing.T) {
 // fr in the config reads as fr-FR under Gemini and fr under Groq.
 func TestSavedLanguageRestoredInServiceForm(t *testing.T) {
 	gemini := newLanguageWindow("Google Gemini", "gemini-3.5-transcribe", "fr")
-	gemini.refreshRemoteLanguages()
+	gemini.refreshLanguages(config.SpeechRemote)
 	if got := gemini.selectedSpeechLanguage(); got != "fr-FR" {
 		t.Errorf("Gemini French = %q, want fr-FR", got)
 	}
 
 	groq := newLanguageWindow("Groq", "whisper-large-v3", "fr")
-	groq.refreshRemoteLanguages()
+	groq.refreshLanguages(config.SpeechRemote)
 	if got := groq.selectedSpeechLanguage(); got != "fr" {
 		t.Errorf("Groq French = %q, want fr", got)
 	}
@@ -140,8 +142,11 @@ func TestServiceSwitchFallsBackToDetect(t *testing.T) {
 	if w.speechLanguage.Selected != detectLanguageLabel {
 		t.Errorf("after switch = %q, want %q", w.speechLanguage.Selected, detectLanguageLabel)
 	}
-	if got := w.config.SpeechSettings().Language; got != "" {
-		t.Errorf("config kept %q; the local path writes the new choice through", got)
+	if got := w.selectedSpeechLanguage(); got != "" {
+		t.Errorf("picker holds %q; the switch should hand the choice to the engine", got)
+	}
+	if got := w.config.SpeechSettings().Language; got != "fr" {
+		t.Errorf("config changed to %q before Save", got)
 	}
 }
 
@@ -171,7 +176,7 @@ func TestModelSwitchOnlyResetsOnSetChange(t *testing.T) {
 // A language the new service cannot serve falls back rather than being sent.
 func TestUnservableLanguageFallsBackToDetect(t *testing.T) {
 	w := newLanguageWindow("Groq", "whisper-large-v3", "kea-CV")
-	w.refreshRemoteLanguages()
+	w.refreshLanguages(config.SpeechRemote)
 
 	if w.speechLanguage.Selected != detectLanguageLabel {
 		t.Errorf("selected = %q, want %q", w.speechLanguage.Selected, detectLanguageLabel)
@@ -184,7 +189,7 @@ func TestUnservableLanguageFallsBackToDetect(t *testing.T) {
 // A code typed for an unknown model is saved as typed, not dropped.
 func TestFreeTextLanguageIsSaved(t *testing.T) {
 	w := newLanguageWindow("Custom", "some-local-server", "")
-	w.refreshRemoteLanguages()
+	w.refreshLanguages(config.SpeechRemote)
 
 	if w.speechLanguageEntry.Text != detectLanguageLabel {
 		t.Fatalf("value = %q, want %q", w.speechLanguageEntry.Text, detectLanguageLabel)
@@ -241,8 +246,8 @@ func TestSwitchFromHostedAutoToNonDetectingLocal(t *testing.T) {
 
 	w.refreshLanguages(config.SpeechLocal)
 
-	if got := w.config.SpeechSettings().Language; got != "en" {
-		t.Errorf("after the switch config holds %q, want en", got)
+	if got := w.selectedSpeechLanguage(); got != "en" {
+		t.Errorf("after the switch the picker holds %q, want en", got)
 	}
 	if w.speechLanguage.Selected != "English" {
 		t.Errorf("picker shows %q, want English", w.speechLanguage.Selected)
@@ -274,13 +279,13 @@ func TestSwitchToDetectingEngineReturnsToAuto(t *testing.T) {
 	w := newEngineWindow("Groq", "whisper-large-v3", "en", local.ID)
 
 	w.refreshLanguages(config.SpeechLocal)
-	if got := w.config.SpeechSettings().Language; got != "en" {
+	if got := w.selectedSpeechLanguage(); got != "en" {
 		t.Fatalf("local holds %q, want en", got)
 	}
 
 	w.refreshLanguages(config.SpeechRemote)
 
-	if got := w.config.SpeechSettings().Language; got != "" {
+	if got := w.selectedSpeechLanguage(); got != "" {
 		t.Errorf("hosted holds %q, want auto-detect", got)
 	}
 	if w.speechLanguage.Selected != detectLanguageLabel {
@@ -330,5 +335,71 @@ func TestTypingAModelNameDoesNotClearTheLanguage(t *testing.T) {
 		if got := w.config.SpeechSettings().Language; got != "fr" {
 			t.Fatalf("typing %q changed the language to %q", partial, got)
 		}
+	}
+}
+
+func nonDetectingModelSpeaking(t *testing.T, codes ...string) stt.Model {
+	t.Helper()
+	for _, model := range stt.Catalogue() {
+		if model.LanguageDetect {
+			continue
+		}
+		speaksAll := true
+		for _, code := range codes {
+			speaksAll = speaksAll && model.Speaks(code)
+		}
+		if speaksAll {
+			return model
+		}
+	}
+	t.Skipf("no non-detecting model in the catalogue speaks %v", codes)
+	return stt.Model{}
+}
+
+func TestSwitchStartsFromTheUnsavedPick(t *testing.T) {
+	local := nonDetectingModelSpeaking(t, "de", "fr")
+	w := newEngineWindow("Groq", "whisper-large-v3", "fr", local.ID)
+	w.refreshLanguages(config.SpeechRemote)
+
+	w.speechLanguage.SetSelected("German")
+	w.refreshLanguages(config.SpeechLocal)
+
+	if got := w.selectedSpeechLanguage(); got != "de" {
+		t.Errorf("after the switch the picker holds %q, want the German just picked", got)
+	}
+	if got := w.config.SpeechSettings().Language; got != "fr" {
+		t.Errorf("config changed to %q before Save", got)
+	}
+}
+
+func TestBuildingTheSpeechSectionKeepsTheSavedLanguage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	local := multilingualDetectingModel(t)
+	if !local.Speaks("fr") {
+		t.Skip("the detecting model does not speak French")
+	}
+
+	w := &MainWindow{config: config.Default(), initializing: true}
+	w.Window = test.NewWindow(nil)
+	defer w.Window.Close()
+	w.statusBinding = binding.NewString()
+
+	speech := w.config.SpeechSettings()
+	speech.Engine = config.SpeechLocal
+	speech.ModelID = local.ID
+	speech.Language = "fr"
+	w.config.SetSpeechSettings(speech)
+
+	w.createSpeechSection()
+	w.initializing = false
+
+	if got := w.config.SpeechSettings().Language; got != "fr" {
+		t.Errorf("building the tab changed the saved language to %q", got)
+	}
+	if got := w.selectedSpeechLanguage(); got != "fr" {
+		t.Errorf("picker shows %q, want the saved French", got)
+	}
+	if w.languageSetKey != "local:"+local.ID {
+		t.Errorf("set key = %q; the tab should end on the saved engine", w.languageSetKey)
 	}
 }

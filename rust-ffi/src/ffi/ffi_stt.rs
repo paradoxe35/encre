@@ -123,16 +123,7 @@ pub unsafe extern "C" fn encre_stt_stop(handle: SttHandle) -> *mut c_char {
         return std::ptr::null_mut();
     };
 
-    {
-        let mut recording = recogniser.recording.lock();
-        if !*recording {
-            set_last_error("Not recording".to_string());
-            return std::ptr::null_mut();
-        }
-        *recording = false;
-    }
-
-    let stopped = match recogniser.recorder.stop() {
+    let stopped = match end_take(recogniser) {
         Ok(stopped) => stopped,
         Err(e) => {
             set_last_error(e.to_string());
@@ -149,7 +140,10 @@ pub unsafe extern "C" fn encre_stt_stop(handle: SttHandle) -> *mut c_char {
             if stopped.samples.is_empty() {
                 return string_to_c_str(String::new());
             }
-            match recogniser.recorder.transcribe_samples(stopped.samples) {
+            match recogniser
+                .recorder
+                .transcribe_samples(stopped.samples, stopped.language)
+            {
                 Ok(text) => string_to_c_str(text),
                 Err(e) => {
                     set_last_error(e.to_string());
@@ -171,9 +165,25 @@ pub unsafe extern "C" fn encre_stt_cancel(handle: SttHandle) -> c_int {
         return FFIErrorCode::NullPointer as c_int;
     };
 
-    *recogniser.recording.lock() = false;
+    let mut recording = recogniser.recording.lock();
     recogniser.recorder.cancel();
+    *recording = false;
     FFIErrorCode::Success as c_int
+}
+
+/// The Stop is sent under the recording flag so no Start can land ahead of it;
+/// the wait happens outside, so the next take can start once capture has ended.
+fn end_take(recogniser: &SpeechRecogniser) -> anyhow::Result<audio::Stopped> {
+    let pending = {
+        let mut recording = recogniser.recording.lock();
+        if !*recording {
+            return Err(anyhow::anyhow!("Not recording"));
+        }
+        let pending = recogniser.recorder.begin_stop()?;
+        *recording = false;
+        pending
+    };
+    Recorder::await_stop(pending)
 }
 
 /// Transcribes a 16 kHz mono WAV without touching the microphone, so a model
@@ -284,16 +294,7 @@ pub unsafe extern "C" fn encre_stt_stop_pcm(handle: SttHandle, out_len: *mut usi
         return std::ptr::null_mut();
     }
 
-    {
-        let mut recording = recogniser.recording.lock();
-        if !*recording {
-            set_last_error("Not recording".to_string());
-            return std::ptr::null_mut();
-        }
-        *recording = false;
-    }
-
-    let stopped = match recogniser.recorder.stop() {
+    let stopped = match end_take(recogniser) {
         Ok(stopped) => stopped,
         Err(e) => {
             set_last_error(e.to_string());

@@ -303,14 +303,14 @@ func (s *Service) StopRecording() (string, error) {
 		return s.stopWitAI(speech, lang)
 	}
 
-	if err := s.awaitLoad(); err != nil {
-		// The recorder is still in the take and only leaves on stop or cancel;
-		// returning here would hold the microphone open for good.
-		speech.Cancel()
-		return "", err
+	// Stop before awaiting the load: the batch pass queues behind the load anyway,
+	// and waiting first would keep the microphone open until the load finished.
+	text, err := speech.Stop()
+
+	if loadErr := s.awaitLoad(); loadErr != nil {
+		return "", loadErr
 	}
 
-	text, err := speech.Stop()
 	s.unloadIfNotKept(speech)
 	if err != nil {
 		return "", err
@@ -357,23 +357,21 @@ func (s *Service) stopRemote(speech *input.FFISpeech, cfg config.SpeechConfig) (
 	return text, nil
 }
 
-// unloadIfNotKept releases the resident model's memory once a local dictation finishes when
-// "Keep the model in memory" is off; clearing s.loaded makes the next dictation reload it.
-func (s *Service) unloadIfNotKept(speech *input.FFISpeech) {
-	s.mu.Lock()
-	keep, loaded := s.keepLoaded, s.loaded
-	s.mu.Unlock()
+type modelUnloader interface {
+	Unload()
+}
 
-	if keep || loaded == "" {
+// A take already recording on the model keeps it; that take's own stop unloads.
+func (s *Service) unloadIfNotKept(speech modelUnloader) {
+	s.mu.Lock()
+	if s.keepLoaded || s.loaded == "" || s.recording {
+		s.mu.Unlock()
 		return
 	}
-
-	speech.Unload()
-
-	s.mu.Lock()
 	s.loaded = ""
 	s.mu.Unlock()
 
+	speech.Unload()
 	logger.Info("Speech model unloaded")
 }
 

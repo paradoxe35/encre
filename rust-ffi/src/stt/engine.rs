@@ -29,12 +29,14 @@ impl Engine {
         self.loaded = None;
     }
 
-    /// Idempotent: reloading the resident model is free, so the host may call
-    /// this on every dictation.
+    /// Idempotent for the resident model. The old model is freed before the new
+    /// one is read, so two are never in memory at once.
     pub fn load(&mut self, path: &Path) -> Result<()> {
         if self.loaded.as_ref().is_some_and(|l| l.path == path) {
             return Ok(());
         }
+
+        self.loaded = None;
 
         let model =
             transcribe_cpp::Model::load_with(path, &transcribe_cpp::ModelOptions::default())

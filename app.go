@@ -88,7 +88,6 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 
 	mainWindow.SetShowHideCallbacks(func() {
 		showInDock()
-		// After Show, so the window exists and GLFW's own icon has been set.
 		applyNativeWindowIcons()
 	}, hideFromDock)
 

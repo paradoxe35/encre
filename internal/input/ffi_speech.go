@@ -27,10 +27,9 @@ import (
 // beyond Level runs on the caller's goroutine; Stop blocks for as long as
 // inference takes.
 //
-// The lock is shared rather than exclusive because Rust serialises what has to
-// be: capture and the model run on separate threads there, so holding a Go lock
-// across a transcription would make the next take wait for the previous one.
-// Close takes it exclusively, which is what keeps the handle alive under a call.
+// The lock is shared: Rust orders Start against Stop and Cancel itself, and an
+// exclusive lock would make the next take wait for the previous transcription.
+// Close takes it exclusively so the handle stays alive under a call.
 type FFISpeech struct {
 	mu     sync.RWMutex
 	handle C.encre_SttHandle
