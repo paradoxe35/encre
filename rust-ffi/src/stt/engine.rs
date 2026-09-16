@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use transcribe_cpp::{RunOptions, StreamOptions};
 
+use super::take::{Live, Recognizer};
+
 /// Holds the loaded model between calls. Loading costs seconds; recording costs
 /// milliseconds. Keeping the session resident is the largest win available to
 /// dictation latency.
@@ -116,5 +118,35 @@ impl Engine {
             .session
             .stream(&options, &StreamOptions::default())
             .map_err(|e| anyhow!("failed to begin stream: {e}"))
+    }
+}
+
+impl Recognizer for Engine {
+    type Live<'a> = transcribe_cpp::Stream<'a>;
+
+    fn resident(&self) -> Option<&Path> {
+        Engine::resident(self)
+    }
+
+    fn stream_begin(&mut self, language: Option<&str>) -> Result<Self::Live<'_>> {
+        Engine::stream_begin(self, language)
+    }
+}
+
+impl Live for transcribe_cpp::Stream<'_> {
+    fn feed(&mut self, samples: &[f32]) -> Result<()> {
+        transcribe_cpp::Stream::feed(self, samples)
+            .map(|_| ())
+            .map_err(|e| anyhow!("stream feed: {e}"))
+    }
+
+    fn finalize(&mut self) -> Result<Option<String>> {
+        transcribe_cpp::Stream::finalize(self)?;
+        let text = self.text().display().trim().to_owned();
+        Ok((!text.is_empty()).then_some(text))
+    }
+
+    fn abort(&mut self) {
+        self.reset();
     }
 }

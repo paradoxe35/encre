@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread;
-use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -11,25 +11,9 @@ use cpal::{Device, SampleFormat, StreamConfig};
 use parking_lot::{Mutex, MutexGuard};
 
 use super::engine::Engine;
+use super::take::{Source, Take, Wanted};
 
 pub const SAMPLE_RATE: u32 = 16_000;
-
-/// earshot wants exactly 256 samples (16 ms) at 16 kHz.
-const VAD_FRAME: usize = 256;
-const VAD_THRESHOLD: f32 = 0.5;
-
-/// Speech is reported for this long after the detector stops seeing it, so a
-/// trailing word is not clipped mid-syllable.
-const HANGOVER_FRAMES: usize = 28; // ~450 ms
-/// Frames kept before onset, recovering the attack the detector needed to fire.
-const PREFILL_FRAMES: usize = 28;
-/// Consecutive speech frames before onset is believed, rejecting clicks.
-const ONSET_FRAMES: usize = 4;
-
-const RESAMPLER_CHUNK: usize = 1024;
-
-/// How often the recorder drains the callback queue while recording.
-const DRAIN_INTERVAL: Duration = Duration::from_millis(20);
 
 pub enum Command {
     Start,
@@ -79,27 +63,42 @@ pub struct Stopped {
 pub struct Recorder {
     commands: Sender<Command>,
     engine_commands: Sender<EngineCommand>,
+    /// Commands the engine thread has not finished yet; a take only claims the
+    /// engine for streaming when this is zero.
+    queued: Arc<AtomicUsize>,
     settings: Arc<Mutex<Settings>>,
 }
 
 impl Recorder {
     pub fn spawn(levels: Sender<f32>) -> Self {
         let engine = Arc::new(Mutex::new(Engine::new()));
+        let queued = Arc::new(AtomicUsize::new(0));
         let settings = Arc::new(Mutex::new(Settings::default()));
 
         let (tx, rx) = channel();
         let recorder_engine = engine.clone();
+        let recorder_queued = queued.clone();
         let recorder_settings = settings.clone();
-        thread::spawn(move || run(rx, levels, recorder_engine, recorder_settings));
+        thread::spawn(move || run(rx, levels, recorder_engine, recorder_queued, recorder_settings));
 
         let (engine_tx, engine_rx) = channel();
-        thread::spawn(move || run_engine(engine_rx, engine));
+        let engine_queued = queued.clone();
+        thread::spawn(move || run_engine(engine_rx, engine, engine_queued));
 
         Self {
             commands: tx,
             engine_commands: engine_tx,
+            queued,
             settings,
         }
+    }
+
+    fn queue(&self, command: EngineCommand) -> Result<()> {
+        self.queued.fetch_add(1, Ordering::SeqCst);
+        self.engine_commands.send(command).map_err(|_| {
+            self.queued.fetch_sub(1, Ordering::SeqCst);
+            anyhow!("engine thread is gone")
+        })
     }
 
     fn settings(&self) -> MutexGuard<'_, Settings> {
@@ -122,21 +121,19 @@ impl Recorder {
     /// once; anything queued after it, such as a take's batch pass, runs behind.
     pub fn use_model(&self, path: PathBuf) {
         self.settings().model = Some(path.clone());
-        let _ = self.engine_commands.send(EngineCommand::Load(path));
+        let _ = self.queue(EngineCommand::Load(path));
     }
 
     pub fn unload(&self) {
         self.settings().model = None;
-        let _ = self.engine_commands.send(EngineCommand::Unload);
+        let _ = self.queue(EngineCommand::Unload);
     }
 
     /// Queued behind any load in progress, so a take captured while its model
     /// was coming up is transcribed once it is there.
     pub fn transcribe_samples(&self, samples: Vec<f32>, language: Option<String>) -> Result<String> {
         let (tx, rx) = channel();
-        self.engine_commands
-            .send(EngineCommand::TranscribeSamples(samples, language, tx))
-            .map_err(|_| anyhow!("engine thread is gone"))?;
+        self.queue(EngineCommand::TranscribeSamples(samples, language, tx))?;
         rx.recv().map_err(|_| anyhow!("engine dropped the reply"))?
     }
 
@@ -174,13 +171,14 @@ fn run(
     commands: Receiver<Command>,
     levels: Sender<f32>,
     engine: Arc<Mutex<Engine>>,
+    queued: Arc<AtomicUsize>,
     settings: Arc<Mutex<Settings>>,
 ) {
     loop {
         match commands.recv() {
             Ok(Command::Start) => {
                 let snapshot = settings.lock().clone();
-                if !record(&commands, levels.clone(), &engine, snapshot) {
+                if !record(&commands, levels.clone(), &engine, &queued, snapshot) {
                     return;
                 }
             }
@@ -190,7 +188,7 @@ fn run(
     }
 }
 
-fn run_engine(commands: Receiver<EngineCommand>, engine: Arc<Mutex<Engine>>) {
+fn run_engine(commands: Receiver<EngineCommand>, engine: Arc<Mutex<Engine>>, queued: Arc<AtomicUsize>) {
     loop {
         match commands.recv() {
             Ok(EngineCommand::Load(path)) => {
@@ -204,19 +202,16 @@ fn run_engine(commands: Receiver<EngineCommand>, engine: Arc<Mutex<Engine>>) {
             }
             Ok(EngineCommand::Shutdown) | Err(_) => return,
         }
+        queued.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
 /// Runs one recording session and returns when it ends, `false` only on shutdown.
-///
-/// A streaming take holds the engine for its whole duration, so it only starts
-/// when the engine is free and holds the wanted model. Every other take is
-/// captured on its own and transcribed through the engine thread afterwards,
-/// behind whatever load is queued.
 fn record(
     commands: &Receiver<Command>,
     levels: Sender<f32>,
     engine: &Arc<Mutex<Engine>>,
+    queued: &AtomicUsize,
     settings: Settings,
 ) -> bool {
     let Settings {
@@ -226,186 +221,16 @@ fn record(
         model,
     } = settings;
 
-    if !capture_only && model.is_some() {
-        match engine.try_lock() {
-            Some(mut guard) if guard.resident() == model.as_deref() => {
-                match guard.stream_begin(language.as_deref()) {
-                    Ok(stream) => {
-                        return record_streaming(commands, levels, device, language, stream);
-                    }
-                    Err(e) => tracing::debug!("streaming unavailable, capturing for a batch pass: {e}"),
-                }
-            }
-            Some(_) => tracing::debug!("model not resident yet, capturing for a later pass"),
-            None => tracing::debug!("engine busy, capturing for a later pass"),
-        }
-    }
-
-    record_batch(commands, levels, device, language)
-}
-
-/// Recording session with a live model stream. `stream` borrows the engine's
-/// session, which is why the session ends before any batch transcription.
-fn record_streaming(
-    commands: &Receiver<Command>,
-    levels: Sender<f32>,
-    device: Option<String>,
-    language: Option<String>,
-    live: transcribe_cpp::Stream<'_>,
-) -> bool {
-    let mut stream = StreamGuard::open(levels, device.as_deref()).ok();
-    let mut pipeline = Pipeline::new();
-    pipeline.reset(stream.as_ref().map(|s| s.rate).unwrap_or(SAMPLE_RATE));
-    // Kept as well as streamed: a feed failure would otherwise silently drop
-    // words, and losing dictated audio is worth the extra memory to avoid.
-    let mut spoken: Vec<f32> = Vec::new();
-    let mut degraded = false;
-    let mut live = LiveStream { stream: live };
-
-    loop {
-        match commands.recv_timeout(DRAIN_INTERVAL) {
-            Err(RecvTimeoutError::Disconnected) => return false,
-            Err(RecvTimeoutError::Timeout) => {}
-            Ok(command) => match command {
-                Command::Stop(reply) => {
-                    let tail = drain(&mut stream, &mut pipeline);
-                    spoken.extend_from_slice(&tail);
-                    degraded |= live.feed(&tail).is_err();
-
-                    // A partial transcript is worse than none: the host can't tell
-                    // what's missing, so hand back the audio for a batch retry.
-                    if degraded {
-                        live.abort();
-                        let _ = reply.send(Stopped {
-                            samples: spoken,
-                            text: Ok(None),
-                            language,
-                        });
-                        return true;
-                    }
-
-                    let text = live
-                        .finalize()
-                        .map_err(|e| format!("stream finalize failed: {e}"));
-                    let _ = reply.send(Stopped {
-                        samples: Vec::new(),
-                        text,
-                        language,
-                    });
-                    return true;
-                }
-                Command::Cancel => {
-                    let tail = drain(&mut stream, &mut pipeline);
-                    let _ = live.feed(&tail);
-                    live.abort();
-                    return true;
-                }
-                Command::Shutdown => return false,
-                _ => {}
-            },
-        }
-
-        if let Some(guard) = stream.as_ref() {
-            pipeline.feed(&guard.take());
-            let speech = pipeline.take();
-            spoken.extend_from_slice(&speech);
-
-            if let Err(e) = live.feed(&speech) {
-                if !degraded {
-                    tracing::warn!("stream feed failed, falling back to batch: {e}");
-                }
-                degraded = true;
-            }
-        }
-    }
-}
-
-/// Capture only; the host transcribes the samples afterwards.
-fn record_batch(
-    commands: &Receiver<Command>,
-    levels: Sender<f32>,
-    device: Option<String>,
-    language: Option<String>,
-) -> bool {
-    let mut stream = StreamGuard::open(levels, device.as_deref()).ok();
-    let mut pipeline = Pipeline::new();
-    pipeline.reset(stream.as_ref().map(|s| s.rate).unwrap_or(SAMPLE_RATE));
-    let mut batched: Vec<f32> = Vec::new();
-
-    loop {
-        match commands.recv_timeout(DRAIN_INTERVAL) {
-            Err(RecvTimeoutError::Disconnected) => return false,
-            Err(RecvTimeoutError::Timeout) => {}
-            Ok(command) => match command {
-                Command::Stop(reply) => {
-                    let tail = drain(&mut stream, &mut pipeline);
-                    batched.extend_from_slice(&tail);
-
-                    let _ = reply.send(Stopped {
-                        samples: std::mem::take(&mut batched),
-                        text: Ok(None),
-                        language,
-                    });
-                    return true;
-                }
-                Command::Cancel => {
-                    drain(&mut stream, &mut pipeline);
-                    return true;
-                }
-                Command::Shutdown => return false,
-                _ => {}
-            },
-        }
-
-        if let Some(guard) = stream.as_ref() {
-            pipeline.feed(&guard.take());
-            let speech = pipeline.take();
-            batched.extend_from_slice(&speech);
-        }
-    }
-}
-
-/// A live recognition session. The `Stream` borrows the engine's session, so
-/// this wrapper must live and die on the recorder thread.
-struct LiveStream<'a> {
-    stream: transcribe_cpp::Stream<'a>,
-}
-
-impl<'a> LiveStream<'a> {
-    fn feed(&mut self, samples: &[f32]) -> Result<()> {
-        if samples.is_empty() {
-            return Ok(());
-        }
-        self.stream
-            .feed(samples)
-            .map(|_| ())
-            .map_err(|e| anyhow!("stream feed: {e}"))
-    }
-
-    /// Ends input and returns the final transcript. `Ok(None)` is a
-    /// successful take without speech, not an error.
-    fn finalize(&mut self) -> Result<Option<String>> {
-        self.stream.finalize()?;
-        let text = self.stream.text().display().trim().to_owned();
-        if text.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(text))
-        }
-    }
-
-    /// Abandons the stream without producing text.
-    fn abort(&mut self) {
-        self.stream.reset();
-    }
-}
-
-/// Pulls whatever the callback has queued, converts it, and returns the speech.
-fn drain(stream: &mut Option<StreamGuard>, pipeline: &mut Pipeline) -> Vec<f32> {
-    if let Some(guard) = stream.as_ref() {
-        pipeline.feed(&guard.take());
-    }
-    pipeline.finish()
+    let source = StreamGuard::open(levels, device.as_deref()).ok();
+    let wanted = match (&model, capture_only) {
+        (Some(model), false) => Some(Wanted {
+            engine,
+            queued,
+            model,
+        }),
+        _ => None,
+    };
+    Take::new(source, language).run(commands, wanted)
 }
 
 struct StreamGuard {
@@ -413,6 +238,22 @@ struct StreamGuard {
     rate: u32,
     channels: usize,
     incoming: Receiver<Vec<f32>>,
+}
+
+impl Source for StreamGuard {
+    fn rate(&self) -> u32 {
+        self.rate
+    }
+
+    fn take(&self) -> Vec<f32> {
+        let mut out = Vec::new();
+        loop {
+            match self.incoming.try_recv() {
+                Ok(chunk) => out.extend(mono(&chunk, self.channels)),
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return out,
+            }
+        }
+    }
 }
 
 impl StreamGuard {
@@ -435,16 +276,6 @@ impl StreamGuard {
             channels,
             incoming: rx,
         })
-    }
-
-    fn take(&self) -> Vec<f32> {
-        let mut out = Vec::new();
-        loop {
-            match self.incoming.try_recv() {
-                Ok(chunk) => out.extend(mono(&chunk, self.channels)),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return out,
-            }
-        }
     }
 }
 
@@ -590,148 +421,6 @@ fn forward(data: Vec<f32>, samples: &Sender<Vec<f32>>, levels: &Sender<f32>) {
         let _ = levels.send((sum / data.len() as f32).sqrt());
     }
     let _ = samples.send(data);
-}
-
-/// Resamples to 16 kHz, then keeps only the frames the detector calls speech.
-struct Pipeline {
-    resampler: Option<rubato::FftFixedIn<f32>>,
-    pending: Vec<f32>,
-    frame: Vec<f32>,
-    detector: earshot::Detector,
-    speech: Vec<f32>,
-    prefill: std::collections::VecDeque<Vec<f32>>,
-    onset: usize,
-    hangover: usize,
-}
-
-impl Pipeline {
-    fn new() -> Self {
-        Self {
-            resampler: None,
-            pending: Vec::new(),
-            frame: Vec::with_capacity(VAD_FRAME),
-            detector: earshot::Detector::default(),
-            speech: Vec::new(),
-            prefill: std::collections::VecDeque::with_capacity(PREFILL_FRAMES),
-            onset: 0,
-            hangover: 0,
-        }
-    }
-
-    fn reset(&mut self, input_rate: u32) {
-        // A resampler carries FFT overlap between calls; reusing one across
-        // takes would leak the tail of the previous recording into the next.
-        self.resampler = (input_rate != SAMPLE_RATE)
-            .then(|| {
-                rubato::FftFixedIn::<f32>::new(
-                    input_rate as usize,
-                    SAMPLE_RATE as usize,
-                    RESAMPLER_CHUNK,
-                    1,
-                    1,
-                )
-                .ok()
-            })
-            .flatten();
-
-        self.pending.clear();
-        self.frame.clear();
-        self.speech.clear();
-        self.prefill.clear();
-        self.detector = earshot::Detector::default();
-        self.onset = 0;
-        self.hangover = 0;
-    }
-
-    fn feed(&mut self, samples: &[f32]) {
-        if samples.is_empty() {
-            return;
-        }
-
-        let resampled = self.resample(samples);
-        for sample in resampled {
-            self.frame.push(sample);
-            if self.frame.len() == VAD_FRAME {
-                let frame = std::mem::replace(&mut self.frame, Vec::with_capacity(VAD_FRAME));
-                self.classify(frame);
-            }
-        }
-    }
-
-    fn resample(&mut self, samples: &[f32]) -> Vec<f32> {
-        let Some(resampler) = self.resampler.as_mut() else {
-            return samples.to_vec();
-        };
-
-        use rubato::Resampler;
-        self.pending.extend_from_slice(samples);
-
-        let mut out = Vec::new();
-        while self.pending.len() >= RESAMPLER_CHUNK {
-            let chunk: Vec<f32> = self.pending.drain(..RESAMPLER_CHUNK).collect();
-            if let Ok(mut done) = resampler.process(&[chunk], None) {
-                out.append(&mut done[0]);
-            }
-        }
-        out
-    }
-
-    fn classify(&mut self, frame: Vec<f32>) {
-        let speaking = self.detector.predict_f32(&frame) >= VAD_THRESHOLD;
-
-        if speaking {
-            self.onset += 1;
-        } else {
-            self.onset = 0;
-        }
-
-        if self.onset >= ONSET_FRAMES {
-            // Onset confirmed: replay the buffered attack, then hold open for
-            // the hangover window so the tail isn't cut.
-            self.speech.extend(self.prefill.drain(..).flatten());
-            self.hangover = HANGOVER_FRAMES;
-        }
-
-        if self.hangover > 0 {
-            self.hangover -= 1;
-            self.speech.extend_from_slice(&frame);
-            return;
-        }
-
-        if self.prefill.len() == PREFILL_FRAMES {
-            self.prefill.pop_front();
-        }
-        self.prefill.push_back(frame);
-    }
-
-    /// Speech gathered so far, leaving the pipeline free to continue.
-    fn take(&mut self) -> Vec<f32> {
-        std::mem::take(&mut self.speech)
-    }
-
-    /// Flushes the resampler's delay line and returns the recording.
-    fn finish(&mut self) -> Vec<f32> {
-        if !self.pending.is_empty() {
-            let tail: Vec<f32> = std::mem::take(&mut self.pending);
-            let mut padded = tail;
-            padded.resize(RESAMPLER_CHUNK, 0.0);
-            let flushed = self.resample(&padded);
-            for sample in flushed {
-                self.frame.push(sample);
-                if self.frame.len() == VAD_FRAME {
-                    let frame = std::mem::replace(&mut self.frame, Vec::with_capacity(VAD_FRAME));
-                    self.classify(frame);
-                }
-            }
-        }
-
-        if self.hangover > 0 && !self.frame.is_empty() {
-            self.speech.extend_from_slice(&self.frame);
-        }
-        self.frame.clear();
-
-        std::mem::take(&mut self.speech)
-    }
 }
 
 #[cfg(test)]
