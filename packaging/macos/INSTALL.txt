@@ -1,0 +1,26 @@
+Encre for macOS
+
+FIRST LAUNCH
+
+Encre is not notarised, so macOS blocks the first launch with a message
+about an unidentified developer.
+
+Method 1
+  1. Right-click (or Control-click) Encre.app
+  2. Choose "Open"
+  3. Click "Open" in the dialog
+
+Method 2
+  1. Try to open Encre normally; it is blocked
+  2. Open System Settings > Privacy & Security
+  3. Next to "Encre was blocked", click "Open Anyway"
+
+Method 3 (Terminal)
+  xattr -cr /path/to/Encre.app
+
+AFTER THAT
+  - Encre lives in the menu bar; there is no Dock icon
+  - Grant Accessibility and Input Monitoring when prompted, or hotkeys stay silent
+  - Later launches open normally
+
+Support: https://github.com/paradoxe35/encre

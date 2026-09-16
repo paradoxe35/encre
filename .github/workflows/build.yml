@@ -2,21 +2,23 @@ name: Build and Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
   workflow_dispatch:
-    inputs:
-      debug_enabled:
-        description: "Enable debug mode"
-        type: boolean
-        required: false
-        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: "1.24"
-  RUST_VERSION: "stable"
-  # ggml defaults to -march=native on the native jobs and no SIMD on the cross
-  # ones. Pin an AVX2 baseline (x86 from ~2013); inert on arm64.
+  FYNE_CLI_VERSION: v1.7.2
+  # ggml defaults to -march=native, which would tie a release to the runner:
+  # pin an AVX2 baseline (x86 from ~2013), inert on arm64. The BLAS probe is
+  # off because the cgo link never provides a BLAS on Linux or Windows.
   TRANSCRIBE_CMAKE_ARGS: >-
     -DGGML_NATIVE=OFF
     -DGGML_SSE42=ON
@@ -25,819 +27,281 @@ env:
     -DGGML_FMA=ON
     -DGGML_F16C=ON
     -DGGML_BMI2=ON
+    -DTRANSCRIBE_USE_SYSTEM_BLAS=OFF
+  LINUX_DEPS: >-
+    build-essential cmake libasound2-dev libgl1-mesa-dev libwayland-dev xorg-dev
+    libx11-dev libxkbfile-dev libxtst-dev libxdo-dev libxi-dev libpng-dev libjpeg-dev
+    libxinerama-dev libxcb-xkb-dev libxcb-shape0-dev libxcb-xfixes0-dev
+    libxkbcommon-x11-dev libxcursor-dev libxrandr-dev libxrender-dev libxfixes-dev
+    libxxf86vm-dev libxkbcommon-dev
 
 jobs:
-  build-linux:
-    strategy:
-      matrix:
-        arch: [amd64]
+  test:
+    name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
         with:
-          profile: minimal
-          toolchain: ${{ env.RUST_VERSION }}
-          override: true
+          workspaces: rust-ffi
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            rust-ffi/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install Linux dependencies
+      - name: Install Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            cmake \
-            libasound2-dev \
-            libgl1-mesa-dev \
-            libwayland-dev \
-            xorg-dev \
-            libx11-dev \
-            libxkbfile-dev \
-            libxtst-dev \
-            libxdo-dev \
-            libxi-dev \
-            libpng-dev \
-            libjpeg-dev \
-            libxinerama-dev \
-            libxcb-xkb-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-x11-dev \
-            libxcursor-dev \
-            libxrandr-dev \
-            libxrender-dev \
-            libxfixes-dev \
-            libxxf86vm-dev \
-            libxkbcommon-dev
+          sudo apt-get install -y --no-install-recommends $LINUX_DEPS
 
-      - name: Install Fyne CLI
-        run: go install fyne.io/tools/cmd/fyne@v1.7.2
-
-      - name: Install dependencies
-        run: go mod download
+      - name: Rust tests and lints
+        working-directory: rust-ffi
+        run: |
+          cargo test --release
+          cargo clippy --release
 
       - name: Build Rust FFI library
         run: |
           bash scripts/build-rust-ffi.sh
-          mkdir -p lib
-          cp rust-ffi/target/release/libencre_ffi.a lib/
+          mkdir -p lib && cp rust-ffi/target/release/libencre_ffi.a lib/
+
+      # internal/input drives a real display and microphone; it is exercised by the release smoke test instead.
+      - name: Go vet and tests
+        run: |
+          go vet ./...
+          go test $(go list ./... | grep -v /internal/input)
+
+  build:
+    name: Build ${{ matrix.platform }}/${{ matrix.arch }}
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Oldest Ubuntu runner still offered: the binary links the runner's
+          # glibc and libstdc++, so this is what lets Ubuntu 22.04 and Debian 12 run it.
+          - os: ubuntu-22.04
+            platform: linux
+            arch: amd64
+            rust-target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            platform: windows
+            arch: amd64
+            rust-target: x86_64-pc-windows-gnu
+          # Both macOS builds run on Apple silicon; the Intel one cross-compiles.
+          - os: macos-latest
+            platform: darwin
+            arch: amd64
+            rust-target: x86_64-apple-darwin
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+            rust-target: aarch64-apple-darwin
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      CGO_ENABLED: "1"
+      GOOS: ${{ matrix.platform }}
+      GOARCH: ${{ matrix.arch }}
+      ARTIFACT: encre-${{ matrix.platform }}-${{ matrix.arch }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust-ffi
+          key: ${{ matrix.rust-target }}
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+
+      - name: Install Windows build dependencies
+        if: matrix.platform == 'windows'
+        run: choco install mingw nsis -y --no-progress
+
+      - name: Install Fyne CLI
+        env:
+          GOOS: ""
+          GOARCH: ""
+        run: go install fyne.io/tools/cmd/fyne@${{ env.FYNE_CLI_VERSION }}
+
+      - name: Build Rust FFI library
+        run: |
+          bash scripts/build-rust-ffi.sh ${{ matrix.rust-target }}
+          mkdir -p lib && cp rust-ffi/target/${{ matrix.rust-target }}/release/libencre_ffi.a lib/
 
       - name: Embed Wit.ai keys
         env:
           WITAI_KEYS: ${{ secrets.WITAI_KEYS }}
         run: bash scripts/embed-witai-keys.sh
 
-      - name: Build application with Fyne
-        env:
-          CGO_ENABLED: 1
-          GOOS: linux
-          GOARCH: ${{ matrix.arch }}
+      - name: Resolve version
+        id: version
         run: |
           # fyne wants x.y.z, so a manual run builds 0.0.0.
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            VERSION="0.0.0"
+            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
           fi
-          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
 
-          echo "Building version: ${VERSION} (build: ${BUILD_NUMBER})"
+      - name: Package with Fyne
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # go build links any stale .syso over --icon.
+          rm -f ./*.syso FyneApp.ico
+          case "${{ matrix.platform }}" in
+            darwin) ICON=assets/icon_1024.png; EXTRA="--app-id me.pngwasi.encre" ;;
+            *)      ICON=assets/icon.png;      EXTRA="" ;;
+          esac
+          fyne package --icon "$ICON" --name Encre --release $EXTRA \
+            --app-version "$VERSION" --app-build "$GITHUB_RUN_NUMBER"
 
-          # Produces Encre.tar.xz.
-          fyne package --icon assets/icon.png --name Encre --release \
-            --app-version "${VERSION}" \
-            --app-build "${BUILD_NUMBER}"
-
-          # The CLI wraps the tree in a directory named after the binary, so find it by path.
-          mkdir -p pkg
+      - name: Package for Linux
+        if: matrix.platform == 'linux'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p pkg dist
           tar -xf Encre.tar.xz -C pkg
-
           BINARY=$(find pkg -path "*/usr/local/bin/*" -type f -perm -u+x | head -n 1)
-          if [ -z "$BINARY" ]; then
-            echo "Error: no binary in Encre.tar.xz"
-            tar -tf Encre.tar.xz
-            exit 1
-          fi
+          test -n "$BINARY" || { echo "no binary in Encre.tar.xz"; tar -tf Encre.tar.xz; exit 1; }
+          mv "$BINARY" encre
 
-          echo "Found binary: $BINARY"
-          mv "$BINARY" encre-linux-${{ matrix.arch }}
+          # Portable archive.
+          mkdir -p portable && cp encre assets/icon.png portable/
+          tar -czf "dist/$ARTIFACT.tar.gz" -C portable .
 
-          rm -rf pkg Encre.tar.xz
+          # Debian package.
+          mkdir -p deb/DEBIAN deb/usr/local/bin deb/usr/share/applications deb/usr/share/icons/hicolor/256x256/apps deb/usr/share/pixmaps
+          install -m 755 encre deb/usr/local/bin/encre
+          install -m 644 packaging/linux/me.pngwasi.encre.desktop deb/usr/share/applications/
+          install -m 644 assets/icon.png deb/usr/share/icons/hicolor/256x256/apps/encre.png
+          install -m 644 assets/icon.png deb/usr/share/pixmaps/encre.png
+          sed -e "s/@VERSION@/$VERSION/" -e "s/@ARCH@/${{ matrix.arch }}/" packaging/linux/control > deb/DEBIAN/control
+          dpkg-deb --build deb "dist/$ARTIFACT.deb"
 
-      - name: Create portable archive
-        run: |
-          mkdir -p dist/portable
-          cp encre-linux-${{ matrix.arch }} dist/portable/encre
-          chmod +x dist/portable/encre
-          if [ -f assets/icon.png ]; then
-            cp assets/icon.png dist/portable/
-          fi
-          tar -czf encre-linux-${{ matrix.arch }}.tar.gz -C dist/portable .
-
-      - name: Create AppImage
-        if: matrix.arch == 'amd64'
-        run: |
+          # AppImage.
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage
-
-          mkdir -p AppDir/usr/bin
-          mkdir -p AppDir/usr/share/applications
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-
-          cp encre-linux-${{ matrix.arch }} AppDir/usr/bin/encre
-          chmod +x AppDir/usr/bin/encre
-
-          if [ -f assets/icon.png ]; then
-            cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/encre.png
-            # linuxdeploy also looks in the AppDir root
-            cp assets/icon.png AppDir/encre.png
-          fi
-
-          # Named after the Wayland app id so the dock finds the running window's
-          # icon there; StartupWMClass covers X11, where GLFW uses the window title.
-          cat > AppDir/usr/share/applications/me.pngwasi.encre.desktop <<'EOF'
-          [Desktop Entry]
-          Name=Encre
-          GenericName=Text Revision Tool
-          Comment=AI-powered text revision tool
-          Exec=encre
-          Icon=encre
-          Terminal=false
-          Type=Application
-          Categories=Utility;Office;
-          Keywords=text;revision;ai;
-          StartupNotify=true
-          StartupWMClass=Encre
-          EOF
-
-          # linuxdeploy needs it in the root too
-          cp AppDir/usr/share/applications/me.pngwasi.encre.desktop AppDir/me.pngwasi.encre.desktop
-
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          install -m 755 encre AppDir/usr/bin/encre
+          install -m 644 packaging/linux/me.pngwasi.encre.desktop AppDir/usr/share/applications/
+          install -m 644 assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/encre.png
           ARCH=x86_64 ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
+          mv Encre-*.AppImage "dist/$ARTIFACT.AppImage"
 
-          # Exclude linuxdeploy's own AppImage.
-          APPIMAGE_FILE=$(find . -maxdepth 1 -name "*.AppImage" -type f ! -name "linuxdeploy-*" | head -n 1)
-          if [ -n "$APPIMAGE_FILE" ]; then
-            echo "Found AppImage: $APPIMAGE_FILE"
-            mv "$APPIMAGE_FILE" encre-linux-${{ matrix.arch }}.AppImage
-            chmod +x encre-linux-${{ matrix.arch }}.AppImage
-          else
-            echo "Error: AppImage file not found"
-            echo "Available files:"
-            ls -la *.AppImage 2>/dev/null || echo "No AppImage files found"
-            exit 1
-          fi
-
-      - name: Create .deb package
-        run: |
-          mkdir -p dist/deb/DEBIAN
-          mkdir -p dist/deb/usr/local/bin
-          mkdir -p dist/deb/usr/share/applications
-          mkdir -p dist/deb/usr/share/icons/hicolor/256x256/apps
-
-          cp encre-linux-${{ matrix.arch }} dist/deb/usr/local/bin/encre
-          chmod +x dist/deb/usr/local/bin/encre
-
-          # A Debian version must start with a digit.
-          RAW_VERSION="${GITHUB_REF_NAME#v}"
-          if ! echo "$RAW_VERSION" | grep -q '^[0-9]'; then
-            DEB_VERSION="0.0.0-${RAW_VERSION}"
-          else
-            DEB_VERSION="$RAW_VERSION"
-          fi
-          DEB_VERSION=$(echo "$DEB_VERSION" | sed 's/[^0-9a-zA-Z.]/-/g' | sed 's/^-//' | sed 's/-$//')
-          [ -z "$DEB_VERSION" ] && DEB_VERSION="0.0.0-dev"
-          echo "Debian version: $DEB_VERSION"
-
-          cat > dist/deb/DEBIAN/control <<EOF
-          Package: encre
-          Version: $DEB_VERSION
-          Section: text
-          Priority: optional
-          Architecture: ${{ matrix.arch }}
-          Maintainer: Paradoxe Ng <contact@pngwasi.me>
-          Homepage: https://github.com/paradoxe35/encre
-          Depends: libc6, libgl1, libx11-6, libxext6, libxcb1, libxinerama1, libxtst6, libxdo3, libxkbcommon0, libxi6, libxcursor1, libxrandr2, libxrender1, libxfixes3, libxxf86vm1, libasound2 | libasound2t64
-          Description: AI-powered text revision tool with Rust FFI
-           Encre is a system tray application that provides global hotkeys
-           for instant text enhancement using AI providers (OpenAI, Claude, Gemini).
-           .
-           Features:
-            - Global hotkeys for instant text revision (Ctrl+Alt+Space)
-            - Multiple AI provider support (OpenAI, Claude, Gemini)
-            - System tray integration for quick access
-            - Configurable system prompts and character limits
-            - Non-destructive clipboard management
-           .
-           Built with Go and Rust FFI for optimal cross-platform performance.
-           .
-           License: MIT
-          EOF
-
-          if [ -f assets/icon.png ]; then
-            mkdir -p dist/deb/usr/share/icons/hicolor/256x256/apps
-            cp assets/icon.png dist/deb/usr/share/icons/hicolor/256x256/apps/encre.png
-
-            # pixmaps as a fallback
-            mkdir -p dist/deb/usr/share/pixmaps
-            cp assets/icon.png dist/deb/usr/share/pixmaps/encre.png
-          fi
-
-          # Named after the Wayland app id so the dock finds the running window's
-          # icon there; StartupWMClass covers X11, where GLFW uses the window title.
-          cat > dist/deb/usr/share/applications/me.pngwasi.encre.desktop <<EOF
-          [Desktop Entry]
-          Name=Encre
-          GenericName=Text Revision Tool
-          Comment=AI-powered text revision tool
-          Exec=/usr/local/bin/encre
-          Icon=encre
-          Terminal=false
-          Type=Application
-          Categories=Utility;Office;
-          Keywords=text;revision;ai;
-          StartupNotify=true
-          StartupWMClass=Encre
-          EOF
-
-          dpkg-deb --build dist/deb encre-linux-${{ matrix.arch }}.deb
-
-      - name: Upload portable artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: encre-linux-${{ matrix.arch }}-portable
-          path: encre-linux-${{ matrix.arch }}.tar.gz
-
-      - name: Upload AppImage artifact
-        if: matrix.arch == 'amd64'
-        uses: actions/upload-artifact@v4
-        with:
-          name: encre-linux-${{ matrix.arch }}-appimage
-          path: encre-linux-${{ matrix.arch }}.AppImage
-
-      - name: Upload deb artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: encre-linux-${{ matrix.arch }}-deb
-          path: encre-linux-${{ matrix.arch }}.deb
-
-  build-windows:
-    strategy:
-      matrix:
-        arch: [amd64]
-    runs-on: windows-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ env.RUST_VERSION }}
-          override: true
-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            rust-ffi/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install MinGW
-        run: |
-          choco install mingw -y
-
-      - name: Add Rust GNU target
-        run: rustup target add x86_64-pc-windows-gnu
-
-      - name: Install Fyne CLI
-        run: go install fyne.io/tools/cmd/fyne@v1.7.2
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Build Rust FFI library
-        shell: bash
-        run: |
-          bash scripts/build-rust-ffi.sh x86_64-pc-windows-gnu
-          mkdir -p lib
-          cp rust-ffi/target/x86_64-pc-windows-gnu/release/libencre_ffi.a lib/
-
-      - name: Embed Wit.ai keys
-        shell: bash
+      - name: Package for Windows
+        if: matrix.platform == 'windows'
         env:
-          WITAI_KEYS: ${{ secrets.WITAI_KEYS }}
-        run: bash scripts/embed-witai-keys.sh
-
-      - name: Build application with Fyne
-        env:
-          CGO_ENABLED: 1
-          GOOS: windows
-          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # fyne wants x.y.z, so a manual run builds 0.0.0.
-          if ("${{ github.ref }}" -like "refs/tags/*") {
-            $VERSION = "${{ github.ref_name }}" -replace '^v',''
-          } else {
-            $VERSION = "0.0.0"
-          }
-          $BUILD_NUMBER = "${{ github.run_number }}"
+          mkdir -p dist portable
+          mv Encre.exe encre.exe
+          cp encre.exe assets/icon.ico portable/
+          (cd portable && 7z a -bd "../dist/$ARTIFACT-portable.zip" .)
+          export PATH="$PATH:/c/Program Files (x86)/NSIS"
+          makensis \
+            "/DPRODUCT_VERSION=$VERSION" \
+            "/DSOURCE_EXE=$(cygpath -w "$PWD/encre.exe")" \
+            "/DICON=$(cygpath -w "$PWD/assets/icon.ico")" \
+            "/DOUTFILE=$(cygpath -w "$PWD/dist/$ARTIFACT-installer.exe")" \
+            packaging/windows/installer.nsi
+          cp encre.exe "dist/$ARTIFACT.exe"
 
-          Write-Host "Building version: $VERSION (build: $BUILD_NUMBER)"
-
-          # go build links any stale .syso over --icon.
-          Remove-Item -Force *.syso, FyneApp.ico -ErrorAction SilentlyContinue
-          Write-Host "Icon going in: $((Get-FileHash assets\icon.png -Algorithm SHA256).Hash)"
-
-          fyne package --icon assets/icon.png --name Encre --release `
-            --app-version "$VERSION" `
-            --app-build "$BUILD_NUMBER"
-
-          if (Test-Path "Encre.exe") {
-            Move-Item Encre.exe encre-windows-${{ matrix.arch }}.exe
-          }
-
-      - name: Create portable ZIP
-        shell: pwsh
+      - name: Package for macOS
+        if: matrix.platform == 'darwin'
         run: |
-          New-Item -ItemType Directory -Force -Path dist\portable | Out-Null
-          Copy-Item encre-windows-${{ matrix.arch }}.exe dist\portable\encre.exe -Force
-          if (Test-Path "assets\icon.ico") {
-            Copy-Item assets\icon.ico dist\portable\icon.ico -Force
-          }
-          Compress-Archive -Path dist\portable\* -DestinationPath encre-windows-${{ matrix.arch }}-portable.zip -Force
-
-      - name: Create installer (NSIS)
-        if: matrix.arch == 'amd64'
-        shell: pwsh
-        run: |
-          choco install nsis -y
-          $env:Path += ";C:\Program Files (x86)\NSIS"
-
-          if (-not (Test-Path "encre-windows-${{ matrix.arch }}.exe")) {
-            Write-Error "Source executable not found: encre-windows-${{ matrix.arch }}.exe"
-            exit 1
-          }
-          if (-not (Test-Path "assets\icon.ico")) {
-            Write-Warning "Icon file not found: assets\icon.ico - NSIS will fail"
-          }
-
-          $version = "${{ github.ref_name }}" -replace '^v','' -replace '[^0-9a-zA-Z.]','-'
-          if ([string]::IsNullOrEmpty($version)) { $version = "0.0.0-dev" }
-
-          @"
-          Unicode true
-          !include "MUI2.nsh"
-          !include "nsDialogs.nsh"
-          !include "LogicLib.nsh"
-
-          !define PRODUCT_NAME "Encre"
-          !define PRODUCT_VERSION "$version"
-          !define PRODUCT_PUBLISHER "Encre Team"
-          !define PRODUCT_WEB_SITE "https://github.com/paradoxe35/encre"
-          !define PRODUCT_INSTALL_REG "Software\`${PRODUCT_PUBLISHER}\`${PRODUCT_NAME}"
-          !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\`${PRODUCT_NAME}"
-
-          Name "`${PRODUCT_NAME}"
-          OutFile "Encre-Setup.exe"
-          InstallDir "`$LOCALAPPDATA\`${PRODUCT_NAME}"
-          InstallDirRegKey HKCU "`${PRODUCT_INSTALL_REG}" "InstallDir"
-          RequestExecutionLevel user
-          SetCompress auto
-
-          !define MUI_ABORTWARNING
-          !define MUI_ICON "assets\icon.ico"
-          !define MUI_UNICON "assets\icon.ico"
-
-          Function .onInit
-            SetShellVarContext current
-          FunctionEnd
-
-          !insertmacro MUI_PAGE_WELCOME
-          !insertmacro MUI_PAGE_DIRECTORY
-          !insertmacro MUI_PAGE_INSTFILES
-          !define MUI_FINISHPAGE_RUN "`$INSTDIR\encre.exe"
-          !define MUI_FINISHPAGE_RUN_TEXT "Launch Encre now"
-          !insertmacro MUI_PAGE_FINISH
-
-          !insertmacro MUI_LANGUAGE "English"
-
-          Section "Encre" SEC_APP
-            SetOutPath "`$INSTDIR"
-            File /oname=encre.exe "encre-windows-${{ matrix.arch }}.exe"
-            File /nonfatal /oname=icon.ico "assets\icon.ico"
-
-            Call RegisterApplication
-
-            CreateDirectory "`$SMPROGRAMS\`${PRODUCT_NAME}"
-            CreateShortcut "`$SMPROGRAMS\`${PRODUCT_NAME}\`${PRODUCT_NAME}.lnk" "`$INSTDIR\encre.exe"
-            CreateShortcut "`$SMPROGRAMS\`${PRODUCT_NAME}\Uninstall `${PRODUCT_NAME}.lnk" "`$INSTDIR\Uninstall.exe"
-            CreateShortcut "`$DESKTOP\`${PRODUCT_NAME}.lnk" "`$INSTDIR\encre.exe"
-          SectionEnd
-
-          Section "Uninstall"
-            Call un.StopApplication
-
-            Delete "`$INSTDIR\encre.exe"
-            Delete "`$INSTDIR\icon.ico"
-            Delete "`$INSTDIR\Uninstall.exe"
-            RMDir "`$INSTDIR"
-
-            Delete "`$DESKTOP\`${PRODUCT_NAME}.lnk"
-            Delete "`$SMPROGRAMS\`${PRODUCT_NAME}\`${PRODUCT_NAME}.lnk"
-            Delete "`$SMPROGRAMS\`${PRODUCT_NAME}\Uninstall `${PRODUCT_NAME}.lnk"
-            RMDir "`$SMPROGRAMS\`${PRODUCT_NAME}"
-
-            DeleteRegKey HKCU "`${PRODUCT_UNINST_KEY}"
-            DeleteRegKey HKCU "`${PRODUCT_INSTALL_REG}"
-          SectionEnd
-
-          Function RegisterApplication
-            WriteUninstaller "`$INSTDIR\Uninstall.exe"
-            WriteRegStr HKCU "`${PRODUCT_UNINST_KEY}" "DisplayName" "`${PRODUCT_NAME}"
-            WriteRegStr HKCU "`${PRODUCT_UNINST_KEY}" "UninstallString" "`$INSTDIR\Uninstall.exe"
-            WriteRegStr HKCU "`${PRODUCT_UNINST_KEY}" "DisplayIcon" "`$INSTDIR\encre.exe"
-            WriteRegStr HKCU "`${PRODUCT_UNINST_KEY}" "DisplayVersion" "`${PRODUCT_VERSION}"
-            WriteRegStr HKCU "`${PRODUCT_UNINST_KEY}" "Publisher" "`${PRODUCT_PUBLISHER}"
-            WriteRegStr HKCU "`${PRODUCT_UNINST_KEY}" "URLInfoAbout" "`${PRODUCT_WEB_SITE}"
-            WriteRegStr HKCU "`${PRODUCT_UNINST_KEY}" "InstallLocation" "`$INSTDIR"
-            WriteRegDWORD HKCU "`${PRODUCT_UNINST_KEY}" "NoModify" 1
-            WriteRegDWORD HKCU "`${PRODUCT_UNINST_KEY}" "NoRepair" 1
-
-            WriteRegStr HKCU "`${PRODUCT_INSTALL_REG}" "InstallDir" "`$INSTDIR"
-            WriteRegStr HKCU "`${PRODUCT_INSTALL_REG}" "Version" "`${PRODUCT_VERSION}"
-          FunctionEnd
-
-          Function un.StopApplication
-            nsExec::ExecToStack 'taskkill /F /IM encre.exe'
-            Pop `$0
-          FunctionEnd
-          "@ | Out-File -FilePath installer.nsi -Encoding UTF8
-
-          Write-Host "NSIS script created, contents:"
-          Get-Content installer.nsi | Select-Object -First 20
-          Write-Host "..."
-          Get-Content installer.nsi | Select-Object -Last 20
-
-          Write-Host "`nCompiling NSIS installer..."
-          makensis installer.nsi
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "NSIS compilation failed with exit code $LASTEXITCODE"
-            exit 1
-          }
-
-          if (Test-Path "Encre-Setup.exe") {
-            Write-Host "Installer created successfully"
-            Move-Item Encre-Setup.exe encre-windows-${{ matrix.arch }}-installer.exe -Force
-          } else {
-            Write-Error "Encre-Setup.exe was not created by NSIS"
-            exit 1
-          }
-
-      - name: Upload portable artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: encre-windows-${{ matrix.arch }}-portable
-          path: encre-windows-${{ matrix.arch }}-portable.zip
-
-      - name: Upload installer artifact
-        if: matrix.arch == 'amd64'
-        uses: actions/upload-artifact@v4
-        with:
-          name: encre-windows-${{ matrix.arch }}-installer
-          path: encre-windows-${{ matrix.arch }}-installer.exe
-
-      - name: Upload exe artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: encre-windows-${{ matrix.arch }}-exe
-          path: encre-windows-${{ matrix.arch }}.exe
-
-  build-macos:
-    strategy:
-      matrix:
-        arch: [amd64, arm64]
-    runs-on: macos-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ env.RUST_VERSION }}
-          override: true
-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            rust-ffi/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Add Rust target for architecture
-        run: |
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            rustup target add aarch64-apple-darwin
-          else
-            rustup target add x86_64-apple-darwin
-          fi
-
-      - name: Install Fyne CLI
-        run: go install fyne.io/tools/cmd/fyne@v1.7.2
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Build Rust FFI library
-        run: |
-          mkdir -p lib
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            TARGET=aarch64-apple-darwin
-          else
-            TARGET=x86_64-apple-darwin
-          fi
-          bash scripts/build-rust-ffi.sh "$TARGET"
-          cp rust-ffi/target/"$TARGET"/release/libencre_ffi.a lib/
-
-      - name: Embed Wit.ai keys
-        env:
-          WITAI_KEYS: ${{ secrets.WITAI_KEYS }}
-        run: bash scripts/embed-witai-keys.sh
-
-      - name: Build application with Fyne
-        env:
-          CGO_ENABLED: 1
-          GOOS: darwin
-          GOARCH: ${{ matrix.arch }}
-        run: |
-          # fyne wants x.y.z, so a manual run builds 0.0.0.
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION="0.0.0"
-          fi
-          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
-
-          echo "Building version: ${VERSION} (build: ${BUILD_NUMBER})"
-
-          fyne package --icon assets/icon_1024.png --name Encre --app-id me.pngwasi.encre --release \
-            --app-version "${VERSION}" \
-            --app-build "${BUILD_NUMBER}"
-
-      - name: Verify .app bundle created
-        run: |
-          if [ ! -d "Encre.app" ]; then
-            echo "Error: Encre.app was not created"
-            ls -la
-            exit 1
-          fi
-          echo "Encre.app created successfully"
-
-      - name: Verify Info.plist
-        run: |
-          echo "Info.plist contents:"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" Encre.app/Contents/Info.plist
+          mkdir -p dist
+          test -d Encre.app || { echo "Encre.app was not created"; ls -la; exit 1; }
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" Encre.app/Contents/Info.plist
 
-      - name: Ad-hoc sign app bundle (inside-out approach)
-        run: |
-          echo "Ad-hoc signing Encre.app (without hardened runtime/entitlements)..."
-
+          # Ad-hoc signed inside out, then stripped of quarantine, or the first launch reports a damaged app.
           EXEC=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" Encre.app/Contents/Info.plist)
-          echo "CFBundleExecutable=$EXEC"
-
-          # Inside-out, as Apple wants: frameworks, executable, then the bundle.
-          echo "Signing frameworks (if any)..."
-          find Encre.app/Contents/Frameworks -name "*.framework" -exec codesign --force --sign - {} \; 2>/dev/null || true
-
-          echo "Signing executable: ${EXEC}"
-          codesign --force --sign - "Encre.app/Contents/MacOS/${EXEC}"
-
-          # No --deep: the contents are signed already.
-          echo "Signing app bundle..."
+          codesign --force --sign - "Encre.app/Contents/MacOS/$EXEC"
           codesign --force --sign - Encre.app
+          codesign --verify --verbose=2 Encre.app
+          xattr -cr Encre.app
 
-          echo "Verifying signature..."
-          codesign --verify --verbose=4 Encre.app
+          cp packaging/macos/INSTALL.txt .
+          zip -r -X "dist/$ARTIFACT.zip" Encre.app INSTALL.txt
 
-          echo "Ad-hoc signing completed successfully"
+          brew install create-dmg
+          create-dmg --volname Encre --window-size 600 400 --icon-size 100 \
+            --icon Encre.app 175 120 --hide-extension Encre.app --app-drop-link 425 120 \
+            --no-internet-enable "dist/$ARTIFACT.dmg" Encre.app
 
-      - name: Remove quarantine attributes
-        run: |
-          # Without this the first launch reports a damaged app.
-          xattr -cr Encre.app || true
-
-      - name: Create installation README
-        run: |
-          cat > INSTALL_MACOS.txt <<'EOF'
-          Encre for macOS - Installation Instructions
-
-          FIRST LAUNCH:
-
-          When you first open Encre, you'll see a security warning:
-          "Encre cannot be opened because it is from an unidentified developer"
-
-          METHOD 1 (Recommended):
-          1. Right-click (or Control+click) Encre.app
-          2. Select "Open" from the menu
-          3. Click "Open" in the security dialog
-          4. Encre will launch and appear in your menu bar (tray icon)
-
-          METHOD 2 (System Settings):
-          1. Try to open Encre normally (it will be blocked)
-          2. Go to System Settings > Privacy & Security
-          3. Look for "Encre was blocked" message
-          4. Click "Open Anyway"
-          5. Click "Open" in the confirmation dialog
-
-          METHOD 3 (Terminal - if above methods don't work):
-          1. Open Terminal (Applications > Utilities > Terminal)
-          2. Type: xattr -cr
-          3. Drag Encre.app into Terminal window
-          4. Press Enter
-          5. Open Encre normally
-
-          IMPORTANT:
-          - Encre runs in the menu bar (no Dock icon)
-          - Grant Accessibility permissions when prompted for global hotkeys
-          - After first launch, it will open normally
-
-          Support: https://github.com/paradoxe35/encre
-          EOF
-
-      - name: Create ZIP archive
-        run: |
-          # -X drops extended attributes, which Gatekeeper trips over.
-          zip -r -X encre-darwin-${{ matrix.arch }}.zip Encre.app INSTALL_MACOS.txt
-
-      - name: Create DMG
-        run: |
-          brew install create-dmg || true
-
-          # The ZIP is the fallback if create-dmg fails.
-          if create-dmg \
-            --volname "Encre" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --icon "Encre.app" 175 120 \
-            --hide-extension "Encre.app" \
-            --app-drop-link 425 120 \
-            --no-internet-enable \
-            "encre-darwin-${{ matrix.arch }}.dmg" \
-            "Encre.app"; then
-            echo "DMG created successfully"
-          else
-            echo "Warning: DMG creation failed, but ZIP archive is available"
-          fi
-
-      - name: Upload ZIP artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: encre-darwin-${{ matrix.arch }}-zip
-          path: encre-darwin-${{ matrix.arch }}.zip
-
-      - name: Upload DMG artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: encre-darwin-${{ matrix.arch }}-dmg
-          path: encre-darwin-${{ matrix.arch }}.dmg
-          if-no-files-found: ignore
+          name: ${{ env.ARTIFACT }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
 
   release:
+    name: Release
+    needs: build
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
-      actions: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
-          path: ./artifacts
+          path: release
+          merge-multiple: true
 
-      - name: Prepare release files
-        run: |
-          mkdir -p release
+      - name: Checksums
+        working-directory: release
+        run: sha256sum * > checksums.txt
 
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" \) -exec cp {} release/ \;
-
-          cd release
-          sha256sum * > checksums.txt
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: release/*
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
           body: |
-            AI-powered text revision, translation and dictation with global hotkeys.
+            Revise, translate and dictate text anywhere, with global hotkeys.
 
             ## Downloads
 
             - **Windows**: `encre-windows-amd64-installer.exe`, or `encre-windows-amd64-portable.zip`
-            - **macOS**: `encre-darwin-arm64.dmg` (Apple Silicon), `encre-darwin-amd64.dmg` (Intel)
+            - **macOS**: `encre-darwin-arm64.dmg` (Apple silicon), `encre-darwin-amd64.dmg` (Intel)
             - **Linux**: `encre-linux-amd64.deb`, `encre-linux-amd64.AppImage`, or `encre-linux-amd64.tar.gz`
 
             Verify what you downloaded against `checksums.txt`.
 
             ## Setup
 
-            Installation, hotkeys and troubleshooting live in the
+            Installation, hotkeys and troubleshooting are in the
             [README](https://github.com/paradoxe35/encre#installation). Two things
             that catch people out:
 
-            - **macOS**: the first launch is blocked. Right-click the app > Open.
-              The ZIP ships `INSTALL_MACOS.txt` with the alternatives.
-            - **Linux on Wayland**: hotkeys need you in the `input` group.
+            - **macOS**: the first launch is blocked. Right-click the app, then Open.
+              The ZIP ships `INSTALL.txt` with the alternatives.
+            - **Linux on Wayland**: hotkeys need you in the `input` group:
               `sudo usermod -aG input $USER`, then log out and back in.
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-
-      # The release owns the files now. Only runs on a successful upload, so a
-      # failed publish keeps them for debugging.
-      - name: Delete build artifacts
-        uses: geekyeggo/delete-artifact@v6
-        with:
-          name: encre-*
-          failOnError: false

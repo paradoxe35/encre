@@ -7,6 +7,10 @@ cd "$repo_root/rust-ffi"
 
 target="${1:-}"
 cargo_args=(build --release)
+
+# TRANSCRIBE_USE_SYSTEM_BLAS=OFF: the decoder would otherwise call cblas when a
+# BLAS is found at build time, which the final cgo link never provides.
+export TRANSCRIBE_CMAKE_ARGS="${TRANSCRIBE_CMAKE_ARGS:--DTRANSCRIBE_USE_SYSTEM_BLAS=OFF}"
 if [ -n "$target" ]; then
   cargo_args+=(--target "$target")
   out_dir="target/$target/release"

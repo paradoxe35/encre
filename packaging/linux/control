@@ -1,0 +1,14 @@
+Package: encre
+Version: @VERSION@
+Section: text
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Paradoxe Ng <contact@pngwasi.me>
+Homepage: https://github.com/paradoxe35/encre
+Depends: libc6, libgl1, libx11-6, libxext6, libxcb1, libxinerama1, libxtst6, libxdo3, libxkbcommon0, libxi6, libxcursor1, libxrandr2, libxrender1, libxfixes3, libxxf86vm1, libasound2 | libasound2t64
+Description: Revise, translate and dictate text anywhere with AI
+ Encre sits in the system tray. Press a hotkey and the selected text is
+ fixed, translated or replaced by what you dictate, in any application.
+ .
+ Works with OpenAI, Claude, Gemini and OpenAI-compatible providers, and
+ transcribes speech locally.

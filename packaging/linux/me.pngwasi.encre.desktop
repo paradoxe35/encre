@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Encre
+GenericName=Writing Assistant
+Comment=Revise, translate and dictate text anywhere
+Exec=encre
+Icon=encre
+Terminal=false
+Type=Application
+Categories=Utility;Office;
+Keywords=text;revision;translate;dictation;speech;ai;
+StartupNotify=true
+StartupWMClass=Encre
