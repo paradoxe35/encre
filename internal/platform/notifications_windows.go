@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 
 	"github.com/paradoxe35/encre/internal/logger"
 )
@@ -34,6 +35,8 @@ func RegisterNotifier(id, name string) {
 		logger.Warn("Could not register the notification sender", "shortcut", link, "error", err)
 		return
 	}
+	// Earlier builds registered through this key; Windows must not read the two side by side.
+	registry.DeleteKey(registry.CURRENT_USER, `Software\Classes\AppUserModelId\`+id)
 	logger.Info("Notification sender registered", "shortcut", link)
 }
 
@@ -54,11 +57,12 @@ const (
 	vtLPWSTR           = 31
 
 	// vtable slots, after the three IUnknown methods
-	shellLinkSetPath      = 20
-	persistFileLoad       = 5
-	persistFileSave       = 6
-	propertyStoreSetValue = 6
-	propertyStoreCommit   = 7
+	shellLinkSetIconLocation = 17
+	shellLinkSetPath         = 20
+	persistFileLoad          = 5
+	persistFileSave          = 6
+	propertyStoreSetValue    = 6
+	propertyStoreCommit      = 7
 )
 
 type propertyKey struct {
@@ -109,6 +113,9 @@ func writeShortcut(link, target, appID string) error {
 
 	if err := hresult(call(shellLink, shellLinkSetPath, uintptr(unsafe.Pointer(utf16(target))))); err != nil {
 		return fmt.Errorf("set target: %w", err)
+	}
+	if err := hresult(call(shellLink, shellLinkSetIconLocation, uintptr(unsafe.Pointer(utf16(target))), 0)); err != nil {
+		return fmt.Errorf("set icon: %w", err)
 	}
 
 	store, err := queryInterface(shellLink, &iidPropertyStore)

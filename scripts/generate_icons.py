@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Generate Encre's icon set: an ink drop, artwork only, no tile behind it."""
 
+import io
 import os
+import struct
 
 from PIL import Image, ImageDraw
 
@@ -103,6 +105,47 @@ def tray_icon():
     return icon
 
 
+# Written by hand: Pillow leaves out the AND mask every frame must end with, and Windows
+# decoders disagree on what to do with the bytes that follow. Frames below 256 px are
+# DIBs, which every Windows path reads; the 256 px frame is PNG, as the shell expects.
+def ico(frames):
+    entries, payload = [], b""
+    offset = 6 + 16 * len(frames)
+    for image in frames:
+        data = png_frame(image) if image.width == 256 else dib_frame(image)
+        entries.append(struct.pack("<BBBBHHII", image.width % 256, image.height % 256, 0, 0, 1, 32,
+                                   len(data), offset + len(payload)))
+        payload += data
+    return struct.pack("<HHH", 0, 1, len(frames)) + b"".join(entries) + payload
+
+
+def png_frame(image):
+    out = io.BytesIO()
+    image.save(out, "PNG")
+    return out.getvalue()
+
+
+def dib_frame(image):
+    width, height = image.size
+    header = struct.pack("<IiiHHIIiiII", 40, width, height * 2, 1, 32, 0, width * height * 4, 0, 0, 0, 0)
+    pixels = b"".join(
+        bytes((b, g, r, a))
+        for y in range(height - 1, -1, -1)
+        for (r, g, b, a) in (image.getpixel((x, y)) for x in range(width))
+    )
+    row_bytes = (width + 31) // 32 * 4
+    mask = b"".join(mask_row(image, y, row_bytes) for y in range(height - 1, -1, -1))
+    return header + pixels + mask
+
+
+def mask_row(image, y, row_bytes):
+    bits = 0
+    for x in range(image.width):
+        bits = (bits << 1) | (1 if image.getpixel((x, y))[3] == 0 else 0)
+    bits <<= row_bytes * 8 - image.width
+    return bits.to_bytes(row_bytes, "big")
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     assets = os.path.join(root, "assets")
@@ -114,18 +157,8 @@ def main():
     app_icon(1024).save(os.path.join(assets, "icon_1024.png"))
     tray_icon().save(os.path.join(assets, "tray.png"))
 
-    # Two things Windows is fussy about. Pillow only reuses a frame when an image
-    # of that exact size is supplied, so hand it our own render per size and the
-    # 16 and 24 px frames are drawn rather than shrunk from the 256. And the
-    # shell only decodes PNG-compressed entries at 256; below that it wants
-    # BMP/DIB, and a frame it cannot read falls back to a cached icon.
-    icons[256].save(
-        os.path.join(assets, "icon.ico"),
-        format="ICO",
-        bitmap_format="bmp",
-        sizes=[(s, s) for s in ICO_SIZES],
-        append_images=[icons[s] for s in ICO_SIZES if s != 256],
-    )
+    with open(os.path.join(assets, "icon.ico"), "wb") as f:
+        f.write(ico([icons[s] for s in ICO_SIZES]))
 
     print("icon.png       256 px, app and Linux packages")
     print("icon_1024.png  1024 px, macOS bundle")
