@@ -107,6 +107,53 @@ impl Modifiers {
     }
 }
 
+const MODIFIERS: [Modifier; 4] = [
+    Modifier::Ctrl,
+    Modifier::Alt,
+    Modifier::Shift,
+    Modifier::Meta,
+];
+
+/// Which modifiers are physically down right now.
+type ModifierSource = Box<dyn FnMut() -> Modifiers + Send>;
+
+/// rdev labels a macOS FlagsChanged press or release by comparing its flags with the previous
+/// one's, a baseline every FlagsChanged rewrites, the simulator's tagged key-ups included. Once
+/// it sits above the physical state a real press reads as a release. The system's key state
+/// tables carry no history, so on macOS the listener reads those instead.
+#[cfg(target_os = "macos")]
+fn system_modifiers() -> Modifiers {
+    const MODIFIER_KEYS: [(u16, Modifier); 8] = [
+        (0x37, Modifier::Meta),
+        (0x36, Modifier::Meta),
+        (0x38, Modifier::Shift),
+        (0x3C, Modifier::Shift),
+        (0x3A, Modifier::Alt),
+        (0x3D, Modifier::Alt),
+        (0x3B, Modifier::Ctrl),
+        (0x3E, Modifier::Ctrl),
+    ];
+
+    let mut held = Modifiers::default();
+    for (key, modifier) in MODIFIER_KEYS {
+        if crate::core::simulator::key_down(key) {
+            held.set(modifier, true);
+        }
+    }
+    held
+}
+
+#[cfg(target_os = "macos")]
+fn system_modifier_source() -> Option<ModifierSource> {
+    let source: ModifierSource = Box::new(system_modifiers);
+    Some(source)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_modifier_source() -> Option<ModifierSource> {
+    None
+}
+
 /// One table for both directions, so a name the recorder emits but the listener cannot match
 /// fails at registration instead of saving as a binding that silently never fires.
 const KEYS: &[(Key, &str)] = &[
@@ -268,6 +315,8 @@ fn fire(binding: &HotkeyBinding, down: bool) {
 /// firing on press would trigger `ctrl+cmd` on the way to `ctrl+cmd+space`.
 #[derive(Default)]
 struct ListenerState {
+    /// Replaces the events' own press/release labels when set.
+    source: Option<ModifierSource>,
     held: Modifiers,
     /// The largest modifier set held since the last time every modifier was up.
     chord: Modifiers,
@@ -282,7 +331,15 @@ struct ListenerState {
 }
 
 impl ListenerState {
+    fn new(source: Option<ModifierSource>) -> Self {
+        Self {
+            source,
+            ..Self::default()
+        }
+    }
+
     fn process(&mut self, event: EventType, bindings: &Mutex<Vec<HotkeyBinding>>) {
+        self.sync(bindings);
         match event {
             EventType::KeyPress(key) => self.on_press(key, bindings),
             EventType::KeyRelease(key) => self.on_release(key, bindings),
@@ -291,18 +348,60 @@ impl ListenerState {
         }
     }
 
+    /// Turns whatever changed in the system's tables since the last event into edges.
+    fn sync(&mut self, bindings: &Mutex<Vec<HotkeyBinding>>) {
+        let now = match self.source.as_mut() {
+            Some(source) => source(),
+            None => return,
+        };
+        let before = self.held;
+        for modifier in MODIFIERS {
+            if before.get(modifier) && !now.get(modifier) {
+                self.modifier_up(modifier, bindings);
+            }
+        }
+        for modifier in MODIFIERS {
+            if !before.get(modifier) && now.get(modifier) {
+                self.modifier_down(modifier);
+            }
+        }
+    }
+
+    fn modifier_down(&mut self, modifier: Modifier) {
+        if self.held.get(modifier) {
+            return;
+        }
+        // The first modifier down begins a chord, whatever was typed before it.
+        if self.held.is_empty() {
+            self.chord = Modifiers::default();
+            self.interrupted = false;
+        }
+        self.held.set(modifier, true);
+        self.chord = self.chord.merged(self.held);
+    }
+
+    fn modifier_up(&mut self, modifier: Modifier, bindings: &Mutex<Vec<HotkeyBinding>>) {
+        if !self.held.get(modifier) {
+            return;
+        }
+        let before = self.held;
+        self.held.set(modifier, false);
+
+        // The first modifier to come up ends the chord; releasing the rest must not fire again.
+        if !self.interrupted && before == self.chord {
+            for binding in bindings.lock().iter() {
+                if binding.key.is_none() && binding.modifiers == before {
+                    fire(binding, true);
+                }
+            }
+        }
+    }
+
     fn on_press(&mut self, key: Key, bindings: &Mutex<Vec<HotkeyBinding>>) {
         if let Some(modifier) = Modifier::from_key(&key) {
-            if self.held.get(modifier) {
-                return;
+            if self.source.is_none() {
+                self.modifier_down(modifier);
             }
-            // The first modifier down begins a chord, whatever was typed before it.
-            if self.held.is_empty() {
-                self.chord = Modifiers::default();
-                self.interrupted = false;
-            }
-            self.held.set(modifier, true);
-            self.chord = self.chord.merged(self.held);
             return;
         }
 
@@ -357,20 +456,8 @@ impl ListenerState {
             }
             return;
         };
-        if !self.held.get(modifier) {
-            return;
-        }
-
-        let before = self.held;
-        self.held.set(modifier, false);
-
-        // The first modifier to come up ends the chord; releasing the rest must not fire again.
-        if !self.interrupted && before == self.chord {
-            for binding in bindings.lock().iter() {
-                if binding.key.is_none() && binding.modifiers == before {
-                    fire(binding, true);
-                }
-            }
+        if self.source.is_none() {
+            self.modifier_up(modifier, bindings);
         }
     }
 
@@ -395,8 +482,8 @@ impl ListenerState {
     }
 }
 
-/// The simulator's own key-ups must not reach the state machine: a key-up for a modifier that is
-/// not down is classified as a press by rdev, and such a phantom modifier would stay held forever.
+/// The simulator's own events must not reach the state machine: its Cmd+A would count as a key
+/// the user pressed, and rdev labels its modifier key-ups as presses.
 #[cfg(target_os = "macos")]
 fn is_synthetic(event: &Event) -> bool {
     event.extra_data == crate::core::simulator::SYNTHETIC_TAG
@@ -486,7 +573,7 @@ impl SimpleHotkeyManager {
         let listen_error = self.listen_error.clone();
 
         let handle = thread::spawn(move || {
-            let mut state = ListenerState::default();
+            let mut state = ListenerState::new(system_modifier_source());
             // A panic here would unwind into the system's callback; caught so the listener lives on.
             let mut dispatch = move |event: &Event| {
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1116,6 +1203,190 @@ mod tests {
                 name
             );
         }
+    }
+
+    /// A Mac as rdev shows it to the listener: FlagsChanged events labelled press or release by
+    /// comparing their flags with the previous one's, whoever posted that one.
+    mod mac {
+        use super::*;
+
+        const NON_COALESCED: u64 = 0x100;
+        const CTRL: u64 = 0x40000 | 0x1;
+        const SHIFT: u64 = 0x20000 | 0x2;
+        const ALT: u64 = 0x80000 | 0x20;
+        pub const META: u64 = 0x100000 | 0x8;
+
+        pub enum Step {
+            Press(Key),
+            Release(Key),
+            /// A press the listener is never shown.
+            Unseen(Key),
+            /// A FlagsChanged the listener drops as synthetic; rdev has still taken its flags
+            /// as the next baseline.
+            Dropped(u64),
+        }
+
+        pub use Step::{Dropped, Press, Release, Unseen};
+
+        struct Mac {
+            physical: Modifiers,
+            last_flags: u64,
+        }
+
+        impl Mac {
+            fn flags(&self) -> u64 {
+                let held = self.physical;
+                NON_COALESCED
+                    | if held.ctrl { CTRL } else { 0 }
+                    | if held.alt { ALT } else { 0 }
+                    | if held.shift { SHIFT } else { 0 }
+                    | if held.meta { META } else { 0 }
+            }
+
+            fn flags_changed(&mut self, key: Key) -> EventType {
+                let flags = self.flags();
+                let release = flags < self.last_flags;
+                self.last_flags = flags;
+                if release {
+                    EventType::KeyRelease(key)
+                } else {
+                    EventType::KeyPress(key)
+                }
+            }
+
+            /// Each delivered event with the modifiers physically down as it arrives.
+            fn run(script: &[Step]) -> Vec<(EventType, Modifiers)> {
+                let mut mac = Mac {
+                    physical: Modifiers::default(),
+                    last_flags: NON_COALESCED,
+                };
+                let mut delivered = Vec::new();
+                for step in script {
+                    match step {
+                        Press(key) | Release(key) => {
+                            let event = match Modifier::from_key(key) {
+                                Some(modifier) => {
+                                    mac.physical.set(modifier, matches!(step, Press(_)));
+                                    mac.flags_changed(*key)
+                                }
+                                None if matches!(step, Press(_)) => EventType::KeyPress(*key),
+                                None => EventType::KeyRelease(*key),
+                            };
+                            delivered.push((event, mac.physical));
+                        }
+                        Unseen(key) => {
+                            let modifier = Modifier::from_key(key).expect("a modifier");
+                            mac.physical.set(modifier, true);
+                        }
+                        Dropped(flags) => mac.last_flags = *flags,
+                    }
+                }
+                delivered
+            }
+        }
+
+        /// `from_system` is the macOS listener; without it the state trusts rdev's labels.
+        pub fn fired(bindings: &[(&str, &str)], script: &[Step], from_system: bool) -> Vec<String> {
+            let _serial = SERIAL.lock();
+            FIRED.lock().clear();
+
+            let mut manager = SimpleHotkeyManager::new();
+            for (binding, action) in bindings {
+                manager
+                    .register(binding.to_string(), action.to_string(), record)
+                    .unwrap_or_else(|e| panic!("could not register {}: {}", binding, e));
+            }
+
+            let physical = Arc::new(Mutex::new(Modifiers::default()));
+            let source: ModifierSource = {
+                let physical = physical.clone();
+                Box::new(move || *physical.lock())
+            };
+            let mut state = ListenerState::new(from_system.then_some(source));
+            for (event, held) in Mac::run(script) {
+                *physical.lock() = held;
+                state.process(event, &manager.bindings);
+            }
+            FIRED.lock().clone()
+        }
+
+        /// Three ctrl+option+space presses; the first one's action leaves a synthetic
+        /// FlagsChanged in rdev's baseline.
+        pub fn three_presses_around_an_action() -> Vec<Step> {
+            let mut script = Vec::new();
+            for press in 0..3 {
+                script.extend([
+                    Press(Key::ControlLeft),
+                    Press(Key::Alt),
+                    Press(Key::Space),
+                    Release(Key::Space),
+                    Release(Key::Alt),
+                    Release(Key::ControlLeft),
+                ]);
+                if press == 0 {
+                    script.push(Dropped(META | NON_COALESCED));
+                }
+            }
+            script
+        }
+    }
+
+    /// rdev hands the second press's ctrl down over as a release; that press's own releases
+    /// bring the baseline back down, so the third fires.
+    #[test]
+    fn mislabelled_edges_drop_every_other_press() {
+        let actions = mac::fired(MAC, &mac::three_presses_around_an_action(), false);
+
+        assert_eq!(actions, vec!["revise_all", "revise_all"]);
+    }
+
+    #[test]
+    fn the_system_tables_survive_mislabelled_edges() {
+        let actions = mac::fired(MAC, &mac::three_presses_around_an_action(), true);
+
+        assert_eq!(actions, vec!["revise_all", "revise_all", "revise_all"]);
+    }
+
+    #[test]
+    fn the_system_tables_keep_the_modifier_only_chord_firing_on_release() {
+        use mac::{Dropped, META, Press, Release};
+
+        let script = [
+            Press(Key::ControlLeft),
+            Press(Key::Alt),
+            Press(Key::Space),
+            Release(Key::Space),
+            Release(Key::Alt),
+            Release(Key::ControlLeft),
+            Dropped(META),
+            Press(Key::ControlLeft),
+            Press(Key::MetaLeft),
+            Release(Key::MetaLeft),
+            Release(Key::ControlLeft),
+        ];
+
+        assert_eq!(mac::fired(MAC, &script, false), vec!["revise_all"]);
+        assert_eq!(
+            mac::fired(MAC, &script, true),
+            vec!["revise_all", "revise_selection"]
+        );
+    }
+
+    #[test]
+    fn the_system_tables_know_a_modifier_the_listener_never_saw_pressed() {
+        use mac::{Press, Release, Unseen};
+
+        let script = [
+            Unseen(Key::ControlLeft),
+            Press(Key::Alt),
+            Press(Key::Space),
+            Release(Key::Space),
+            Release(Key::Alt),
+            Release(Key::ControlLeft),
+        ];
+
+        assert!(mac::fired(MAC, &script, false).is_empty());
+        assert_eq!(mac::fired(MAC, &script, true), vec!["revise_all"]);
     }
 
     #[test]
