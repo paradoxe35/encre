@@ -355,9 +355,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Install MinGW
+      - name: Install MinGW and rcedit
         run: |
-          choco install mingw -y
+          choco install mingw rcedit -y
 
       - name: Add Rust GNU target
         run: rustup target add x86_64-pc-windows-gnu
@@ -408,6 +408,11 @@ jobs:
           if (Test-Path "Encre.exe") {
             Move-Item Encre.exe encre-windows-${{ matrix.arch }}.exe
           }
+
+          # fyne package embeds a single 256 px frame, which the shell shrinks
+          # badly for its 16 to 64 px slots. Swap in the icon drawn per size.
+          rcedit encre-windows-${{ matrix.arch }}.exe --set-icon assets\icon.ico
+          if ($LASTEXITCODE -ne 0) { throw "rcedit failed" }
 
       - name: Create portable ZIP
         shell: pwsh
