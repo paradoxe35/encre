@@ -4,14 +4,19 @@ use std::sync::Arc;
 use std::thread;
 
 use parking_lot::Mutex;
-use rdev::{Event, EventType, Key};
+#[cfg(not(target_os = "macos"))]
+use rdev::Event;
+use rdev::{EventType, Key};
 
-// Wayland needs rdev's evdev grab (user in the `input` group); X11, macOS and Windows work
-// through listen() with no special permissions.
-#[cfg(not(target_os = "linux"))]
+// Wayland needs rdev's evdev grab (user in the `input` group); X11 and Windows work through
+// listen() with no special permissions. macOS has its own tap, see tap_macos.
+#[cfg(target_os = "windows")]
 use rdev::listen;
 #[cfg(target_os = "linux")]
 use rdev::{listen, start_grab_listen};
+
+#[cfg(target_os = "macos")]
+use super::tap_macos::{self, TapKind};
 
 use super::ffi_types::*;
 
@@ -105,54 +110,26 @@ impl Modifiers {
             meta: self.meta || other.meta,
         }
     }
+
+    /// From a macOS event's flags, which name the modifiers down as the event was made.
+    #[cfg(any(test, target_os = "macos"))]
+    fn from_flags(flags: u64) -> Self {
+        Self {
+            shift: flags & (1 << 17) != 0,
+            ctrl: flags & (1 << 18) != 0,
+            alt: flags & (1 << 19) != 0,
+            meta: flags & (1 << 20) != 0,
+        }
+    }
 }
 
+#[cfg(any(test, target_os = "macos"))]
 const MODIFIERS: [Modifier; 4] = [
     Modifier::Ctrl,
     Modifier::Alt,
     Modifier::Shift,
     Modifier::Meta,
 ];
-
-/// Which modifiers are physically down right now.
-type ModifierSource = Box<dyn FnMut() -> Modifiers + Send>;
-
-/// rdev labels a macOS FlagsChanged press or release by comparing its flags with the previous
-/// one's, a baseline every FlagsChanged rewrites, the simulator's tagged key-ups included. Once
-/// it sits above the physical state a real press reads as a release. The system's key state
-/// tables carry no history, so on macOS the listener reads those instead.
-#[cfg(target_os = "macos")]
-fn system_modifiers() -> Modifiers {
-    const MODIFIER_KEYS: [(u16, Modifier); 8] = [
-        (0x37, Modifier::Meta),
-        (0x36, Modifier::Meta),
-        (0x38, Modifier::Shift),
-        (0x3C, Modifier::Shift),
-        (0x3A, Modifier::Alt),
-        (0x3D, Modifier::Alt),
-        (0x3B, Modifier::Ctrl),
-        (0x3E, Modifier::Ctrl),
-    ];
-
-    let mut held = Modifiers::default();
-    for (key, modifier) in MODIFIER_KEYS {
-        if crate::core::simulator::key_down(key) {
-            held.set(modifier, true);
-        }
-    }
-    held
-}
-
-#[cfg(target_os = "macos")]
-fn system_modifier_source() -> Option<ModifierSource> {
-    let source: ModifierSource = Box::new(system_modifiers);
-    Some(source)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn system_modifier_source() -> Option<ModifierSource> {
-    None
-}
 
 /// One table for both directions, so a name the recorder emits but the listener cannot match
 /// fails at registration instead of saving as a binding that silently never fires.
@@ -315,8 +292,6 @@ fn fire(binding: &HotkeyBinding, down: bool) {
 /// firing on press would trigger `ctrl+cmd` on the way to `ctrl+cmd+space`.
 #[derive(Default)]
 struct ListenerState {
-    /// Replaces the events' own press/release labels when set.
-    source: Option<ModifierSource>,
     held: Modifiers,
     /// The largest modifier set held since the last time every modifier was up.
     chord: Modifiers,
@@ -331,15 +306,7 @@ struct ListenerState {
 }
 
 impl ListenerState {
-    fn new(source: Option<ModifierSource>) -> Self {
-        Self {
-            source,
-            ..Self::default()
-        }
-    }
-
     fn process(&mut self, event: EventType, bindings: &Mutex<Vec<HotkeyBinding>>) {
-        self.sync(bindings);
         match event {
             EventType::KeyPress(key) => self.on_press(key, bindings),
             EventType::KeyRelease(key) => self.on_release(key, bindings),
@@ -348,22 +315,28 @@ impl ListenerState {
         }
     }
 
-    /// Turns whatever changed in the system's tables since the last event into edges.
-    fn sync(&mut self, bindings: &Mutex<Vec<HotkeyBinding>>) {
-        let now = match self.source.as_mut() {
-            Some(source) => source(),
-            None => return,
-        };
-        let before = self.held;
+    /// macOS: every event names the modifiers down as it was made, so the state follows that
+    /// instead of guessing edges from press and release events, which its own posted key-ups
+    /// would skew. Modifier changes arrive on their own, without a key.
+    #[cfg(any(test, target_os = "macos"))]
+    fn observe(
+        &mut self,
+        now: Modifiers,
+        event: Option<EventType>,
+        bindings: &Mutex<Vec<HotkeyBinding>>,
+    ) {
         for modifier in MODIFIERS {
-            if before.get(modifier) && !now.get(modifier) {
+            if self.held.get(modifier) && !now.get(modifier) {
                 self.modifier_up(modifier, bindings);
             }
         }
         for modifier in MODIFIERS {
-            if !before.get(modifier) && now.get(modifier) {
+            if !self.held.get(modifier) && now.get(modifier) {
                 self.modifier_down(modifier);
             }
+        }
+        if let Some(event) = event {
+            self.process(event, bindings);
         }
     }
 
@@ -399,9 +372,7 @@ impl ListenerState {
 
     fn on_press(&mut self, key: Key, bindings: &Mutex<Vec<HotkeyBinding>>) {
         if let Some(modifier) = Modifier::from_key(&key) {
-            if self.source.is_none() {
-                self.modifier_down(modifier);
-            }
+            self.modifier_down(modifier);
             return;
         }
 
@@ -456,9 +427,7 @@ impl ListenerState {
             }
             return;
         };
-        if self.source.is_none() {
-            self.modifier_up(modifier, bindings);
-        }
+        self.modifier_up(modifier, bindings);
     }
 
     /// Logged once per key; it tells a wrong binding apart from a listener the system never
@@ -480,18 +449,6 @@ impl ListenerState {
             self.held.meta
         );
     }
-}
-
-/// The simulator's own events must not reach the state machine: its Cmd+A would count as a key
-/// the user pressed, and rdev labels its modifier key-ups as presses.
-#[cfg(target_os = "macos")]
-fn is_synthetic(event: &Event) -> bool {
-    event.extra_data == crate::core::simulator::SYNTHETIC_TAG
-}
-
-#[cfg(not(target_os = "macos"))]
-fn is_synthetic(_: &Event) -> bool {
-    false
 }
 
 pub struct SimpleHotkeyManager {
@@ -573,49 +530,75 @@ impl SimpleHotkeyManager {
         let listen_error = self.listen_error.clone();
 
         let handle = thread::spawn(move || {
-            let mut state = ListenerState::new(system_modifier_source());
-            // A panic here would unwind into the system's callback; caught so the listener lives on.
-            let mut dispatch = move |event: &Event| {
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    if !*active_flag.lock() || is_synthetic(event) {
-                        return;
-                    }
-                    state.process(event.event_type, &bindings);
-                }));
-            };
+            let mut state = ListenerState::default();
 
-            #[cfg(target_os = "linux")]
+            #[cfg(target_os = "macos")]
             {
-                if is_wayland() {
-                    tracing::info!("Wayland session detected, using evdev grab for hotkeys");
-                    let callback = move |event: Event| {
-                        dispatch(&event);
-                        Some(event)
-                    };
-
-                    if let Err(e) = start_grab_listen(callback) {
-                        *listen_error.lock() = Some(format!(
-                            "Wayland grab failed ({:?}). Add your user to the 'input' group: \
-                             sudo usermod -aG input $USER",
-                            e
-                        ));
-                    }
-                } else {
-                    tracing::info!("X11 session detected, using X11 listener for hotkeys");
-                    if let Err(e) = listen(move |event| dispatch(&event)) {
-                        *listen_error.lock() = Some(format!("X11 listener failed ({:?})", e));
-                    }
+                let result = tap_macos::listen(move |tap| {
+                    // A panic here would unwind into the system's callback; caught so the listener lives on.
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        if tap.synthetic || !*active_flag.lock() {
+                            return;
+                        }
+                        let key = rdev::key_from_code(tap.keycode);
+                        let event = match tap.kind {
+                            TapKind::FlagsChanged => None,
+                            TapKind::KeyDown => Some(EventType::KeyPress(key)),
+                            TapKind::KeyUp => Some(EventType::KeyRelease(key)),
+                            TapKind::MouseDown => Some(EventType::ButtonPress(rdev::Button::Left)),
+                        };
+                        state.observe(Modifiers::from_flags(tap.flags), event, &bindings);
+                    }));
+                });
+                if let Err(e) = result {
+                    *listen_error.lock() = Some(format!(
+                        "The system refused the key listener ({e}). This is Input Monitoring; \
+                         grant it to Encre and restart."
+                    ));
                 }
             }
 
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(target_os = "macos"))]
             {
-                if let Err(e) = listen(move |event| dispatch(&event)) {
-                    *listen_error.lock() = Some(format!(
-                        "The system refused the key listener ({:?}). On macOS this is Input \
-                         Monitoring; grant it to Encre and restart.",
-                        e
-                    ));
+                let mut dispatch = move |event: &Event| {
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        if !*active_flag.lock() {
+                            return;
+                        }
+                        state.process(event.event_type, &bindings);
+                    }));
+                };
+
+                #[cfg(target_os = "linux")]
+                {
+                    if is_wayland() {
+                        tracing::info!("Wayland session detected, using evdev grab for hotkeys");
+                        let callback = move |event: Event| {
+                            dispatch(&event);
+                            Some(event)
+                        };
+
+                        if let Err(e) = start_grab_listen(callback) {
+                            *listen_error.lock() = Some(format!(
+                                "Wayland grab failed ({:?}). Add your user to the 'input' group: \
+                                 sudo usermod -aG input $USER",
+                                e
+                            ));
+                        }
+                    } else {
+                        tracing::info!("X11 session detected, using X11 listener for hotkeys");
+                        if let Err(e) = listen(move |event| dispatch(&event)) {
+                            *listen_error.lock() = Some(format!("X11 listener failed ({:?})", e));
+                        }
+                    }
+                }
+
+                #[cfg(target_os = "windows")]
+                {
+                    if let Err(e) = listen(move |event| dispatch(&event)) {
+                        *listen_error.lock() =
+                            Some(format!("The system refused the key listener ({:?})", e));
+                    }
                 }
             }
         });
@@ -1205,8 +1188,9 @@ mod tests {
         }
     }
 
-    /// A Mac as rdev shows it to the listener: FlagsChanged events labelled press or release by
-    /// comparing their flags with the previous one's, whoever posted that one.
+    /// A Mac's event stream: every event carries the flags in force as it was made. rdev labels a
+    /// FlagsChanged press or release by comparing its flags with the previous one's, whoever
+    /// posted that one.
     mod mac {
         use super::*;
 
@@ -1254,8 +1238,8 @@ mod tests {
                 }
             }
 
-            /// Each delivered event with the modifiers physically down as it arrives.
-            fn run(script: &[Step]) -> Vec<(EventType, Modifiers)> {
+            /// Each delivered event with the flags it carries.
+            fn run(script: &[Step]) -> Vec<(EventType, u64)> {
                 let mut mac = Mac {
                     physical: Modifiers::default(),
                     last_flags: NON_COALESCED,
@@ -1272,7 +1256,7 @@ mod tests {
                                 None if matches!(step, Press(_)) => EventType::KeyPress(*key),
                                 None => EventType::KeyRelease(*key),
                             };
-                            delivered.push((event, mac.physical));
+                            delivered.push((event, mac.flags()));
                         }
                         Unseen(key) => {
                             let modifier = Modifier::from_key(key).expect("a modifier");
@@ -1285,8 +1269,9 @@ mod tests {
             }
         }
 
-        /// `from_system` is the macOS listener; without it the state trusts rdev's labels.
-        pub fn fired(bindings: &[(&str, &str)], script: &[Step], from_system: bool) -> Vec<String> {
+        /// `from_flags` is the macOS listener, reading each event's flags; without it the state
+        /// trusts rdev's labels.
+        pub fn fired(bindings: &[(&str, &str)], script: &[Step], from_flags: bool) -> Vec<String> {
             let _serial = SERIAL.lock();
             FIRED.lock().clear();
 
@@ -1297,15 +1282,22 @@ mod tests {
                     .unwrap_or_else(|e| panic!("could not register {}: {}", binding, e));
             }
 
-            let physical = Arc::new(Mutex::new(Modifiers::default()));
-            let source: ModifierSource = {
-                let physical = physical.clone();
-                Box::new(move || *physical.lock())
-            };
-            let mut state = ListenerState::new(from_system.then_some(source));
-            for (event, held) in Mac::run(script) {
-                *physical.lock() = held;
-                state.process(event, &manager.bindings);
+            let mut state = ListenerState::default();
+            for (event, flags) in Mac::run(script) {
+                if !from_flags {
+                    state.process(event, &manager.bindings);
+                    continue;
+                }
+                // The tap reports a modifier change on its own, with no key.
+                let key = match event {
+                    EventType::KeyPress(key) | EventType::KeyRelease(key)
+                        if Modifier::from_key(&key).is_some() =>
+                    {
+                        None
+                    }
+                    other => Some(other),
+                };
+                state.observe(Modifiers::from_flags(flags), key, &manager.bindings);
             }
             FIRED.lock().clone()
         }
@@ -1341,14 +1333,14 @@ mod tests {
     }
 
     #[test]
-    fn the_system_tables_survive_mislabelled_edges() {
+    fn the_event_flags_survive_mislabelled_edges() {
         let actions = mac::fired(MAC, &mac::three_presses_around_an_action(), true);
 
         assert_eq!(actions, vec!["revise_all", "revise_all", "revise_all"]);
     }
 
     #[test]
-    fn the_system_tables_keep_the_modifier_only_chord_firing_on_release() {
+    fn the_event_flags_keep_the_modifier_only_chord_firing_on_release() {
         use mac::{Dropped, META, Press, Release};
 
         let script = [
@@ -1373,7 +1365,7 @@ mod tests {
     }
 
     #[test]
-    fn the_system_tables_know_a_modifier_the_listener_never_saw_pressed() {
+    fn the_event_flags_know_a_modifier_the_listener_never_saw_pressed() {
         use mac::{Press, Release, Unseen};
 
         let script = [

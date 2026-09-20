@@ -14,12 +14,6 @@ pub struct KeySimulator {
 #[cfg(target_os = "macos")]
 pub const SYNTHETIC_TAG: i64 = 0x454E_4352;
 
-/// Whether the key is down in the system's key state tables.
-#[cfg(target_os = "macos")]
-pub fn key_down(key: u16) -> bool {
-    macos_native::key_down(key)
-}
-
 #[cfg(target_os = "macos")]
 mod macos_native {
     use super::*;
@@ -84,7 +78,7 @@ mod macos_native {
     }
 
     /// Both tables: recent macOS can leave a held key out of the HID table.
-    pub fn key_down(key: u16) -> bool {
+    fn key_down(key: u16) -> bool {
         unsafe {
             CGEventSourceKeyState(HID_SYSTEM_STATE, key)
                 || CGEventSourceKeyState(COMBINED_SESSION_STATE, key)

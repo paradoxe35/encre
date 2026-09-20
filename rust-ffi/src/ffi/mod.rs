@@ -3,6 +3,8 @@ pub mod ffi_hotkey;
 pub mod ffi_simulator;
 pub mod ffi_stt;
 pub mod ffi_types;
+#[cfg(target_os = "macos")]
+mod tap_macos;
 
 pub use ffi_types::*;
 use std::os::raw::c_char;

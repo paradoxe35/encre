@@ -14,7 +14,11 @@ exclude = [
     "CFRelease", "CFTypeRef", "CFStringRef", "AXUIElementRef", "AXError",
     "AXUIElementCreateSystemWide", "AXUIElementCopyAttributeValue",
     "CFStringCreateWithCString", "CFStringGetCStringPtr",
-    "CGEventCreateKeyboardEvent", "CGEventSetFlags", "CGEventPost"
+    "CGEventCreateKeyboardEvent", "CGEventSetFlags", "CGEventPost",
+    "CGEventSetIntegerValueField", "CGEventSourceKeyState",
+    "CGEventTapCreate", "CGEventTapEnable", "CGEventGetIntegerValueField", "CGEventGetFlags",
+    "CFMachPortCreateRunLoopSource", "CFRunLoopGetCurrent", "CFRunLoopAddSource", "CFRunLoopRun",
+    "kCFRunLoopCommonModes"
 ]
 
 [parse]

@@ -45,14 +45,6 @@ typedef void *encre_SttHandle;
  */
 typedef void (*encre_LevelCallback)(float);
 
-#if defined(ENCRE_MACOS)
-extern void CGEventSetIntegerValueField(void *event, uint32_t field, int64_t value);
-#endif
-
-#if defined(ENCRE_MACOS)
-extern bool CGEventSourceKeyState(int32_t state_id, uint16_t key);
-#endif
-
 /**
  * Null when there is no error. Free with `encre_free_string`.
  */
