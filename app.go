@@ -92,7 +92,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	}, hideFromDock)
 
 	if desk, ok := app.(desktop.App); ok {
-		desk.SetSystemTrayIcon(resourceIconPng)
+		desk.SetSystemTrayIcon(trayIcon())
 		ui.SetupSystemTray(desk, mainWindow, func() error {
 			application.Stop()
 			return nil

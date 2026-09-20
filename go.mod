@@ -43,3 +43,6 @@ require (
 	golang.org/x/net v0.35.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// Patched tray icon colours on Linux, see third_party/systray/PATCH.md.
+replace fyne.io/systray => ./third_party/systray
