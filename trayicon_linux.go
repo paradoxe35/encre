@@ -8,8 +8,10 @@ import (
 	"fyne.io/fyne/v2"
 )
 
-// Panels show the pixmap at 16 to 24 px with plain linear filtering, which
-// turns the 256 px application icon into a jagged blob. 32 px scales cleanly.
+// The systray library sends every translucent pixel with a corrupted colour,
+// and panels shrink whatever they get with plain linear filtering. So the tray
+// gets a hard-edged 32 px image: halving it to the panel size is what
+// smooths the outline. Rendered by scripts/generate_icons.py.
 //
 //go:embed assets/tray.png
 var trayIconPNG []byte

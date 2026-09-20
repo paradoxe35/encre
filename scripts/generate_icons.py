@@ -14,11 +14,16 @@ HIGHLIGHT = (147, 197, 253)
 # Clear of the canvas edge so the drop is not clipped by a rounded frame.
 MARGIN = 0.04
 
-# Three files are consumed by anything: icon.png (Fyne metadata, the Linux
-# packages, the window and tray icon), icon_1024.png (the macOS bundle, which
-# wants a retina source) and icon.ico (Windows). The per-size renders behind
-# the .ico are built in memory and never written.
+# Four files are consumed by anything: icon.png (Fyne metadata, the Linux
+# packages, the window icon), icon_1024.png (the macOS bundle, which wants a
+# retina source), icon.ico (Windows) and tray.png (the Linux tray). The
+# per-size renders behind the .ico are built in memory and never written.
 ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
+
+# Linux panels ask for 16 to 24 px. The systray library corrupts the colour of
+# every translucent pixel it sends, so the tray image has hard edges and is
+# drawn at twice the common panel size: halving it is what smooths the edges.
+TRAY_SIZE = 32
 
 DROP = (
     (50, 5),
@@ -92,6 +97,12 @@ def app_icon(size):
     return fitted(artwork(work, BODY, HIGHLIGHT), work, MARGIN).resize((size, size), Image.LANCZOS)
 
 
+def tray_icon():
+    icon = app_icon(TRAY_SIZE)
+    icon.putalpha(icon.split()[-1].point(lambda v: 255 if v >= 128 else 0))
+    return icon
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     assets = os.path.join(root, "assets")
@@ -101,6 +112,7 @@ def main():
 
     icons[256].save(os.path.join(assets, "icon.png"))
     app_icon(1024).save(os.path.join(assets, "icon_1024.png"))
+    tray_icon().save(os.path.join(assets, "tray.png"))
 
     # Two things Windows is fussy about. Pillow only reuses a frame when an image
     # of that exact size is supplied, so hand it our own render per size and the
@@ -118,6 +130,7 @@ def main():
     print("icon.png       256 px, app and Linux packages")
     print("icon_1024.png  1024 px, macOS bundle")
     print(f"icon.ico       {ICO_SIZES}, BMP frames, Windows")
+    print(f"tray.png       {TRAY_SIZE} px, hard edges, Linux tray")
 
 
 if __name__ == "__main__":
