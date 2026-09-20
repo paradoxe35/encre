@@ -7,38 +7,21 @@ import (
 	"fyne.io/fyne/v2/theme"
 )
 
-type forceLight struct{}
+// fixedVariant pins the colours to one variant and leaves the rest to the default theme.
+type fixedVariant struct{ variant fyne.ThemeVariant }
 
-func (f *forceLight) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
-	return theme.DefaultTheme().Color(name, theme.VariantLight)
+func (t *fixedVariant) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) color.Color {
+	return theme.DefaultTheme().Color(name, t.variant)
 }
 
-func (f *forceLight) Font(style fyne.TextStyle) fyne.Resource {
+func (t *fixedVariant) Font(style fyne.TextStyle) fyne.Resource {
 	return theme.DefaultTheme().Font(style)
 }
 
-func (f *forceLight) Icon(name fyne.ThemeIconName) fyne.Resource {
+func (t *fixedVariant) Icon(name fyne.ThemeIconName) fyne.Resource {
 	return theme.DefaultTheme().Icon(name)
 }
 
-func (f *forceLight) Size(name fyne.ThemeSizeName) float32 {
-	return theme.DefaultTheme().Size(name)
-}
-
-type forceDark struct{}
-
-func (f *forceDark) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
-	return theme.DefaultTheme().Color(name, theme.VariantDark)
-}
-
-func (f *forceDark) Font(style fyne.TextStyle) fyne.Resource {
-	return theme.DefaultTheme().Font(style)
-}
-
-func (f *forceDark) Icon(name fyne.ThemeIconName) fyne.Resource {
-	return theme.DefaultTheme().Icon(name)
-}
-
-func (f *forceDark) Size(name fyne.ThemeSizeName) float32 {
+func (t *fixedVariant) Size(name fyne.ThemeSizeName) float32 {
 	return theme.DefaultTheme().Size(name)
 }

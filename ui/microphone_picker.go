@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"slices"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
@@ -29,7 +31,12 @@ func NewMicrophonePicker(saved string) *MicrophonePicker {
 }
 
 func newMicrophonePicker(saved string, list func() []input.Device) *MicrophonePicker {
-	p := &MicrophonePicker{}
+	p := &MicrophonePicker{
+		status: widget.NewLabel(""),
+		saved:  saved,
+		chosen: saved,
+		list:   list,
+	}
 	p.selector = widget.NewSelect(nil, func(string) {
 		if p.refreshing {
 			return
@@ -39,13 +46,6 @@ func newMicrophonePicker(saved string, list func() []input.Device) *MicrophonePi
 			p.onChanged()
 		}
 	})
-	*p = MicrophonePicker{
-		selector: p.selector,
-		status:   widget.NewLabel(""),
-		saved:    saved,
-		chosen:   saved,
-		list:     list,
-	}
 	p.status.TextStyle.Italic = true
 
 	p.ExtendBaseWidget(p)
@@ -66,11 +66,9 @@ func (p *MicrophonePicker) Refresh() {
 
 	devices := p.list()
 
-	wanted := p.chosen
-	if _, ok := p.find(devices, wanted); !ok {
-		wanted = p.saved
+	if !connected(devices, p.chosen) {
+		p.chosen = p.saved
 	}
-	p.chosen = wanted
 
 	options := []string{systemDefaultDevice}
 	present := false
@@ -81,9 +79,9 @@ func (p *MicrophonePicker) Refresh() {
 		}
 	}
 	// Keep a missing device visible rather than dropping the user's choice.
-	if p.chosen != "" && !p.inOptions(options, p.chosen) {
+	if p.chosen != "" && !slices.Contains(options, p.chosen) {
 		options = append(options, p.chosen)
-	} else if p.saved != "" && !present && !p.inOptions(options, p.saved) {
+	} else if p.saved != "" && !present && !slices.Contains(options, p.saved) {
 		options = append(options, p.saved)
 	}
 
@@ -94,21 +92,13 @@ func (p *MicrophonePicker) Refresh() {
 	p.BaseWidget.Refresh()
 }
 
-func (p *MicrophonePicker) find(devices []input.Device, name string) (input.Device, bool) {
+// The system default (empty name) always counts as connected.
+func connected(devices []input.Device, name string) bool {
 	if name == "" {
-		return input.Device{}, true
+		return true
 	}
 	for _, device := range devices {
 		if device.Name == name {
-			return device, true
-		}
-	}
-	return input.Device{}, false
-}
-
-func (p *MicrophonePicker) inOptions(options []string, name string) bool {
-	for _, option := range options {
-		if option == name {
 			return true
 		}
 	}

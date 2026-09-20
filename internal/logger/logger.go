@@ -10,10 +10,7 @@ import (
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
-var (
-	defaultLogger  *slog.Logger
-	currentLogFile string
-)
+var defaultLogger *slog.Logger
 
 func Init() error {
 	logDir := utils.AppHomeDir("logs")
@@ -23,7 +20,6 @@ func Init() error {
 
 	today := time.Now().Format("2006-01-02")
 	logFile := filepath.Join(logDir, fmt.Sprintf("encre-%s.log", today))
-	currentLogFile = logFile
 
 	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -72,15 +68,6 @@ func Warn(msg string, args ...any) {
 	if defaultLogger != nil {
 		defaultLogger.Warn(msg, args...)
 	}
-}
-
-func GetCurrentLogFile() string {
-	if currentLogFile != "" {
-		return currentLogFile
-	}
-
-	today := time.Now().Format("2006-01-02")
-	return utils.AppHomeDir("logs", fmt.Sprintf("encre-%s.log", today))
 }
 
 func GetLogDirectory() string {

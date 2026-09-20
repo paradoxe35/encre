@@ -176,28 +176,36 @@ fn end_take(recogniser: &SpeechRecogniser) -> anyhow::Result<audio::Stopped> {
     Recorder::await_stop(pending)
 }
 
+/// Null and empty both read as `None`.
+///
+/// # Safety
+/// A non-null `ptr` must be a valid null-terminated C string.
+unsafe fn optional_string(ptr: *const c_char, what: &str) -> Result<Option<String>, c_int> {
+    if ptr.is_null() {
+        return Ok(None);
+    }
+    match unsafe { c_str_to_string(ptr) } {
+        Ok(text) => Ok((!text.is_empty()).then_some(text)),
+        Err(e) => {
+            set_last_error(format!("Invalid {what}: {e}"));
+            Err(FFIErrorCode::InvalidUtf8 as c_int)
+        }
+    }
+}
+
 /// Null or empty means the system default. Takes effect on the next recording.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_stt_set_device(handle: SttHandle, name: *const c_char) -> c_int {
     let Some(recogniser) = recogniser(handle) else {
         return FFIErrorCode::NullPointer as c_int;
     };
-
-    let wanted = if name.is_null() {
-        None
-    } else {
-        match unsafe { c_str_to_string(name) } {
-            Ok(name) if !name.is_empty() => Some(name),
-            Ok(_) => None,
-            Err(e) => {
-                set_last_error(format!("Invalid device name: {e}"));
-                return FFIErrorCode::InvalidUtf8 as c_int;
-            }
+    match unsafe { optional_string(name, "device name") } {
+        Ok(wanted) => {
+            recogniser.recorder.set_device(wanted);
+            FFIErrorCode::Success as c_int
         }
-    };
-
-    recogniser.recorder.set_device(wanted);
-    FFIErrorCode::Success as c_int
+        Err(code) => code,
+    }
 }
 
 /// ISO code; NULL or empty asks the model to detect the language, which only some can.
@@ -206,22 +214,13 @@ pub unsafe extern "C" fn encre_stt_set_language(handle: SttHandle, code: *const 
     let Some(recogniser) = recogniser(handle) else {
         return FFIErrorCode::NullPointer as c_int;
     };
-
-    let wanted = if code.is_null() {
-        None
-    } else {
-        match unsafe { c_str_to_string(code) } {
-            Ok(code) if !code.is_empty() => Some(code),
-            Ok(_) => None,
-            Err(e) => {
-                set_last_error(format!("Invalid language code: {e}"));
-                return FFIErrorCode::InvalidUtf8 as c_int;
-            }
+    match unsafe { optional_string(code, "language code") } {
+        Ok(wanted) => {
+            recogniser.recorder.set_language(wanted);
+            FFIErrorCode::Success as c_int
         }
-    };
-
-    recogniser.recorder.set_language(wanted);
-    FFIErrorCode::Success as c_int
+        Err(code) => code,
+    }
 }
 
 /// While on, a take never touches the engine: `encre_stt_stop` fails and audio is

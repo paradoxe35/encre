@@ -29,19 +29,20 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn new(input_rate: u32) -> Self {
+        let resampler = if input_rate == SAMPLE_RATE {
+            None
+        } else {
+            rubato::FftFixedIn::<f32>::new(
+                input_rate as usize,
+                SAMPLE_RATE as usize,
+                RESAMPLER_CHUNK,
+                1,
+                1,
+            )
+            .ok()
+        };
         Self {
-            resampler: (input_rate != SAMPLE_RATE)
-                .then(|| {
-                    rubato::FftFixedIn::<f32>::new(
-                        input_rate as usize,
-                        SAMPLE_RATE as usize,
-                        RESAMPLER_CHUNK,
-                        1,
-                        1,
-                    )
-                    .ok()
-                })
-                .flatten(),
+            resampler,
             pending: Vec::new(),
             frame: Vec::with_capacity(VAD_FRAME),
             detector: earshot::Detector::default(),
@@ -116,18 +117,11 @@ impl Pipeline {
     }
 
     pub fn finish(&mut self) -> Vec<f32> {
+        // Zero-padded to a whole chunk so the resampler gives back what it still holds.
         if !self.pending.is_empty() {
-            let tail: Vec<f32> = std::mem::take(&mut self.pending);
-            let mut padded = tail;
-            padded.resize(RESAMPLER_CHUNK, 0.0);
-            let flushed = self.resample(&padded);
-            for sample in flushed {
-                self.frame.push(sample);
-                if self.frame.len() == VAD_FRAME {
-                    let frame = std::mem::replace(&mut self.frame, Vec::with_capacity(VAD_FRAME));
-                    self.classify(frame);
-                }
-            }
+            let mut tail = std::mem::take(&mut self.pending);
+            tail.resize(RESAMPLER_CHUNK, 0.0);
+            self.feed(&tail);
         }
 
         if self.hangover > 0 && !self.frame.is_empty() {

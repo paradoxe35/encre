@@ -154,12 +154,10 @@ func (h *historyRows) at(i widget.ListItemID) (historyRow, bool) {
 func (h *historyRows) summary() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	switch n := len(h.rows); n {
-	case 0:
+	if len(h.rows) == 0 {
 		return "No history yet"
-	default:
-		return fmt.Sprintf("%d entries", n)
 	}
+	return fmt.Sprintf("%d entries", len(h.rows))
 }
 
 func historyTitle(entry history.Entry) string {

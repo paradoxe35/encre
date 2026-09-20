@@ -27,7 +27,6 @@ func TestParseProviderMention(t *testing.T) {
 		text          string
 		wantProvider  string
 		wantRemainder string
-		wantOK        bool
 	}{
 		{
 			name:          "mention stripped and case-insensitively matched",
@@ -35,7 +34,6 @@ func TestParseProviderMention(t *testing.T) {
 			text:          "@openai fix this sentence",
 			wantProvider:  "OpenAI",
 			wantRemainder: "fix this sentence",
-			wantOK:        true,
 		},
 		{
 			name:          "mention alone with no remainder",
@@ -43,7 +41,6 @@ func TestParseProviderMention(t *testing.T) {
 			text:          "@claude",
 			wantProvider:  "claude",
 			wantRemainder: "",
-			wantOK:        true,
 		},
 		{
 			name:          "unknown provider falls back untouched",
@@ -51,7 +48,6 @@ func TestParseProviderMention(t *testing.T) {
 			text:          "@unknown do the thing",
 			wantProvider:  "",
 			wantRemainder: "@unknown do the thing",
-			wantOK:        false,
 		},
 		{
 			name:          "no leading @ is not a mention",
@@ -59,7 +55,6 @@ func TestParseProviderMention(t *testing.T) {
 			text:          "openai please help",
 			wantProvider:  "",
 			wantRemainder: "openai please help",
-			wantOK:        false,
 		},
 		{
 			name:          "feature disabled ignores an otherwise valid mention",
@@ -67,7 +62,6 @@ func TestParseProviderMention(t *testing.T) {
 			text:          "@openai fix this",
 			wantProvider:  "",
 			wantRemainder: "@openai fix this",
-			wantOK:        false,
 		},
 		{
 			name:          "leading whitespace before the mention is still recognised",
@@ -75,7 +69,6 @@ func TestParseProviderMention(t *testing.T) {
 			text:          "  @claude   translate this",
 			wantProvider:  "claude",
 			wantRemainder: "translate this",
-			wantOK:        true,
 		},
 	}
 
@@ -83,10 +76,10 @@ func TestParseProviderMention(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := mentionConfig(tc.mentionsOn)
-			provider, remainder, ok := p.parseProviderMention(cfg, tc.text)
-			if provider != tc.wantProvider || remainder != tc.wantRemainder || ok != tc.wantOK {
-				t.Errorf("parseProviderMention(%q) = (%q, %q, %v), want (%q, %q, %v)",
-					tc.text, provider, remainder, ok, tc.wantProvider, tc.wantRemainder, tc.wantOK)
+			provider, remainder := p.parseProviderMention(cfg, tc.text)
+			if provider != tc.wantProvider || remainder != tc.wantRemainder {
+				t.Errorf("parseProviderMention(%q) = (%q, %q), want (%q, %q)",
+					tc.text, provider, remainder, tc.wantProvider, tc.wantRemainder)
 			}
 		})
 	}

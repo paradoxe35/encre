@@ -65,19 +65,12 @@ func (w *MainWindow) applyProviderSettings() error {
 		return errors.New("base URL is required for custom providers")
 	}
 
-	settings := config.ProviderSettings{
-		Model:        model,
-		BaseURL:      existing.BaseURL, // the form only shows/owns this field for custom providers
-		Temperature:  existing.Temperature,
-		IsCustom:     existing.IsCustom,
-		ProviderType: existing.ProviderType,
-		NoAPIKey:     existing.NoAPIKey,
-		LowReasoning: existing.LowReasoning,
-	}
+	// The form only owns the model, and the base URL for custom providers; the rest is kept as saved.
+	settings := existing
+	settings.Model = model
 	if isCustom {
 		settings.BaseURL = baseURL
 	}
-
 	w.config.SetProviderSettings(provider, settings)
 
 	if err := w.config.SetAPIKey(provider, apiKey); err != nil {

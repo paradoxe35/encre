@@ -17,8 +17,7 @@ func (w *MainWindow) createHotkeysSection() fyne.CanvasObject {
 	for _, kind := range config.ActionOrder {
 		action := w.config.Action(kind)
 
-		enable := widget.NewCheck("", func(bool) { w.markDirty() })
-		enable.SetChecked(action.Enabled)
+		enable := w.dirtyCheck("", action.Enabled)
 		w.enables[kind] = enable
 
 		capture := w.newCapture(kind)
@@ -67,20 +66,10 @@ func (w *MainWindow) createHotkeysSection() fyne.CanvasObject {
 }
 
 func (w *MainWindow) newCapture(kind config.ActionKind) *HotkeyCapture {
-	capture := NewHotkeyCapture(w.hotkeyBindings[kind], unsetHotkeyText)
+	capture := NewHotkeyCapture(w.hotkeyBindings[kind])
 	capture.window = w.Window
-	capture.SetAllowModifierOnly(true)
-
-	capture.onCaptureStart = func() {
-		if w.hotkeyManager != nil {
-			w.hotkeyManager.Disable()
-		}
-	}
-	capture.onCaptureStop = func() {
-		if w.hotkeyManager != nil {
-			w.hotkeyManager.Enable()
-		}
-	}
+	capture.onCaptureStart = w.hotkeyManager.Disable
+	capture.onCaptureStop = w.hotkeyManager.Enable
 	capture.onChanged = w.markDirty
 	return capture
 }

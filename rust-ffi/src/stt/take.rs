@@ -85,9 +85,8 @@ impl<S: Source> Take<S> {
     pub fn run<E: Recognizer>(
         mut self,
         commands: &Receiver<Command>,
-        wanted: Option<Wanted<'_, E>>,
+        mut wanted: Option<Wanted<'_, E>>,
     ) -> bool {
-        let mut wanted = wanted;
         loop {
             let mut guard = match self.capture(commands, wanted.take()) {
                 Captured::Ended(running) => return running,

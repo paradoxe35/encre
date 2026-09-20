@@ -47,14 +47,3 @@ func (f *ProviderFactory) Get(name string) (Provider, error) {
 	}
 	return provider, nil
 }
-
-func (f *ProviderFactory) SetCurrent(name string) error {
-	provider, err := f.Get(name)
-	if err != nil {
-		return err
-	}
-	if err := provider.ValidateConfig(); err != nil {
-		return fmt.Errorf("provider validation failed: %w", err)
-	}
-	return nil
-}

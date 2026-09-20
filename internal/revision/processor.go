@@ -73,13 +73,9 @@ func (p *Processor) initializeProviders() error {
 		return fmt.Errorf("no provider configured")
 	}
 
-	provider, err := p.buildProvider(cfg, name)
-	if err != nil {
+	if _, err := p.providerNamed(name); err != nil {
 		return err
 	}
-
-	p.providerFactory.Register(name, provider)
-	p.providerFactory.SetCurrent(name)
 
 	logger.Info("AI provider initialized", "provider", name)
 	return nil
@@ -205,7 +201,7 @@ func (p *Processor) Run(kind config.ActionKind) error {
 		return fmt.Errorf("failed to replace text: %w", err)
 	}
 
-	p.recordHistory(kind, text, result, "")
+	p.recordHistory(kind, text, result)
 	logger.Info("Action completed", "action", kind)
 	return nil
 }
@@ -217,7 +213,7 @@ func (p *Processor) History() *history.Store {
 // Raw and final differ when the AI cleanup ran; showing both is what makes the history useful.
 func (p *Processor) RecordSpeech(raw, final string) {
 	model := ""
-	if m, ok := stt.FindModel(p.currentConfig().Speech.ModelID); ok {
+	if m, ok := stt.FindModel(p.currentConfig().SpeechSettings().ModelID); ok {
 		model = m.Name
 	}
 
@@ -231,7 +227,7 @@ func (p *Processor) RecordSpeech(raw, final string) {
 }
 
 // Never blocks the caller: history is a convenience, not a dependency.
-func (p *Processor) recordHistory(kind config.ActionKind, original, result, model string) {
+func (p *Processor) recordHistory(kind config.ActionKind, original, result string) {
 	cfg := p.currentConfig()
 
 	entry := history.Entry{
@@ -239,7 +235,6 @@ func (p *Processor) recordHistory(kind config.ActionKind, original, result, mode
 		Original:   original,
 		Result:     result,
 		Provider:   cfg.GetCurrentProvider(),
-		Model:      model,
 		Characters: utf8.RuneCountInString(result),
 	}
 	if kind.Operation() == config.OpTranslate {
@@ -254,12 +249,7 @@ func (p *Processor) transform(text string, kind config.ActionKind) (string, erro
 	cfg := p.currentConfig()
 	operation := cfg.Operation(kind.Operation())
 
-	mentioned, cleanedText, hasMention := p.parseProviderMention(cfg, text)
-
-	source := text
-	if hasMention {
-		source = cleanedText
-	}
+	mentioned, source := p.parseProviderMention(cfg, text)
 
 	trimmed := strings.TrimSpace(source)
 	if trimmed == "" {
@@ -341,28 +331,27 @@ func (p *Processor) IsProcessing() bool {
 }
 
 func (p *Processor) Close() {
-	if p.clipboardManager != nil {
-		p.clipboardManager.Close()
-	}
+	p.clipboardManager.Close()
 }
 
-func (p *Processor) parseProviderMention(cfg *config.Config, text string) (provider, remainder string, ok bool) {
+// Without a usable mention the text comes back untouched, so the whitespace it carried is kept.
+func (p *Processor) parseProviderMention(cfg *config.Config, text string) (provider, remainder string) {
 	if !cfg.ProviderMentionsEnabled() {
-		return "", text, false
+		return "", text
 	}
 
 	trimmed := strings.TrimSpace(text)
 	if !strings.HasPrefix(trimmed, "@") {
-		return "", text, false
+		return "", text
 	}
 
 	mention, rest, _ := strings.Cut(trimmed, " ")
 	name, found := findProvider(cfg, strings.TrimPrefix(mention, "@"))
 	if !found {
-		return "", text, false
+		return "", text
 	}
 
-	return name, strings.TrimSpace(rest), true
+	return name, strings.TrimSpace(rest)
 }
 
 // Matches case-insensitively and returns the stored spelling.

@@ -41,9 +41,6 @@ type Catalog struct {
 	fetched time.Time
 }
 
-func (c *Catalog) Origin() string     { return c.origin }
-func (c *Catalog) Fetched() time.Time { return c.fetched }
-
 var (
 	catalogMu sync.RWMutex
 	active    *Catalog

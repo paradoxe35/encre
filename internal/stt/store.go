@@ -68,8 +68,6 @@ func NewStore() *Store {
 	}
 }
 
-func (s *Store) Dir() string { return s.dir }
-
 func (s *Store) Path(model Model) string {
 	return filepath.Join(s.dir, filepath.Base(model.Filename))
 }

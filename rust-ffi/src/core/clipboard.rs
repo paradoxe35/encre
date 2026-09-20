@@ -1,7 +1,6 @@
 use anyhow::Result;
 use arboard::Clipboard;
 use parking_lot::Mutex;
-use tracing::debug;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Saved {
@@ -61,16 +60,12 @@ impl ClipboardManager {
             .map_err(|e| anyhow::anyhow!("Failed to clear clipboard: {}", e))
     }
 
-    pub fn save_clipboard(&self) -> Result<()> {
-        debug!("Saving clipboard content");
-        let current = self.get_text();
-        *self.saved.lock() = classify(current);
-        Ok(())
+    pub fn save_clipboard(&self) {
+        *self.saved.lock() = classify(self.get_text());
     }
 
     /// Clears when the original cannot be restored, so a borrow never becomes an overwrite.
     pub fn restore_clipboard(&self) -> Result<()> {
-        debug!("Restoring clipboard content");
         // Lock released before set_text, which blocks on X11 while handing over the selection.
         let restore_to = restore_target(&self.saved.lock());
         match restore_to {

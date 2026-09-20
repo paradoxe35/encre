@@ -1,13 +1,10 @@
 package stt
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 
 	"github.com/paradoxe35/encre/internal/config"
@@ -73,33 +70,10 @@ func geminiTranscribeSpeech(ctx context.Context, cfg config.SpeechConfig, wav []
 		}
 	}
 
-	payload, err := json.Marshal(request)
+	body, err := postGemini(ctx, cfg, "/v1beta/interactions", request)
 	if err != nil {
 		return "", err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, geminiBaseURL(cfg)+"/v1beta/interactions",
-		bytes.NewReader(payload))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", remoteAPIKey(cfg))
-
-	resp, err := remoteClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("Gemini returned %s: %s", resp.Status, remoteErrorMessage(body, resp.Status))
-	}
-
 	return parseInteractionsResponse(body)
 }
 

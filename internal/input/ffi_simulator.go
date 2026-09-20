@@ -109,23 +109,3 @@ func FFISimulateSelectAll() error {
 
 	return sim.SelectAll()
 }
-
-func FFISimulateCopy() error {
-	sim, err := NewFFIKeySimulator()
-	if err != nil {
-		return err
-	}
-	defer sim.Close()
-
-	return sim.Copy()
-}
-
-func FFISimulatePaste() error {
-	sim, err := NewFFIKeySimulator()
-	if err != nil {
-		return err
-	}
-	defer sim.Close()
-
-	return sim.Paste()
-}

@@ -185,38 +185,45 @@ func sendGemini(ctx context.Context, cfg config.SpeechConfig, request geminiRequ
 		request.GenerationConfig.ThinkingConfig = thinkingConfigFor(cfg.RemoteModel)
 	}
 
-	payload, err := json.Marshal(request)
+	body, err := postGemini(ctx, cfg, "/v1beta/models/"+cfg.RemoteModel+":generateContent", request)
 	if err != nil {
 		return "", err
 	}
+	return parseGeminiResponse(body)
+}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", geminiBaseURL(cfg), cfg.RemoteModel)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+// postGemini sends one JSON request and returns the body; a non-2xx status comes back as a
+// remoteStatusError so the caller can tell a rejected parameter from any other failure.
+func postGemini(ctx context.Context, cfg config.SpeechConfig, path string, request any) ([]byte, error) {
+	payload, err := json.Marshal(request)
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, geminiBaseURL(cfg)+path, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", remoteAPIKey(cfg))
 
 	resp, err := remoteClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", &remoteStatusError{
+		return nil, &remoteStatusError{
 			status:  resp.StatusCode,
 			message: fmt.Sprintf("Gemini returned %s: %s", resp.Status, remoteErrorMessage(body, resp.Status)),
 		}
 	}
-
-	return parseGeminiResponse(body)
+	return body, nil
 }
 
 func parseGeminiResponse(body []byte) (string, error) {

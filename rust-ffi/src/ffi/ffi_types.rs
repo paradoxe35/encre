@@ -2,7 +2,6 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::Once;
 
-use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
 pub type HotkeyManagerHandle = *mut c_void;
@@ -22,31 +21,14 @@ pub enum FFIErrorCode {
     NotInitialized = -6,
 }
 
-impl From<i32> for FFIErrorCode {
-    fn from(code: i32) -> Self {
-        match code {
-            0 => FFIErrorCode::Success,
-            -1 => FFIErrorCode::NullPointer,
-            -2 => FFIErrorCode::InitFailed,
-            -3 => FFIErrorCode::InvalidArgument,
-            -4 => FFIErrorCode::OperationFailed,
-            -5 => FFIErrorCode::InvalidUtf8,
-            -6 => FFIErrorCode::NotInitialized,
-            _ => FFIErrorCode::OperationFailed,
-        }
-    }
-}
-
-static LAST_ERROR: OnceCell<Mutex<Option<String>>> = OnceCell::new();
+static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
 pub fn set_last_error(err: String) {
-    let error_store = LAST_ERROR.get_or_init(|| Mutex::new(None));
-    *error_store.lock() = Some(err);
+    *LAST_ERROR.lock() = Some(err);
 }
 
 pub fn take_last_error() -> Option<String> {
-    let error_store = LAST_ERROR.get_or_init(|| Mutex::new(None));
-    error_store.lock().take()
+    LAST_ERROR.lock().take()
 }
 
 /// # Safety

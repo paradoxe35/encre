@@ -20,6 +20,7 @@ import (
 )
 
 const (
+	localEngineLabel    = "On this computer"
 	remoteEngineLabel   = "Hosted service"
 	witaiEngineLabel    = "Wit.ai (free)"
 	detectLanguageLabel = "Auto-detect"
@@ -51,7 +52,7 @@ func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
 	remote := w.remoteSpeechPane()
 	witaiPane := w.witaiSpeechPane()
 
-	engineOptions := []string{"On this computer", remoteEngineLabel}
+	engineOptions := []string{localEngineLabel, remoteEngineLabel}
 	if witai.Available() {
 		engineOptions = append(engineOptions, witaiEngineLabel)
 	}
@@ -82,9 +83,12 @@ func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
 
 	w.microphoneNotice = microphoneRefusedNotice()
 
+	hint := widget.NewLabel("Hold the dictate shortcut, speak, release.")
+	hint.Wrapping = fyne.TextWrapWord
+
 	return container.NewBorder(
 		container.NewPadded(container.NewVBox(
-			w.speechHeader(),
+			hint,
 			w.microphoneNotice,
 			container.NewBorder(nil, nil, widget.NewLabel("Transcribe"), options,
 				container.NewGridWithColumns(2, w.speechEngine, w.speechLanguageBox)),
@@ -106,16 +110,13 @@ func engineFromLabel(label string) config.SpeechEngine {
 }
 
 func engineLabel(engine config.SpeechEngine) string {
-	switch engine {
-	case config.SpeechRemote:
+	switch {
+	case engine == config.SpeechRemote:
 		return remoteEngineLabel
-	case config.SpeechWitAI:
-		if witai.Available() {
-			return witaiEngineLabel
-		}
-		return "On this computer"
+	case engine == config.SpeechWitAI && witai.Available():
+		return witaiEngineLabel
 	default:
-		return "On this computer"
+		return localEngineLabel
 	}
 }
 
@@ -133,12 +134,6 @@ func microphoneRefusedNotice() *fyne.Container {
 	return notice
 }
 
-func (w *MainWindow) speechHeader() fyne.CanvasObject {
-	hint := widget.NewLabel("Hold the dictate shortcut, speak, release.")
-	hint.Wrapping = fyne.TextWrapWord
-	return hint
-}
-
 func (w *MainWindow) localSpeechPane() *fyne.Container {
 	catalog := stt.Models()
 	store := w.speechStore()
@@ -146,10 +141,9 @@ func (w *MainWindow) localSpeechPane() *fyne.Container {
 	active := widget.NewLabel(activeModelText(w.speechModelDraft, catalog.Models, store.Downloaded))
 	active.TextStyle.Bold = true
 
-	w.speechModels = NewModelList(w.speechStore(), w.Window, w.speechModelDraft,
+	w.speechModels = NewModelList(store, w.Window, w.speechModelDraft,
 		func(model stt.Model) {
 			w.speechModelDraft = model.ID
-			active.SetText(activeModelText(model.ID, stt.Catalogue(), store.Downloaded))
 			w.refreshLanguages(config.SpeechLocal)
 			w.markDirty()
 			w.statusBinding.Set("Speech model set to " + model.Name)
@@ -244,16 +238,12 @@ func (w *MainWindow) applyPreset(name string) {
 	}
 
 	w.speechRemoteModel.SetOptions(preset.Models)
-
 	if preset.ID == "custom" {
 		w.speechRemoteURL.Enable()
-		w.adoptPresetModel(preset)
-		w.refreshLanguages(config.SpeechRemote)
-		return
+	} else {
+		w.speechRemoteURL.SetText(preset.BaseURL)
+		w.speechRemoteURL.Disable()
 	}
-
-	w.speechRemoteURL.SetText(preset.BaseURL)
-	w.speechRemoteURL.Disable()
 	w.adoptPresetModel(preset)
 	w.refreshLanguages(config.SpeechRemote)
 }
@@ -348,14 +338,10 @@ func (w *MainWindow) refreshLanguages(engine config.SpeechEngine) {
 			w.selectedSpeechLanguage(), stt.SystemLanguage())
 	}
 
-	switch engine {
-	case config.SpeechWitAI:
-		if witai.Available() {
-			w.refreshWitAILanguages()
-			return
-		}
-		w.refreshSpeechLanguages()
-	case config.SpeechRemote:
+	switch {
+	case engine == config.SpeechWitAI && witai.Available():
+		w.refreshWitAILanguages()
+	case engine == config.SpeechRemote:
 		w.refreshRemoteLanguages()
 	default:
 		w.refreshSpeechLanguages()
@@ -376,17 +362,7 @@ func (w *MainWindow) refreshRemoteLanguages() {
 		return
 	}
 
-	labels := make([]string, 0, len(languages)+1)
-	codeByName := make(map[string]string, len(languages))
-
-	labels = append(labels, detectLanguageLabel)
-	for _, language := range languages {
-		labels = append(labels, language.Name)
-		codeByName[language.Name] = language.Code
-	}
-
-	w.speechLanguage.Options = labels
-	w.speechLanguageCodes = codeByName
+	w.speechLanguage.Options, w.speechLanguageCodes = namedLanguageOptions(languages)
 	w.showFixedLanguages()
 
 	// Carry the choice across a change of service: fr-FR and fr are one request.
@@ -404,17 +380,7 @@ func (w *MainWindow) refreshRemoteLanguages() {
 
 // Suggests Whisper's codes: a custom endpoint is usually a Whisper server, and anything else can be typed.
 func (w *MainWindow) showFreeformLanguages() {
-	suggestions := stt.SuggestedLanguages()
-
-	labels := make([]string, 0, len(suggestions)+1)
-	codeByName := make(map[string]string, len(suggestions))
-
-	labels = append(labels, detectLanguageLabel)
-	for _, language := range suggestions {
-		labels = append(labels, language.Name)
-		codeByName[language.Name] = language.Code
-	}
-
+	labels, codeByName := namedLanguageOptions(stt.SuggestedLanguages())
 	w.speechLanguageCodes = codeByName
 	w.speechLanguageEntry.SetOptions(labels)
 
@@ -435,24 +401,41 @@ func (w *MainWindow) showFixedLanguages() {
 	w.speechLanguageBox.Refresh()
 }
 
+// Hosted services name their languages; Auto-detect leads the list.
+func namedLanguageOptions(languages []stt.NamedLanguage) ([]string, map[string]string) {
+	labels := make([]string, 0, len(languages)+1)
+	codeByName := make(map[string]string, len(languages))
+
+	labels = append(labels, detectLanguageLabel)
+	for _, language := range languages {
+		labels = append(labels, language.Name)
+		codeByName[language.Name] = language.Code
+	}
+	return labels, codeByName
+}
+
+// Local and Wit models only list codes, so the names are looked up and sorted.
+func codeLanguageOptions(codes []string) ([]string, map[string]string) {
+	names := make([]string, 0, len(codes))
+	codeByName := make(map[string]string, len(codes))
+	for _, code := range codes {
+		name := stt.LanguageName(code)
+		names = append(names, name)
+		codeByName[name] = code
+	}
+	sort.Strings(names)
+	return names, codeByName
+}
+
 func (w *MainWindow) refreshSpeechLanguages() {
 	if w.speechLanguage == nil {
 		return
 	}
 	model, known := stt.FindModel(w.speechModelDraft)
 
-	names := make([]string, 0, len(model.Languages))
-	codeByName := make(map[string]string, len(model.Languages))
-	for _, code := range model.Languages {
-		name := stt.LanguageName(code)
-		names = append(names, name)
-		codeByName[name] = code
-	}
-	sort.Strings(names)
-
-	labels := names
+	labels, codeByName := codeLanguageOptions(model.Languages)
 	if !known || model.LanguageDetect || len(model.Languages) == 0 {
-		labels = append([]string{detectLanguageLabel}, names...)
+		labels = append([]string{detectLanguageLabel}, labels...)
 	}
 
 	w.speechLanguage.Options = labels
@@ -466,16 +449,7 @@ func (w *MainWindow) refreshWitAILanguages() {
 		return
 	}
 
-	codes := witai.Languages()
-	labels := make([]string, 0, len(codes))
-	codeByName := make(map[string]string, len(codes))
-	for _, code := range codes {
-		name := stt.LanguageName(code)
-		labels = append(labels, name)
-		codeByName[name] = code
-	}
-	sort.Strings(labels)
-
+	labels, codeByName := codeLanguageOptions(witai.Languages())
 	w.speechLanguage.Options = labels
 	w.speechLanguageCodes = codeByName
 	w.showFixedLanguages()
@@ -511,10 +485,7 @@ func (w *MainWindow) witaiSpeechPane() *fyne.Container {
 
 func speechLanguageLabel(model stt.Model, chosen string) string {
 	code := model.TranscribeLanguage(chosen, stt.SystemLanguage())
-	if model.LanguageDetect && chosen == "" {
-		return detectLanguageLabel
-	}
-	if code == "" {
+	if code == "" || (model.LanguageDetect && chosen == "") {
 		return detectLanguageLabel
 	}
 	return stt.LanguageName(code)
@@ -544,8 +515,7 @@ func (w *MainWindow) speechStore() *stt.Store {
 }
 
 func (w *MainWindow) applySpeechSettings() {
-	current := w.config.SpeechSettings()
-	speech := &current
+	speech := w.config.SpeechSettings()
 
 	speech.Engine = engineFromLabel(w.speechEngine.Selected)
 	speech.ModelID = w.speechModelDraft
@@ -562,7 +532,7 @@ func (w *MainWindow) applySpeechSettings() {
 	speech.RemoteBaseURL = w.speechRemoteURL.Text
 	speech.RemoteAPIKey = encryptedRemoteAPIKey(w.speechRemoteKey.Text)
 
-	w.config.SetSpeechSettings(current)
+	w.config.SetSpeechSettings(speech)
 }
 
 // An unencrypted stored key fails to decrypt and is shown as-is rather than as garbage.

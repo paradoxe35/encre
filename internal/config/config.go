@@ -80,8 +80,6 @@ type MetaConfig struct {
 }
 
 var (
-	currentConfig *Config
-	configMutex   sync.RWMutex
 	listeners     []func(*Config)
 	listenerMutex sync.RWMutex
 )
@@ -95,24 +93,8 @@ func ConfigPath() string {
 func Default() *Config {
 	return &Config{
 		AIProvider: AIProviderConfig{
-			Provider: "openai",
-			Providers: map[string]ProviderSettings{
-				"openai": {
-					BaseURL:     "https://api.openai.com/v1",
-					Model:       "gpt-4o",
-					Temperature: 1.0,
-				},
-				"claude": {
-					BaseURL:     "https://api.anthropic.com",
-					Model:       "claude-3-5-haiku-20241022",
-					Temperature: 1.0,
-				},
-				"gemini": {
-					BaseURL:     "https://generativelanguage.googleapis.com",
-					Model:       "gemini-2.5-flash",
-					Temperature: 1.0,
-				},
-			},
+			Provider:  "openai",
+			Providers: defaultProviders(),
 		},
 		Actions:                DefaultActions(),
 		Operations:             DefaultOperations(),
@@ -121,6 +103,26 @@ func Default() *Config {
 		Appearance:             defaultAppearance(),
 		Meta:                   MetaConfig{FirstRun: true},
 		EnableProviderMentions: true,
+	}
+}
+
+func defaultProviders() map[string]ProviderSettings {
+	return map[string]ProviderSettings{
+		"openai": {
+			BaseURL:     "https://api.openai.com/v1",
+			Model:       "gpt-4o",
+			Temperature: 1.0,
+		},
+		"claude": {
+			BaseURL:     "https://api.anthropic.com",
+			Model:       "claude-3-5-haiku-20241022",
+			Temperature: 1.0,
+		},
+		"gemini": {
+			BaseURL:     "https://generativelanguage.googleapis.com",
+			Model:       "gemini-2.5-flash",
+			Temperature: 1.0,
+		},
 	}
 }
 
@@ -133,9 +135,6 @@ func defaultAppearance() AppearanceConfig {
 }
 
 func Load() (*Config, error) {
-	configMutex.Lock()
-	defer configMutex.Unlock()
-
 	configDir := filepath.Dir(ConfigPath())
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create config directory: %w", err)
@@ -146,7 +145,6 @@ func Load() (*Config, error) {
 		if err := cfg.write(); err != nil {
 			return nil, fmt.Errorf("failed to save default config: %w", err)
 		}
-		currentConfig = cfg
 		return cfg, nil
 	}
 
@@ -171,12 +169,10 @@ func Load() (*Config, error) {
 		}
 	}
 
-	currentConfig = cfg
 	return cfg, nil
 }
 
-// write persists the config without touching the package mutex, so callers
-// that already hold it do not deadlock against themselves.
+// write persists without notifying, so a default config can be written during Load.
 func (c *Config) write() error {
 	c.mu.RLock()
 	data, err := json.MarshalIndent(c, "", "  ")
@@ -196,33 +192,8 @@ func (c *Config) Save() error {
 	if err := c.write(); err != nil {
 		return err
 	}
-
-	configMutex.Lock()
-	currentConfig = c
-	configMutex.Unlock()
-
 	notifyListeners(c)
 	return nil
-}
-
-func Get() *Config {
-	configMutex.RLock()
-	defer configMutex.RUnlock()
-	return currentConfig
-}
-
-// Save takes the same package mutex, so the lock is released before calling it.
-func Update(fn func(*Config)) error {
-	configMutex.RLock()
-	cfg := currentConfig
-	configMutex.RUnlock()
-
-	if cfg == nil {
-		return fmt.Errorf("configuration not loaded")
-	}
-
-	fn(cfg)
-	return cfg.Save()
 }
 
 func RegisterListener(listener func(*Config)) {
@@ -250,11 +221,7 @@ func (c *Config) GetProviderSettings(provider string) ProviderSettings {
 
 	settings, ok := c.AIProvider.Providers[provider]
 	if !ok {
-		defaults := Default()
-		if defaultSettings, ok := defaults.AIProvider.Providers[provider]; ok {
-			return defaultSettings
-		}
-		return ProviderSettings{}
+		return defaultProviders()[provider]
 	}
 
 	if settings.Temperature == 0 {
@@ -372,10 +339,7 @@ func (c *Config) GetAllProviderNames() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	names := make([]string, 0)
-	for _, name := range BuiltInProviders() {
-		names = append(names, name)
-	}
+	names := BuiltInProviders()
 
 	customNames := make([]string, 0)
 	for name, settings := range c.AIProvider.Providers {

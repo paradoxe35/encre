@@ -3,7 +3,6 @@ package platform
 import (
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/paradoxe35/encre/internal/logger"
 )
@@ -19,8 +18,7 @@ func RestartApplication() error {
 
 	var cmd *exec.Cmd
 
-	if strings.Contains(executable, ".app/Contents/MacOS/") {
-		appPath := executable[:strings.Index(executable, ".app/Contents/MacOS/")+4]
+	if appPath, ok := appBundlePath(executable); ok {
 		logger.Info("Detected .app bundle, using 'open' command", "app", appPath)
 		// -n forces a new instance instead of activating the existing one.
 		cmd = exec.Command("open", "-n", appPath)

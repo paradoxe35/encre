@@ -30,10 +30,6 @@ impl Engine {
         self.loaded = None;
     }
 
-    pub fn resident(&self) -> Option<&Path> {
-        self.loaded.as_ref().map(|l| l.path.as_path())
-    }
-
     /// The resident model is freed before the new one is read, so two are never in memory at once.
     pub fn load(&mut self, path: &Path) -> Result<()> {
         if self.loaded.as_ref().is_some_and(|l| l.path == path) {
@@ -43,13 +39,16 @@ impl Engine {
         self.loaded = None;
         self.load_error = None;
 
-        let result = Self::open(path);
-        match &result {
-            Ok(_) => {}
-            Err(e) => self.load_error = Some(e.to_string()),
+        match Self::open(path) {
+            Ok(loaded) => {
+                self.loaded = Some(loaded);
+                Ok(())
+            }
+            Err(e) => {
+                self.load_error = Some(e.to_string());
+                Err(e)
+            }
         }
-        self.loaded = Some(result?);
-        Ok(())
     }
 
     fn open(path: &Path) -> Result<Loaded> {
@@ -65,48 +64,29 @@ impl Engine {
         })
     }
 
-    fn unavailable(&self) -> anyhow::Error {
-        match &self.load_error {
+    fn session(&mut self) -> Result<&mut transcribe_cpp::Session> {
+        let unavailable = match &self.load_error {
             Some(reason) => anyhow!("{reason}"),
             None => anyhow!("no model loaded"),
-        }
+        };
+        self.loaded
+            .as_mut()
+            .map(|l| &mut l.session)
+            .ok_or(unavailable)
     }
 
     pub fn transcribe(&mut self, samples: &[f32], language: Option<&str>) -> Result<String> {
-        let unavailable = self.unavailable();
-        let loaded = self.loaded.as_mut().ok_or(unavailable)?;
-
-        let options = RunOptions {
-            language: language.map(str::to_owned),
-            ..Default::default()
-        };
-
-        loaded
-            .session
-            .run(samples, &options)
+        self.session()?
+            .run(samples, &run_options(language))
             .map(|out| out.text.trim().to_owned())
             .map_err(|e| anyhow!("transcription failed: {e}"))
     }
+}
 
-    /// A per-model property read from GGUF metadata, not a build-time one.
-    pub fn supports_streaming(&self) -> bool {
-        self.loaded
-            .as_ref()
-            .is_some_and(|l| l.session.model().capabilities().supports_streaming)
-    }
-
-    pub fn stream_begin(&mut self, language: Option<&str>) -> Result<transcribe_cpp::Stream<'_>> {
-        let unavailable = self.unavailable();
-        let loaded = self.loaded.as_mut().ok_or(unavailable)?;
-
-        let options = RunOptions {
-            language: language.map(str::to_owned),
-            ..Default::default()
-        };
-        loaded
-            .session
-            .stream(&options, &StreamOptions::default())
-            .map_err(|e| anyhow!("failed to begin stream: {e}"))
+fn run_options(language: Option<&str>) -> RunOptions {
+    RunOptions {
+        language: language.map(str::to_owned),
+        ..Default::default()
     }
 }
 
@@ -114,11 +94,13 @@ impl Recognizer for Engine {
     type Live<'a> = transcribe_cpp::Stream<'a>;
 
     fn resident(&self) -> Option<&Path> {
-        Engine::resident(self)
+        self.loaded.as_ref().map(|l| l.path.as_path())
     }
 
     fn stream_begin(&mut self, language: Option<&str>) -> Result<Self::Live<'_>> {
-        Engine::stream_begin(self, language)
+        self.session()?
+            .stream(&run_options(language), &StreamOptions::default())
+            .map_err(|e| anyhow!("failed to begin stream: {e}"))
     }
 }
 

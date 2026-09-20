@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -122,21 +123,12 @@ func (w *MainWindow) refreshOperationProviderOptions() {
 	for _, editor := range w.operationEditors {
 		selected := editor.provider.Selected
 		editor.provider.Options = options
-		if providerID(selected) != "" && !containsProviderOption(options, selected) {
+		if providerID(selected) != "" && !slices.Contains(options, selected) {
 			selected = providerDefaultOption
 		}
 		editor.provider.Selected = selected
 		editor.provider.Refresh()
 	}
-}
-
-func containsProviderOption(options []string, selected string) bool {
-	for _, option := range options {
-		if option == selected {
-			return true
-		}
-	}
-	return false
 }
 
 func providerLabel(id string) string {

@@ -51,7 +51,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	}
 
 	notifications := ui.NewNotificationManager(app)
-	platform.RegisterNotifier(config.APP_ID, "Encre", windowIconICO)
+	platform.RegisterNotifier(config.APP_ID, "Encre")
 
 	mainWindow := ui.NewMainWindow(app, cfg, hotkeyManager)
 	mainWindow.SetIcon(resourceIconPng)
@@ -133,10 +133,6 @@ func (a *Application) setupHotkeys() {
 }
 
 func (a *Application) registerDictation(action config.ActionConfig) {
-	if a.dictation == nil {
-		return
-	}
-
 	if action.PushToTalk {
 		err := a.hotkeyManager.RegisterHoldHotkey(action.Hotkey,
 			string(config.ActionDictate), a.dictation.Toggle)
@@ -189,15 +185,12 @@ func (a *Application) reloadHotkeysFromConfig() {
 	a.reloadMutex.Lock()
 	defer a.reloadMutex.Unlock()
 
-	logger.Info("Reloading hotkeys from updated config")
-
 	if a.hotkeyManager == nil {
 		logger.Error("Hotkey manager not initialized")
 		return
 	}
 
 	// The listener keeps running, so clearing does not spawn a new thread.
-	logger.Info("Clearing existing hotkey bindings")
 	if err := a.hotkeyManager.ClearBindings(); err != nil {
 		logger.Error("Failed to clear bindings", "error", err)
 		fyne.Do(func() {
@@ -206,7 +199,6 @@ func (a *Application) reloadHotkeysFromConfig() {
 		return
 	}
 
-	logger.Info("Re-registering hotkeys with new config")
 	a.setupHotkeys()
 	logger.Info("Hotkeys reloaded successfully")
 }
@@ -349,18 +341,10 @@ func (a *Application) Stop() {
 		a.permissionMonitorCancel()
 	}
 
-	if a.hotkeyManager != nil {
-		a.hotkeyManager.Stop()
-		a.hotkeyManager.Close()
-	}
-
-	if a.dictation != nil {
-		a.dictation.Close()
-	}
-
-	if a.processor != nil {
-		a.processor.Close()
-	}
+	a.hotkeyManager.Stop()
+	a.hotkeyManager.Close()
+	a.dictation.Close()
+	a.processor.Close()
 
 	// Stop is also called from the tray's Quit handler, off Fyne's thread.
 	fyne.Do(a.app.Quit)

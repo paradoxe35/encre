@@ -32,9 +32,8 @@ type HotkeyCapture struct {
 	isCapturing bool
 	mu          sync.Mutex
 
-	pressedKeys       map[fyne.KeyName]bool
-	modifiers         map[fyne.KeyModifier]bool
-	allowModifierOnly bool
+	pressedKeys map[fyne.KeyName]bool
+	modifiers   map[fyne.KeyModifier]bool
 }
 
 type captureEntry struct {
@@ -43,9 +42,7 @@ type captureEntry struct {
 }
 
 func (e *captureEntry) TypedKey(key *fyne.KeyEvent) {
-	if e.parent != nil {
-		e.parent.handleKeyPress(key)
-	}
+	e.parent.handleKeyPress(key)
 }
 
 // Swallows runes so pressing F during capture does not type "f".
@@ -76,21 +73,16 @@ func (r *themedBackgroundRenderer) BackgroundColor() color.Color {
 
 const unsetHotkeyText = "Click 'Capture' to set"
 
-func NewHotkeyCapture(binding binding.String, placeholder string) *HotkeyCapture {
+func NewHotkeyCapture(binding binding.String) *HotkeyCapture {
 	h := &HotkeyCapture{
 		binding:     binding,
 		pressedKeys: make(map[fyne.KeyName]bool),
 		modifiers:   make(map[fyne.KeyModifier]bool),
 	}
 
-	h.displayLabel = widget.NewLabel(placeholder)
+	h.displayLabel = widget.NewLabel("")
 	h.displayLabel.TextStyle.Bold = true
 	h.displayLabel.TextStyle.Monospace = true
-
-	currentValue, _ := binding.Get()
-	if currentValue != "" {
-		h.displayLabel.SetText(currentValue)
-	}
 
 	h.entry = &captureEntry{parent: h}
 	h.entry.PlaceHolder = "Press keys in sequence (ESC to cancel, Enter to save)"
@@ -115,7 +107,7 @@ func NewHotkeyCapture(binding binding.String, placeholder string) *HotkeyCapture
 	h.clearBtn.Hide()
 
 	buttonContainer := container.NewHBox(h.captureBtn, h.stopBtn, h.clearBtn)
-	h.syncClearButton()
+	h.UpdateFromBinding()
 
 	displayStack := container.NewStack(h.displayLabel, h.entry)
 
@@ -241,8 +233,12 @@ func (h *HotkeyCapture) handleKeyPress(key *fyne.KeyEvent) {
 }
 
 func (h *HotkeyCapture) updateDisplay() {
-	parts := []string{}
+	h.entry.SetText(h.combo())
+}
 
+// Modifiers first in a fixed order, then the key, in the names the FFI hotkey parser expects.
+func (h *HotkeyCapture) combo() string {
+	var parts []string
 	if h.modifiers[fyne.KeyModifierControl] {
 		parts = append(parts, "ctrl")
 	}
@@ -255,63 +251,22 @@ func (h *HotkeyCapture) updateDisplay() {
 	if h.modifiers[fyne.KeyModifierSuper] {
 		parts = append(parts, getSuperName())
 	}
-
-	if len(h.pressedKeys) > 0 {
-		keyNames := make([]string, 0, len(h.pressedKeys))
-		for keyName := range h.pressedKeys {
-			keyNames = append(keyNames, keyNameToString(keyName))
-		}
-		parts = append(parts, keyNames...)
+	for keyName := range h.pressedKeys {
+		parts = append(parts, keyNameToString(keyName))
 	}
-
-	if len(parts) > 0 {
-		h.entry.SetText(strings.Join(parts, "+"))
-	} else {
-		h.entry.SetText("")
-	}
+	return strings.Join(parts, "+")
 }
 
 func (h *HotkeyCapture) saveHotkey() bool {
-	parts := []string{}
-
-	if h.modifiers[fyne.KeyModifierControl] {
-		parts = append(parts, "ctrl")
-	}
-	if h.modifiers[fyne.KeyModifierAlt] {
-		parts = append(parts, getAltName())
-	}
-	if h.modifiers[fyne.KeyModifierShift] {
-		parts = append(parts, "shift")
-	}
-	if h.modifiers[fyne.KeyModifierSuper] {
-		parts = append(parts, getSuperName())
-	}
-
-	keyNames := make([]string, 0, len(h.pressedKeys))
-	for keyName := range h.pressedKeys {
-		keyNames = append(keyNames, keyNameToString(keyName))
-	}
-	parts = append(parts, keyNames...)
-
-	valid := false
-	if len(h.modifiers) > 0 {
-		if len(h.pressedKeys) > 0 {
-			valid = true
-		} else if h.allowModifierOnly && isModifierOnlyAllowed(h.modifiers) {
-			valid = true
-		}
-	}
+	valid := len(h.modifiers) > 0 && (len(h.pressedKeys) > 0 || isModifierOnlyAllowed(h.modifiers))
 	if !valid {
 		h.entry.SetText("Invalid combination (need modifier + key)")
 		return false
 	}
 
-	hotkeyStr := strings.Join(parts, "+")
+	hotkeyStr := h.combo()
 
 	for _, sibling := range h.siblings {
-		if sibling == h {
-			continue
-		}
 		siblingValue, _ := sibling.binding.Get()
 		if siblingValue != "" && siblingValue == hotkeyStr {
 			h.entry.SetText("Duplicate: '" + hotkeyStr + "' is already used")
@@ -343,13 +298,7 @@ func (h *HotkeyCapture) syncClearButton() {
 }
 
 func (h *HotkeyCapture) StopCapture() {
-	h.mu.Lock()
-	isCapturing := h.isCapturing
-	h.mu.Unlock()
-
-	if isCapturing {
-		h.stopCapture()
-	}
+	h.stopCapture()
 }
 
 func (h *HotkeyCapture) UpdateFromBinding() {
@@ -364,10 +313,6 @@ func (h *HotkeyCapture) UpdateFromBinding() {
 
 func (h *HotkeyCapture) SetSiblings(siblings ...*HotkeyCapture) {
 	h.siblings = siblings
-}
-
-func (h *HotkeyCapture) SetAllowModifierOnly(allow bool) {
-	h.allowModifierOnly = allow
 }
 
 func isModifierKey(key fyne.KeyName) bool {
@@ -406,9 +351,6 @@ func keyNameToString(key fyne.KeyName) string {
 	case fyne.KeyRight:
 		return "right"
 	default:
-		if len(keyStr) == 1 {
-			return keyStr
-		}
 		return keyStr
 	}
 }

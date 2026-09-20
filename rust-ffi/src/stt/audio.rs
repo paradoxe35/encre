@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 
 use anyhow::{Result, anyhow};
@@ -230,8 +230,9 @@ fn record(
     } = settings;
 
     let source = StreamGuard::open(levels, device.as_deref()).map_err(|e| {
-        tracing::warn!("microphone unavailable: {e:#}");
-        format!("microphone unavailable: {e:#}")
+        let reason = format!("microphone unavailable: {e:#}");
+        tracing::warn!("{reason}");
+        reason
     });
     let wanted = match (&model, capture_only) {
         (Some(model), false) => Some(Wanted {
@@ -258,12 +259,10 @@ impl Source for StreamGuard {
 
     fn take(&self) -> Vec<f32> {
         let mut out = Vec::new();
-        loop {
-            match self.incoming.try_recv() {
-                Ok(chunk) => out.extend(mono(&chunk, self.channels)),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return out,
-            }
+        while let Ok(chunk) = self.incoming.try_recv() {
+            out.extend(mono(&chunk, self.channels));
         }
+        out
     }
 }
 
@@ -310,8 +309,8 @@ fn open_device(preferred: Option<&str>) -> Result<Device> {
 
     if let Some(wanted) = preferred {
         match host.input_devices() {
-            Ok(devices) => {
-                if let Some(device) = devices.filter(|d| d.to_string() == wanted).next() {
+            Ok(mut devices) => {
+                if let Some(device) = devices.find(|d| d.to_string() == wanted) {
                     return Ok(device);
                 }
                 tracing::warn!("Input device '{wanted}' is unavailable, using the default");
@@ -391,13 +390,13 @@ fn build_stream(
 
     let stream = match selected.format {
         SampleFormat::F32 => device.build_input_stream(
-            selected.config.clone(),
+            selected.config,
             move |data: &[f32], _: &_| forward(data.to_vec(), &samples, &levels),
             error,
             None,
         )?,
         SampleFormat::I16 => device.build_input_stream(
-            selected.config.clone(),
+            selected.config,
             move |data: &[i16], _: &_| {
                 let converted = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
                 forward(converted, &samples, &levels)
@@ -406,7 +405,7 @@ fn build_stream(
             None,
         )?,
         SampleFormat::I32 => device.build_input_stream(
-            selected.config.clone(),
+            selected.config,
             move |data: &[i32], _: &_| {
                 let converted = data.iter().map(|s| *s as f32 / i32::MAX as f32).collect();
                 forward(converted, &samples, &levels)

@@ -18,20 +18,18 @@ import (
 )
 
 const (
-	PaddingSmall  = 5
-	PaddingMedium = 10
-	PaddingLarge  = 20
+	windowWidth  = 600
+	windowHeight = 600
 )
 
 type MainWindow struct {
 	fyne.Window
-	app                 fyne.App
-	config              *config.Config
-	hotkeyManager       *input.FFIHotkeyManager
-	permissionPrompt    *permissionPrompt
-	rootContainer       *fyne.Container
-	mainContent         fyne.CanvasObject
-	permissionContainer fyne.CanvasObject
+	app              fyne.App
+	config           *config.Config
+	hotkeyManager    *input.FFIHotkeyManager
+	permissionPrompt *permissionPrompt
+	rootContainer    *fyne.Container
+	mainContent      fyne.CanvasObject
 
 	providerBinding       binding.String
 	apiKeyBinding         binding.String
@@ -40,8 +38,6 @@ type MainWindow struct {
 	statusBinding         binding.String
 	startMinimizedBinding binding.Bool
 	startOnLoginBinding   binding.Bool
-	startMinimizedCheck   *widget.Check
-	startOnLoginCheck     *widget.Check
 	themeBinding          binding.String
 	unsavedLabel          *widget.Label
 	dirty                 bool
@@ -78,7 +74,6 @@ type MainWindow struct {
 	microphoneNotice    *fyne.Container
 
 	baseURLContainer *fyne.Container
-	baseURLEntry     *widget.Entry
 
 	providerSelect       *widget.Select
 	deleteProviderButton *widget.Button
@@ -88,7 +83,7 @@ type MainWindow struct {
 }
 
 func NewMainWindow(app fyne.App, cfg *config.Config, hotkeyManager *input.FFIHotkeyManager) *MainWindow {
-	window := newChromelessWindow(app, "Encre")
+	window := app.NewWindow("Encre")
 	window.Resize(fyne.NewSize(windowWidth, windowHeight))
 	window.SetFixedSize(true)
 	window.CenterOnScreen()
@@ -109,17 +104,12 @@ func NewMainWindow(app fyne.App, cfg *config.Config, hotkeyManager *input.FFIHot
 
 	mw.initBindings()
 
-	themeName := cfg.Appearance.Theme
-	if themeName == "" {
-		themeName = "auto"
-	}
+	themeName, _ := mw.themeBinding.Get()
 	mw.applyTheme(themeName)
 
 	mw.mainContent = mw.createContent()
-	mw.permissionContainer = mw.permissionPrompt.canvasObject()
-	mw.rootContainer = container.NewStack(mw.mainContent, mw.permissionContainer)
+	mw.rootContainer = container.NewStack(mw.mainContent, prompt.root)
 	window.SetContent(mw.rootContainer)
-	mw.showMainContent()
 	mw.initializing = false
 
 	return mw
@@ -175,50 +165,19 @@ func (w *MainWindow) initBindings() {
 // A refused microphone only stops dictation, so it is a Speech tab notice
 // rather than the blocking permission card.
 func (w *MainWindow) SetPermissionState(state permissions.State, showRestart bool) {
-	if w.permissionPrompt == nil {
-		return
-	}
-
+	// The card shows and hides itself; only the main content needs to make way for it.
 	w.permissionPrompt.update(state, showRestart)
-
 	if state.NeedsRestart() || showRestart {
-		w.showPermissionContent()
-	} else {
-		w.showMainContent()
-	}
-
-	if w.microphoneNotice != nil {
-		if state.MicrophoneDenied {
-			w.microphoneNotice.Show()
-		} else {
-			w.microphoneNotice.Hide()
-		}
-	}
-}
-
-func (w *MainWindow) showPermissionContent() {
-	if w.permissionContainer != nil {
-		w.permissionContainer.Show()
-	}
-	if w.mainContent != nil {
 		w.mainContent.Hide()
-	}
-	if w.rootContainer != nil {
-		w.rootContainer.Objects = []fyne.CanvasObject{w.mainContent, w.permissionContainer}
-		w.rootContainer.Refresh()
-	}
-}
-
-func (w *MainWindow) showMainContent() {
-	if w.mainContent != nil {
+	} else {
 		w.mainContent.Show()
 	}
-	if w.permissionContainer != nil {
-		w.permissionContainer.Hide()
-	}
-	if w.rootContainer != nil {
-		w.rootContainer.Objects = []fyne.CanvasObject{w.permissionContainer, w.mainContent}
-		w.rootContainer.Refresh()
+	w.rootContainer.Refresh()
+
+	if state.MicrophoneDenied {
+		w.microphoneNotice.Show()
+	} else {
+		w.microphoneNotice.Hide()
 	}
 }
 
@@ -236,7 +195,7 @@ func (w *MainWindow) createContent() fyne.CanvasObject {
 
 	tabs.OnSelected = func(tab *container.TabItem) {
 		// History shows other tabs' activity, so it re-reads on every visit.
-		if tab.Text == "History" && w.refreshHistory != nil {
+		if tab.Text == "History" {
 			fyne.Do(w.refreshHistory)
 		}
 		// Works around an AppTabs layout width bug on Windows: https://github.com/fyne-io/fyne/issues/5338
@@ -267,10 +226,7 @@ func (w *MainWindow) createContent() fyne.CanvasObject {
 }
 
 func (w *MainWindow) markDirty() {
-	if w.dirty {
-		return
-	}
-	if w.initializing {
+	if w.dirty || w.initializing {
 		return
 	}
 	w.dirty = true
@@ -297,13 +253,7 @@ func (w *MainWindow) historyStoreRef() *history.Store {
 
 func (w *MainWindow) SetHistoryStore(store *history.Store) {
 	w.historyStore = store
-	store.OnChange(func() {
-		fyne.Do(func() {
-			if w.refreshHistory != nil {
-				w.refreshHistory()
-			}
-		})
-	})
+	store.OnChange(func() { fyne.Do(w.refreshHistory) })
 }
 
 func (w *MainWindow) ShowWindow() {

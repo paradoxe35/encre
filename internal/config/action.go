@@ -101,12 +101,10 @@ func (o OperationConfig) PromptOrDefault(op Operation) string {
 	if o.SystemPrompt != "" {
 		return o.SystemPrompt
 	}
-	return defaultPrompt(op)
+	return DefaultPrompt(op)
 }
 
-func DefaultPrompt(op Operation) string { return defaultPrompt(op) }
-
-func defaultPrompt(op Operation) string {
+func DefaultPrompt(op Operation) string {
 	switch op {
 	case OpTranslate:
 		return prompt.Translate

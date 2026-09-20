@@ -24,8 +24,7 @@ func (w *MainWindow) loadProviderSettings(provider string) {
 	w.apiKeyBinding.Set(apiKey)
 	w.modelBinding.Set(settings.Model)
 
-	isCustom := w.config.IsCustomProvider(provider)
-	if isCustom {
+	if w.config.IsCustomProvider(provider) {
 		w.baseURLBinding.Set(settings.BaseURL)
 	} else {
 		w.baseURLBinding.Set("")
@@ -33,6 +32,7 @@ func (w *MainWindow) loadProviderSettings(provider string) {
 
 	w.updateProviderUI(provider)
 }
+
 func (w *MainWindow) createProviderSection() fyne.CanvasObject {
 	selected, _ := w.providerBinding.Get()
 
@@ -42,15 +42,13 @@ func (w *MainWindow) createProviderSection() fyne.CanvasObject {
 
 	w.updateProviderUI(selected)
 
-	content := container.NewVBox(
+	return container.NewVBox(
 		container.NewPadded(providerSection),
 		widget.NewSeparator(),
 		container.NewPadded(configSection),
 		widget.NewSeparator(),
 		container.NewPadded(testSection),
 	)
-
-	return content
 }
 
 func (w *MainWindow) createProviderSelectionSection(selected string) fyne.CanvasObject {
@@ -73,12 +71,7 @@ func (w *MainWindow) createProviderSelectionSection(selected string) fyne.Canvas
 	providerRow := container.NewBorder(nil, nil, nil,
 		container.NewHBox(addProvider, w.deleteProviderButton), w.providerSelect)
 
-	content := container.NewVBox(
-		providerLabel,
-		providerRow,
-	)
-
-	return content
+	return container.NewVBox(providerLabel, providerRow)
 }
 
 func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
@@ -101,20 +94,21 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	browseModels.OnTapped = func() { w.browseProviderModels(w.statusProgress(browseModels)) }
 	modelRow := container.NewBorder(nil, nil, nil, browseModels, modelEntry)
 
+	// Only shown for custom providers, so the placeholder can say so outright.
 	baseURLLabel := widget.NewLabel("Base URL")
 	baseURLLabel.TextStyle.Bold = true
-	w.baseURLEntry = w.dirtyEntry()
-	w.baseURLEntry.Bind(w.baseURLBinding)
-	w.baseURLEntry.PlaceHolder = "https://api.openai.com/v1 (optional)"
-	w.baseURLEntry.Validator = nil // no validation icon
+	baseURLEntry := w.dirtyEntry()
+	baseURLEntry.Bind(w.baseURLBinding)
+	baseURLEntry.PlaceHolder = "Required for custom providers"
+	baseURLEntry.Validator = nil // no validation icon
 
 	w.baseURLContainer = container.NewVBox(
 		widget.NewSeparator(),
 		baseURLLabel,
-		w.baseURLEntry,
+		baseURLEntry,
 	)
 
-	configForm := container.NewVBox(
+	return container.NewVBox(
 		apiKeyLabel,
 		apiKeyEntry,
 		widget.NewSeparator(),
@@ -122,8 +116,6 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 		modelRow,
 		w.baseURLContainer,
 	)
-
-	return configForm
 }
 
 // Uses the key and URL on screen rather than the saved ones, so an unsaved edit can be tried out.
@@ -156,6 +148,7 @@ func (w *MainWindow) createConnectionTestSection() fyne.CanvasObject {
 
 	return container.NewHBox(testBtn)
 }
+
 func (w *MainWindow) testAPIConnection(report progress) {
 	provider, _ := w.providerBinding.Get()
 	settings := w.config.GetProviderSettings(provider)
@@ -218,6 +211,7 @@ func (w *MainWindow) providerUnderTest(provider string, settings config.Provider
 	}
 }
 
+// The widgets are still nil when initBindings loads the first provider, before the tab exists.
 func (w *MainWindow) updateProviderUI(provider string) {
 	isCustom := w.config.IsCustomProvider(provider)
 
@@ -232,20 +226,13 @@ func (w *MainWindow) updateProviderUI(provider string) {
 	if w.baseURLContainer != nil {
 		if isCustom {
 			w.baseURLContainer.Show()
-			if w.baseURLEntry != nil {
-				w.baseURLEntry.PlaceHolder = "Required for custom providers"
-			}
 		} else {
 			w.baseURLContainer.Hide()
 		}
 	}
-
 }
 
 func (w *MainWindow) refreshProviderList() {
-	if w.providerSelect == nil {
-		return
-	}
 	w.providerSelect.Options = w.config.GetAllProviderNames()
 	w.providerSelect.Refresh()
 }

@@ -48,14 +48,10 @@ func (m Model) FitsMemory(host Machine) bool {
 	return m.SizeMB() < float64(host.MemoryMB)*0.4
 }
 
-// Comfortable means the model transcribes faster than you can speak, with headroom, and fits in memory.
-func (m Model) Comfortable(host Machine) bool {
-	return m.FitsMemory(host) && m.EstimatedRealtime(host) >= 2
-}
-
 type Fit int
 
 const (
+	// Transcribes faster than you can speak, with headroom, and fits in memory.
 	FitComfortable Fit = iota
 	// No measured realtime factor (e.g. a user-dropped model file); ranks below known-good
 	// but "slow" would be a claim the catalog can't support.

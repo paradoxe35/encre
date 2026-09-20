@@ -64,11 +64,6 @@ func newFFIEngine() (speechEngine, error) {
 	return speech, nil
 }
 
-func (s *Service) Store() *Store { return s.store }
-
-// The handler runs on a background thread while recording.
-func (s *Service) OnLevel(handler func(float32)) { input.OnLevel(handler) }
-
 func (s *Service) engine() (speechEngine, error) {
 	if s.speech != nil {
 		return s.speech, nil
@@ -330,11 +325,6 @@ func (s *Service) Cancel() {
 	if recording {
 		s.finishTake(speech)
 	}
-}
-
-// May be the first call that opens an audio device, since the engine is lazy.
-func (s *Service) Devices() []input.Device {
-	return input.InputDevices()
 }
 
 func (s *Service) Close() {

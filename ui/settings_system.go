@@ -29,48 +29,41 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	themeDesc.Wrapping = fyne.TextWrapWord
 
 	// Bind overwrites OnChanged, so dirty tracking hooks the binding instead.
-	w.startMinimizedCheck = widget.NewCheck("Start minimized to system tray", nil)
-	w.startMinimizedCheck.Bind(w.startMinimizedBinding)
+	startMinimized := widget.NewCheck("Start minimized to system tray", nil)
+	startMinimized.Bind(w.startMinimizedBinding)
 
-	w.startOnLoginCheck = widget.NewCheck("Start on login", nil)
-	w.startOnLoginCheck.Bind(w.startOnLoginBinding)
+	startOnLogin := widget.NewCheck("Start on login", nil)
+	startOnLogin.Bind(w.startOnLoginBinding)
 
-	var versionContainer *fyne.Container
+	form := container.NewVBox(
+		container.NewPadded(container.NewVBox(themeLabel, themeSelect, themeDesc)),
+		widget.NewSeparator(),
+		container.NewPadded(container.NewVBox(startMinimized, startOnLogin)),
+	)
+
 	if version.IsProduction(w.app) {
 		versionLabel := widget.NewLabel(fmt.Sprintf("Version: %s", version.GetVersion(w.app)))
 		versionLabel.TextStyle.Italic = true
 		versionLabel.Importance = widget.LowImportance
 
-		versionContainer = container.NewVBox(
-			widget.NewSeparator(),
-			container.NewPadded(versionLabel),
-		)
+		form.Add(widget.NewSeparator())
+		form.Add(container.NewPadded(versionLabel))
 	}
-
-	formItems := []fyne.CanvasObject{
-		container.NewPadded(container.NewVBox(themeLabel, themeSelect, themeDesc)),
-		widget.NewSeparator(),
-		container.NewPadded(container.NewVBox(w.startMinimizedCheck, w.startOnLoginCheck)),
-	}
-
-	if versionContainer != nil {
-		formItems = append(formItems, versionContainer)
-	}
-
-	form := container.NewVBox(formItems...)
 
 	return container.NewVScroll(form)
 }
+
 func (w *MainWindow) applyTheme(themeName string) {
 	switch themeName {
 	case "light":
-		w.app.Settings().SetTheme(&forceLight{})
+		w.app.Settings().SetTheme(&fixedVariant{theme.VariantLight})
 	case "dark":
-		w.app.Settings().SetTheme(&forceDark{})
+		w.app.Settings().SetTheme(&fixedVariant{theme.VariantDark})
 	case "auto":
 		w.app.Settings().SetTheme(theme.DefaultTheme())
 	}
 }
+
 func (w *MainWindow) applyAutoStartSetting(enabled bool) {
 	autoStart := platform.GetAutoStart()
 

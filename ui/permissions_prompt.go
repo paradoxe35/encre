@@ -83,7 +83,9 @@ func newPermissionPrompt() *permissionPrompt {
 		restartRow,
 	)
 
+	// Hidden until SetPermissionState finds something missing.
 	root := container.NewPadded(body)
+	root.Hide()
 
 	return &permissionPrompt{
 		root:                   root,
@@ -96,10 +98,6 @@ func newPermissionPrompt() *permissionPrompt {
 		restartRow:             restartRow,
 		restartButton:          restartButton,
 	}
-}
-
-func (p *permissionPrompt) canvasObject() fyne.CanvasObject {
-	return p.root
 }
 
 func (p *permissionPrompt) update(state permissions.State, showRestart bool) {

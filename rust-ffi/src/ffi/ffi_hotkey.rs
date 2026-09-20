@@ -18,11 +18,10 @@ use super::ffi_types::*;
 #[cfg(target_os = "linux")]
 fn is_wayland() -> bool {
     if let Ok(session_type) = std::env::var("XDG_SESSION_TYPE") {
-        if session_type.to_lowercase() == "wayland" {
-            return true;
-        }
-        if session_type.to_lowercase() == "x11" {
-            return false;
+        match session_type.to_lowercase().as_str() {
+            "wayland" => return true,
+            "x11" => return false,
+            _ => {}
         }
     }
 
@@ -396,6 +395,18 @@ impl ListenerState {
     }
 }
 
+/// The simulator's own key-ups must not reach the state machine: a key-up for a modifier that is
+/// not down is classified as a press by rdev, and such a phantom modifier would stay held forever.
+#[cfg(target_os = "macos")]
+fn is_synthetic(event: &Event) -> bool {
+    event.extra_data == crate::core::simulator::SYNTHETIC_TAG
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_synthetic(_: &Event) -> bool {
+    false
+}
+
 pub struct SimpleHotkeyManager {
     bindings: Arc<Mutex<Vec<HotkeyBinding>>>,
     listener_handle: Option<thread::JoinHandle<()>>,
@@ -435,17 +446,16 @@ impl SimpleHotkeyManager {
         action: String,
         callback: PttCallback,
     ) -> Result<(), String> {
-        let (_, key) = parse_binding(&binding)?;
-        if key.is_none() {
-            return Err(format!(
-                "{binding} is modifiers only, which cannot be held for push-to-talk"
-            ));
-        }
         self.push(binding, action, Trigger::Hold(callback))
     }
 
     fn push(&mut self, binding: String, action: String, trigger: Trigger) -> Result<(), String> {
         let (modifiers, key) = parse_binding(&binding)?;
+        if key.is_none() && matches!(trigger, Trigger::Hold(_)) {
+            return Err(format!(
+                "{binding} is modifiers only, which cannot be held for push-to-talk"
+            ));
+        }
         tracing::info!("Registered hotkey: {} (action: {})", binding, action);
         self.bindings.lock().push(HotkeyBinding {
             binding,
@@ -477,21 +487,22 @@ impl SimpleHotkeyManager {
 
         let handle = thread::spawn(move || {
             let mut state = ListenerState::default();
+            // A panic here would unwind into the system's callback; caught so the listener lives on.
             let mut dispatch = move |event: &Event| {
-                if !*active_flag.lock() {
-                    return;
-                }
-                state.process(event.event_type, &bindings);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if !*active_flag.lock() || is_synthetic(event) {
+                        return;
+                    }
+                    state.process(event.event_type, &bindings);
+                }));
             };
 
             #[cfg(target_os = "linux")]
             {
                 if is_wayland() {
                     tracing::info!("Wayland session detected, using evdev grab for hotkeys");
-                    let callback = move |event: Event| -> Option<Event> {
-                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            dispatch(&event);
-                        }));
+                    let callback = move |event: Event| {
+                        dispatch(&event);
                         Some(event)
                     };
 
@@ -504,13 +515,7 @@ impl SimpleHotkeyManager {
                     }
                 } else {
                     tracing::info!("X11 session detected, using X11 listener for hotkeys");
-                    let callback = move |event: Event| {
-                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            dispatch(&event);
-                        }));
-                    };
-
-                    if let Err(e) = listen(callback) {
+                    if let Err(e) = listen(move |event| dispatch(&event)) {
                         *listen_error.lock() = Some(format!("X11 listener failed ({:?})", e));
                     }
                 }
@@ -518,13 +523,7 @@ impl SimpleHotkeyManager {
 
             #[cfg(not(target_os = "linux"))]
             {
-                let callback = move |event: Event| {
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        dispatch(&event);
-                    }));
-                };
-
-                if let Err(e) = listen(callback) {
+                if let Err(e) = listen(move |event| dispatch(&event)) {
                     *listen_error.lock() = Some(format!(
                         "The system refused the key listener ({:?}). On macOS this is Input \
                          Monitoring; grant it to Encre and restart.",
@@ -548,6 +547,45 @@ impl SimpleHotkeyManager {
     }
 }
 
+fn manager<'a>(handle: HotkeyManagerHandle) -> Option<&'a mut SimpleHotkeyManager> {
+    if handle.is_null() {
+        set_last_error("Null hotkey manager handle provided".to_string());
+        return None;
+    }
+    Some(unsafe { &mut *(handle as *mut SimpleHotkeyManager) })
+}
+
+/// The binding and action strings a registration call receives.
+///
+/// # Safety
+/// Non-null pointers must be valid null-terminated C strings.
+unsafe fn registration(
+    binding: *const c_char,
+    action: *const c_char,
+) -> Result<(String, String), c_int> {
+    if binding.is_null() || action.is_null() {
+        set_last_error("Null binding or action provided".to_string());
+        return Err(FFIErrorCode::NullPointer as c_int);
+    }
+    let read = |ptr, what| {
+        unsafe { c_str_to_string(ptr) }.map_err(|e| {
+            set_last_error(format!("Invalid {what} string: {}", e));
+            FFIErrorCode::InvalidUtf8 as c_int
+        })
+    };
+    Ok((read(binding, "binding")?, read(action, "action")?))
+}
+
+fn registered(result: Result<(), String>) -> c_int {
+    match result {
+        Ok(()) => FFIErrorCode::Success as c_int,
+        Err(e) => {
+            set_last_error(format!("Hotkey registration failed: {}", e));
+            FFIErrorCode::OperationFailed as c_int
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_manager_new() -> HotkeyManagerHandle {
     init_logging();
@@ -558,16 +596,11 @@ pub unsafe extern "C" fn encre_hotkey_manager_new() -> HotkeyManagerHandle {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_clear(handle: HotkeyManagerHandle) -> c_int {
-    unsafe {
-        if handle.is_null() {
-            set_last_error("Null hotkey manager handle provided".to_string());
-            return FFIErrorCode::NullPointer as c_int;
-        }
-
-        let manager = &mut *(handle as *mut SimpleHotkeyManager);
-        manager.clear_bindings();
-        FFIErrorCode::Success as c_int
-    }
+    let Some(manager) = manager(handle) else {
+        return FFIErrorCode::NullPointer as c_int;
+    };
+    manager.clear_bindings();
+    FFIErrorCode::Success as c_int
 }
 
 #[unsafe(no_mangle)]
@@ -577,42 +610,12 @@ pub unsafe extern "C" fn encre_hotkey_register(
     action: *const c_char,
     callback: HotkeyCallback,
 ) -> c_int {
-    unsafe {
-        if handle.is_null() {
-            set_last_error("Null hotkey manager handle provided".to_string());
-            return FFIErrorCode::NullPointer as c_int;
-        }
-
-        if binding.is_null() || action.is_null() {
-            set_last_error("Null binding or action provided".to_string());
-            return FFIErrorCode::NullPointer as c_int;
-        }
-
-        let manager = &mut *(handle as *mut SimpleHotkeyManager);
-
-        let binding_str = match c_str_to_string(binding) {
-            Ok(s) => s,
-            Err(e) => {
-                set_last_error(format!("Invalid binding string: {}", e));
-                return FFIErrorCode::InvalidUtf8 as c_int;
-            }
-        };
-
-        let action_str = match c_str_to_string(action) {
-            Ok(s) => s,
-            Err(e) => {
-                set_last_error(format!("Invalid action string: {}", e));
-                return FFIErrorCode::InvalidUtf8 as c_int;
-            }
-        };
-
-        match manager.register(binding_str, action_str, callback) {
-            Ok(_) => FFIErrorCode::Success as c_int,
-            Err(e) => {
-                set_last_error(format!("Hotkey registration failed: {}", e));
-                FFIErrorCode::OperationFailed as c_int
-            }
-        }
+    let Some(manager) = manager(handle) else {
+        return FFIErrorCode::NullPointer as c_int;
+    };
+    match unsafe { registration(binding, action) } {
+        Ok((binding, action)) => registered(manager.register(binding, action, callback)),
+        Err(code) => code,
     }
 }
 
@@ -624,81 +627,39 @@ pub unsafe extern "C" fn encre_hotkey_register_hold(
     action: *const c_char,
     callback: PttCallback,
 ) -> c_int {
-    unsafe {
-        if handle.is_null() {
-            set_last_error("Null hotkey manager handle provided".to_string());
-            return FFIErrorCode::NullPointer as c_int;
-        }
-
-        if binding.is_null() || action.is_null() {
-            set_last_error("Null binding or action provided".to_string());
-            return FFIErrorCode::NullPointer as c_int;
-        }
-
-        let manager = &mut *(handle as *mut SimpleHotkeyManager);
-
-        let binding_str = match c_str_to_string(binding) {
-            Ok(s) => s,
-            Err(e) => {
-                set_last_error(format!("Invalid binding string: {}", e));
-                return FFIErrorCode::InvalidUtf8 as c_int;
-            }
-        };
-
-        let action_str = match c_str_to_string(action) {
-            Ok(s) => s,
-            Err(e) => {
-                set_last_error(format!("Invalid action string: {}", e));
-                return FFIErrorCode::InvalidUtf8 as c_int;
-            }
-        };
-
-        match manager.register_hold(binding_str, action_str, callback) {
-            Ok(_) => FFIErrorCode::Success as c_int,
-            Err(e) => {
-                set_last_error(format!("Hotkey registration failed: {}", e));
-                FFIErrorCode::OperationFailed as c_int
-            }
-        }
+    let Some(manager) = manager(handle) else {
+        return FFIErrorCode::NullPointer as c_int;
+    };
+    match unsafe { registration(binding, action) } {
+        Ok((binding, action)) => registered(manager.register_hold(binding, action, callback)),
+        Err(code) => code,
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_start(handle: HotkeyManagerHandle) -> c_int {
-    unsafe {
-        if handle.is_null() {
-            set_last_error("Null hotkey manager handle provided".to_string());
-            return FFIErrorCode::NullPointer as c_int;
-        }
-
-        let manager = &mut *(handle as *mut SimpleHotkeyManager);
-
-        match manager.start() {
-            Ok(_) => FFIErrorCode::Success as c_int,
-            Err(e) => {
-                set_last_error(format!("Failed to start hotkey listener: {}", e));
-                FFIErrorCode::OperationFailed as c_int
-            }
+    let Some(manager) = manager(handle) else {
+        return FFIErrorCode::NullPointer as c_int;
+    };
+    match manager.start() {
+        Ok(()) => FFIErrorCode::Success as c_int,
+        Err(e) => {
+            set_last_error(format!("Failed to start hotkey listener: {}", e));
+            FFIErrorCode::OperationFailed as c_int
         }
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_stop(handle: HotkeyManagerHandle) -> c_int {
-    unsafe {
-        if handle.is_null() {
-            set_last_error("Null hotkey manager handle provided".to_string());
-            return FFIErrorCode::NullPointer as c_int;
-        }
-
-        let manager = &mut *(handle as *mut SimpleHotkeyManager);
-
-        match manager.stop() {
-            Ok(_) => FFIErrorCode::Success as c_int,
-            Err(e) => {
-                set_last_error(format!("Failed to stop hotkey listener: {}", e));
-                FFIErrorCode::OperationFailed as c_int
-            }
+    let Some(manager) = manager(handle) else {
+        return FFIErrorCode::NullPointer as c_int;
+    };
+    match manager.stop() {
+        Ok(()) => FFIErrorCode::Success as c_int,
+        Err(e) => {
+            set_last_error(format!("Failed to stop hotkey listener: {}", e));
+            FFIErrorCode::OperationFailed as c_int
         }
     }
 }
@@ -706,16 +667,14 @@ pub unsafe extern "C" fn encre_hotkey_stop(handle: HotkeyManagerHandle) -> c_int
 /// Null when the listener is running. The caller frees the string with `encre_free_string`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_listen_error(handle: HotkeyManagerHandle) -> *mut c_char {
-    unsafe {
-        if handle.is_null() {
-            return std::ptr::null_mut();
-        }
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
 
-        let manager = &*(handle as *mut SimpleHotkeyManager);
-        match manager.listen_error.lock().clone() {
-            Some(message) => string_to_c_str(message),
-            None => std::ptr::null_mut(),
-        }
+    let manager = unsafe { &*(handle as *mut SimpleHotkeyManager) };
+    match manager.listen_error.lock().clone() {
+        Some(message) => string_to_c_str(message),
+        None => std::ptr::null_mut(),
     }
 }
 
@@ -1067,6 +1026,25 @@ mod tests {
                 .register("space".to_string(), "revise_all".to_string(), record)
                 .is_err()
         );
+    }
+
+    extern "C" fn record_edge(action: *const c_char, down: c_int) {
+        let text = unsafe { CStr::from_ptr(action) }.to_string_lossy();
+        FIRED.lock().push(format!("{text}:{down}"));
+    }
+
+    #[test]
+    fn push_to_talk_needs_a_key_to_hold() {
+        let mut manager = SimpleHotkeyManager::new();
+        let error = manager
+            .register_hold("ctrl+cmd".to_string(), "dictate".to_string(), record_edge)
+            .expect_err("a modifier-only binding cannot be held");
+        assert!(error.contains("ctrl+cmd"), "unhelpful message: {}", error);
+
+        manager
+            .register_hold("ctrl+alt+d".to_string(), "dictate".to_string(), record_edge)
+            .expect("a keyed binding can be held");
+        assert_eq!(manager.bindings.lock().len(), 1);
     }
 
     #[test]

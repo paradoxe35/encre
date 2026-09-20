@@ -109,17 +109,8 @@ func (c *Config) SetAPIKey(provider, apiKey string) error {
 
 func (c *Config) GetAPIKey(provider string) (string, error) {
 	c.mu.RLock()
-	var encrypted string
-	if c.AIProvider.Providers != nil {
-		if settings, ok := c.AIProvider.Providers[provider]; ok {
-			encrypted = settings.APIKey
-		}
-	}
+	encrypted := c.AIProvider.Providers[provider].APIKey
 	c.mu.RUnlock()
 
 	return DecryptAPIKey(encrypted)
-}
-
-func (c *Config) GetCurrentAPIKey() (string, error) {
-	return c.GetAPIKey(c.GetCurrentProvider())
 }

@@ -1,7 +1,6 @@
 package language
 
 import (
-	"sort"
 	"strings"
 
 	"golang.org/x/text/language"
@@ -113,6 +112,7 @@ var byCode = func() map[string]Language {
 	return index
 }()
 
+// All keeps the curated popularity order.
 func All() []Language { return all }
 
 func Find(code string) Language {
@@ -156,13 +156,6 @@ func Search(query string) []Language {
 		}
 	}
 	return append(prefix, contains...)
-}
-
-// All keeps the curated popularity order; Sorted is for alphabetical pickers.
-func Sorted() []Language {
-	out := append([]Language(nil), all...)
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
 }
 
 // The secondary is whichever of English or French the primary is not, so the pair is never degenerate.

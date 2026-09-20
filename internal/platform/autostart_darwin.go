@@ -25,15 +25,16 @@ func getAppPath() (string, error) {
 		logger.Warn("Failed to resolve symlinks", "error", err)
 	}
 
-	// Path is Encre.app/Contents/MacOS/Encre when running from a bundle.
-	if strings.Contains(executable, ".app/Contents/MacOS/") {
-		parts := strings.Split(executable, ".app/Contents/MacOS/")
-		if len(parts) >= 1 {
-			return parts[0] + ".app", nil
-		}
+	if bundle, ok := appBundlePath(executable); ok {
+		return bundle, nil
 	}
-
 	return executable, nil
+}
+
+// The executable is Encre.app/Contents/MacOS/Encre when running from a bundle.
+func appBundlePath(executable string) (string, bool) {
+	bundle, _, found := strings.Cut(executable, ".app/Contents/MacOS/")
+	return bundle + ".app", found
 }
 
 func (a *autoStart) Enable() error {

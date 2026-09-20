@@ -15,12 +15,6 @@ func NewNotificationManager(app fyne.App) *NotificationManager {
 	}
 }
 
-func (n *NotificationManager) ShowSuccess(title, content string) {
-	notification := fyne.NewNotification(title, content)
-	n.app.SendNotification(notification)
-	logger.Info("Success notification shown", "title", title, "content", content)
-}
-
 func (n *NotificationManager) ShowError(title, content string) {
 	notification := fyne.NewNotification(title, content)
 	n.app.SendNotification(notification)

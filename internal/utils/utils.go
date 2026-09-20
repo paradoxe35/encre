@@ -23,6 +23,6 @@ func AppHomeDir(elem ...string) string {
 
 func EnsureAppHomeDir() {
 	if err := os.MkdirAll(AppHomeDir(), 0755); err != nil {
-		log.Fatal("Failed to create app home directory", "error", err)
+		log.Fatalf("failed to create app home directory: %v", err)
 	}
 }

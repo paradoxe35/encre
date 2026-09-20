@@ -12,6 +12,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#if defined(ENCRE_MACOS)
+/**
+ * Stamped on every event the simulator posts, so the hotkey listener can tell them from the
+ * user's own keystrokes.
+ */
+#define encre_SYNTHETIC_TAG 1162756946
+#endif
+
 #define encre_SAMPLE_RATE 16000
 
 typedef void *encre_ClipboardHandle;
@@ -38,6 +46,10 @@ typedef void *encre_SttHandle;
 typedef void (*encre_LevelCallback)(float);
 
 #if defined(ENCRE_MACOS)
+extern void CGEventSetIntegerValueField(void *event, uint32_t field, int64_t value);
+#endif
+
+#if defined(ENCRE_MACOS)
 extern bool CGEventSourceKeyState(int32_t state_id, uint16_t key);
 #endif
 
@@ -57,11 +69,6 @@ encre_ClipboardHandle encre_clipboard_new(void);
  * Null when the clipboard holds no text, including when it holds an image.
  */
 char *encre_clipboard_get_text(encre_ClipboardHandle handle);
-
-/**
- * 1 when the clipboard holds text, 0 when not.
- */
-int encre_clipboard_has_text(encre_ClipboardHandle handle);
 
 int encre_clipboard_set_text(encre_ClipboardHandle handle, const char *text);
 

@@ -48,8 +48,6 @@ func NewDictation(processor *Processor, current func() *config.Config, report fu
 	}
 }
 
-func (d *Dictation) Service() *stt.Service { return d.service }
-
 // Loads the model without opening the microphone; audio opens only when recording starts.
 func (d *Dictation) Prepare() {
 	cfg := d.config()
@@ -139,18 +137,9 @@ func (d *Dictation) stop() {
 	}()
 }
 
-func (d *Dictation) Cancel() {
-	d.mu.Lock()
-	d.running = false
-	d.mu.Unlock()
-	d.service.Cancel()
-}
-
 func (d *Dictation) Close() { d.service.Close() }
 
 func (d *Dictation) fail(err error) {
 	logger.Error("Dictation failed", "error", err)
-	if d.report != nil {
-		d.report(err)
-	}
+	d.report(err)
 }

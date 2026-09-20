@@ -9,6 +9,11 @@ pub struct KeySimulator {
     enigo: Enigo,
 }
 
+/// Stamped on every event the simulator posts, so the hotkey listener can tell them from the
+/// user's own keystrokes.
+#[cfg(target_os = "macos")]
+pub const SYNTHETIC_TAG: i64 = 0x454E_4352;
+
 #[cfg(target_os = "macos")]
 mod macos_native {
     use super::*;
@@ -36,6 +41,7 @@ mod macos_native {
     const FLAG_COMMAND: u64 = 1 << 20;
     const HID_EVENT_TAP: u32 = 0;
     const HID_SYSTEM_STATE: i32 = 1;
+    const EVENT_SOURCE_USER_DATA: u32 = 42;
 
     /// Long enough for a shortcut the user is still holding, short enough not to feel stuck.
     const RELEASE_TIMEOUT: Duration = Duration::from_millis(600);
@@ -50,6 +56,7 @@ mod macos_native {
         ) -> *mut c_void;
 
         fn CGEventSetFlags(event: *mut c_void, flags: u64);
+        fn CGEventSetIntegerValueField(event: *mut c_void, field: u32, value: i64);
         fn CGEventPost(tap: u32, event: *mut c_void);
         fn CGEventSourceKeyState(state_id: i32, key: u16) -> bool;
         fn CFRelease(cf: *mut c_void);
@@ -62,6 +69,7 @@ mod macos_native {
                 return Err(anyhow::anyhow!("Failed to create key event"));
             }
             CGEventSetFlags(event, flags);
+            CGEventSetIntegerValueField(event, EVENT_SOURCE_USER_DATA, SYNTHETIC_TAG);
             CGEventPost(HID_EVENT_TAP, event);
             CFRelease(event);
         }
@@ -94,6 +102,7 @@ mod macos_native {
     }
 
     fn command_combo(key_code: u16) -> Result<()> {
+        release_modifiers()?;
         post(key_code, true, FLAG_COMMAND)?;
         sleep(KEY_HOLD);
         post(key_code, false, FLAG_COMMAND)
@@ -153,11 +162,8 @@ impl KeySimulator {
     }
 
     pub fn select_all(&mut self) -> Result<()> {
-        debug!("Simulating select all");
-
         #[cfg(target_os = "macos")]
         {
-            macos_native::release_modifiers()?;
             macos_native::select_all()
         }
 
@@ -168,11 +174,8 @@ impl KeySimulator {
     }
 
     pub fn copy(&mut self) -> Result<()> {
-        debug!("Simulating copy");
-
         #[cfg(target_os = "macos")]
         {
-            macos_native::release_modifiers()?;
             macos_native::copy()
         }
 
@@ -183,11 +186,8 @@ impl KeySimulator {
     }
 
     pub fn paste(&mut self) -> Result<()> {
-        debug!("Simulating paste");
-
         #[cfg(target_os = "macos")]
         {
-            macos_native::release_modifiers()?;
             macos_native::paste()
         }
 
