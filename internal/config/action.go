@@ -6,9 +6,8 @@ import (
 	"github.com/paradoxe35/encre/internal/prompt"
 )
 
-// Operation is what happens to the text. Behaviour — prompt, provider, limits —
-// is configured per operation, so two shortcuts that both revise cannot drift
-// apart.
+// Operation is what happens to the text. Prompt, provider and limits are configured per
+// operation, so two shortcuts that both revise cannot drift apart.
 type Operation string
 
 const (
@@ -32,8 +31,6 @@ func (o Operation) Label() string {
 	return string(o)
 }
 
-// UsesAI reports whether the operation sends text to a provider. Dictate does
-// not: it records audio and transcribes it.
 func (o Operation) UsesAI() bool { return o != OpDictate }
 
 // ActionKind identifies a binding: an operation plus the text it acts on.
@@ -80,11 +77,8 @@ func (k ActionKind) Operation() Operation {
 
 func (k ActionKind) UsesAI() bool { return k.Operation().UsesAI() }
 
-// SelectsAll reports whether the binding takes the whole field rather than
-// what the user highlighted.
 func (k ActionKind) SelectsAll() bool { return k == ActionReviseAll }
 
-// ActionConfig is a binding: which keys, and whether they are live.
 type ActionConfig struct {
 	Enabled bool   `json:"enabled"`
 	Hotkey  string `json:"hotkey"`
@@ -93,19 +87,16 @@ type ActionConfig struct {
 	PushToTalk bool `json:"push_to_talk,omitempty"`
 }
 
-// OperationConfig is behaviour, shared by every binding of that operation.
 type OperationConfig struct {
 	SystemPrompt   string `json:"system_prompt,omitempty"`
 	CharacterLimit int    `json:"character_limit,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 
-	// ProviderID overrides the default provider. Empty means use the default,
-	// so changing the default carries every operation with it.
+	// Empty means the default provider, so changing the default carries every operation with it.
 	ProviderID string `json:"provider_id,omitempty"`
 }
 
-// PromptOrDefault lets a blank prompt mean "use the built-in", so Reset is just
-// clearing the field and defaults keep improving.
+// A blank prompt means the built-in, so Reset is clearing the field.
 func (o OperationConfig) PromptOrDefault(op Operation) string {
 	if o.SystemPrompt != "" {
 		return o.SystemPrompt
@@ -113,8 +104,6 @@ func (o OperationConfig) PromptOrDefault(op Operation) string {
 	return defaultPrompt(op)
 }
 
-// DefaultPrompt exposes the built-in text so settings can show what an empty
-// field falls back to.
 func DefaultPrompt(op Operation) string { return defaultPrompt(op) }
 
 func defaultPrompt(op Operation) string {
@@ -235,8 +224,6 @@ func (c *Config) SetOperation(op Operation, operation OperationConfig) {
 	c.Operations[op] = operation
 }
 
-// ProviderFor falls back to the default when an operation names none, or names
-// one that no longer exists.
 func (c *Config) ProviderFor(op Operation) string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

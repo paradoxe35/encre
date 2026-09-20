@@ -37,8 +37,7 @@ pub unsafe extern "C" fn encre_clipboard_get_text(handle: ClipboardHandle) -> *m
     }
 }
 
-/// 1 when the clipboard holds text, 0 when not. Distinguishes "copied a picture" from
-/// "the copy never landed", which look identical through `get_text`.
+/// 1 when the clipboard holds text, 0 when not.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_has_text(handle: ClipboardHandle) -> c_int {
     unsafe {

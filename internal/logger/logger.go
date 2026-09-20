@@ -15,7 +15,6 @@ var (
 	currentLogFile string
 )
 
-// Init initializes the logger with daily log rotation
 func Init() error {
 	logDir := utils.AppHomeDir("logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {

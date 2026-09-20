@@ -5,14 +5,11 @@ package input
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../rust-ffi
 
-// Linux static linking (includes X11 and Wayland dependencies)
 #cgo linux LDFLAGS: ${SRCDIR}/../../lib/libencre_ffi.a -lpthread -ldl -lm -lxdo -lX11 -lXtst -lxkbcommon
 
-// macOS linking (partial static, frameworks required)
 #cgo darwin LDFLAGS: ${SRCDIR}/../../lib/libencre_ffi.a
 #cgo darwin LDFLAGS: -framework CoreFoundation -framework Security -framework AppKit -framework Carbon
 
-// Windows static linking
 #cgo windows LDFLAGS: ${SRCDIR}/../../lib/libencre_ffi.a
 #cgo windows LDFLAGS: -lws2_32 -luserenv -lbcrypt -lntdll -static
 
@@ -29,8 +26,7 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-// CaptureOutcome tells apart the ways a capture can end, so the user gets an accurate message
-// instead of one guess covering all of them.
+// Distinguishes how a capture ended, so the user gets an accurate message.
 type CaptureOutcome int
 
 const (
@@ -163,18 +159,15 @@ func (c *FFIClipboardManager) Close() {
 	}
 }
 
-// CaptureSelection captures the current selection without disturbing it.
 func (c *FFIClipboardManager) CaptureSelection() (string, CaptureOutcome, error) {
 	return c.capture(false)
 }
 
-// CaptureAll selects the whole field first, for "revise everything I have typed".
 func (c *FFIClipboardManager) CaptureAll() (string, CaptureOutcome, error) {
 	return c.capture(true)
 }
 
-// capture borrows the clipboard to read the user's selection. It clears the clipboard before
-// copying so a failed copy is observable, instead of silently reusing stale contents.
+// Clears the clipboard before copying so a failed copy is observable rather than reusing stale contents.
 func (c *FFIClipboardManager) capture(selectAllFirst bool) (string, CaptureOutcome, error) {
 	if err := c.SaveCurrent(); err != nil {
 		return "", CaptureCopyFailed, fmt.Errorf("could not read the clipboard: %w", err)
@@ -227,16 +220,15 @@ func (c *FFIClipboardManager) capture(selectAllFirst bool) (string, CaptureOutco
 	return copied, CaptureOK, nil
 }
 
-// ReplaceSelectedText writes newText over the selection, then puts the clipboard back.
-//
-// The selection is still active from the capture, so pasting replaces it.
+// The selection is still active from the capture, so pasting replaces it; the clipboard is
+// put back afterwards.
 func (c *FFIClipboardManager) ReplaceSelectedText(newText string) error {
 	if err := c.SetText(newText); err != nil {
 		c.Abandon()
 		return fmt.Errorf("failed to set clipboard text: %w", err)
 	}
 
-	// Confirm the clipboard really holds our text before pasting, or a slow write pastes stale contents.
+	// Confirm the clipboard holds the new text before pasting, or a slow write pastes stale contents.
 	if _, ok := await(func() (string, bool) {
 		text, ok := c.text()
 		return text, ok && text == newText

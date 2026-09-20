@@ -13,7 +13,6 @@ import (
 
 const providerDefaultOption = "Default"
 
-// operationEditor holds what an operation does; which keys trigger it lives under Hotkeys.
 type operationEditor struct {
 	prompt   *widget.Entry
 	limit    *widget.Entry
@@ -60,7 +59,7 @@ func (w *MainWindow) newOperationEditor(op config.Operation) *operationEditor {
 		timeout:  widget.NewSlider(5, 300),
 		provider: w.dirtySelect(w.providerOptions(), nil),
 	}
-	// Shown as placeholder, not hidden behind an empty field, since it's what actually runs.
+	// The default prompt is what runs when the field is empty, so it shows as the placeholder.
 	editor.prompt.SetPlaceHolder(config.DefaultPrompt(op))
 	editor.prompt.SetText(operation.SystemPrompt)
 	editor.prompt.Wrapping = fyne.TextWrapWord
@@ -93,7 +92,6 @@ func (e *operationEditor) content(w *MainWindow, op config.Operation) fyne.Canva
 		),
 	}
 
-	// Language pair lives here rather than its own screen, since it's a translate-specific setting.
 	if op == config.OpTranslate {
 		rows = append(rows, widget.NewSeparator(), w.translateLanguages())
 	}
@@ -170,7 +168,6 @@ func validateCharacterLimit(value string) error {
 	return nil
 }
 
-// boundBy names the shortcuts an operation answers to, e.g. "Revise selection" and "Revise everything" share these settings.
 func boundBy(op config.Operation) fyne.CanvasObject {
 	var names []string
 	for _, kind := range config.ActionOrder {

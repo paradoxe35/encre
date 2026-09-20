@@ -44,7 +44,6 @@ func TestFFISimulator(t *testing.T) {
 	}
 	defer simulator.Close()
 
-	// Actual key simulation requires a GUI context; this just checks it doesn't crash.
 	t.Logf("Simulator created successfully")
 	t.Logf("  (Actual key simulation requires GUI context)")
 }
@@ -69,7 +68,6 @@ func TestFFIHotkeys(t *testing.T) {
 		t.Fatalf("Failed to start hotkey manager: %v", err)
 	}
 
-	// Stop immediately; we don't wait for actual keypresses.
 	hotkeyMgr.Stop()
 
 	t.Logf("Hotkey manager test passed")

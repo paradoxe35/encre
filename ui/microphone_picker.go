@@ -9,7 +9,7 @@ import (
 
 const systemDefaultDevice = "System default"
 
-// MicrophonePicker chooses the capture device; a saved device no longer present stays listed and selected.
+// MicrophonePicker keeps a saved device listed and selected even while it is unplugged.
 type MicrophonePicker struct {
 	widget.BaseWidget
 
@@ -53,7 +53,6 @@ func newMicrophonePicker(saved string, list func() []input.Device) *MicrophonePi
 	return p
 }
 
-// Device returns the chosen name, empty for the system default.
 func (p *MicrophonePicker) Device() string {
 	if p.chosen == systemDefaultDevice {
 		return ""
@@ -61,7 +60,6 @@ func (p *MicrophonePicker) Device() string {
 	return p.chosen
 }
 
-// Refresh re-reads the device list, preferring the in-progress choice, then the saved device, then the system default.
 func (p *MicrophonePicker) Refresh() {
 	p.refreshing = true
 	defer func() { p.refreshing = false }()

@@ -8,10 +8,8 @@ import (
 	"fyne.io/fyne/v2"
 )
 
-// The systray library sends every translucent pixel with a corrupted colour,
-// and panels shrink whatever they get with plain linear filtering. So the tray
-// gets a hard-edged 32 px image: halving it to the panel size is what
-// smooths the outline. Rendered by scripts/generate_icons.py.
+// systray corrupts translucent pixels and panels downscale with linear filtering, so the
+// tray gets a hard-edged 32 px image that halves cleanly. Rendered by scripts/generate_icons.py.
 //
 //go:embed assets/tray.png
 var trayIconPNG []byte

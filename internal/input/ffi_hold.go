@@ -22,7 +22,6 @@ import (
 // cancelled by a matching press, so auto-repeat doesn't read as the user letting go.
 const releaseGrace = 50 * time.Millisecond
 
-// HoldHandler receives both edges of a push-to-talk shortcut.
 type HoldHandler func(down bool)
 
 type holdBinding struct {
@@ -36,8 +35,7 @@ var (
 	holdBindings = map[string]*holdBinding{}
 )
 
-// RegisterHoldHotkey binds a shortcut that reports key down and key up; the binding must name
-// a real key, since a modifier-only chord cannot be held.
+// The binding must name a real key: a modifier-only chord cannot be held.
 func (m *FFIHotkeyManager) RegisterHoldHotkey(binding, action string, handler HoldHandler) error {
 	if m == nil {
 		return fmt.Errorf("hotkey manager not initialized")

@@ -3,8 +3,7 @@
 package input
 
 /*
-// Speech pulls in ggml (C++) and cpal (platform audio API); cgo unions LDFLAGS across the
-// package, so they live here instead of being repeated per file.
+// ggml (C++) and cpal (platform audio) link flags live here; cgo unions LDFLAGS across the package.
 #cgo linux LDFLAGS: -lstdc++ -lasound
 // Accelerate: ggml-cpu calls vDSP directly under GGML_USE_ACCELERATE, but its own link
 // manifest only requests the framework when BLAS is on, which this build disables.
@@ -23,13 +22,9 @@ import (
 	"unsafe"
 )
 
-// FFISpeech records from the microphone and transcribes locally. Every call
-// beyond Level runs on the caller's goroutine; Stop blocks for as long as
-// inference takes.
-//
-// The lock is shared: Rust orders Start against Stop and Cancel itself, and an
-// exclusive lock would make the next take wait for the previous transcription.
-// Close takes it exclusively so the handle stays alive under a call.
+// mu is shared: Rust orders Start, Stop and Cancel itself, and an exclusive lock would make
+// the next take wait on the previous transcription. Close takes it exclusively so the handle
+// stays alive under a call.
 type FFISpeech struct {
 	mu     sync.RWMutex
 	handle C.encre_SttHandle
@@ -48,7 +43,7 @@ func NewFFISpeech() (*FFISpeech, error) {
 	return &FFISpeech{handle: handle}, nil
 }
 
-// OnLevel receives microphone level from a background thread while recording; replaces any previous handler.
+// The handler runs on a background thread while recording.
 func OnLevel(handler func(float32)) {
 	levelMu.Lock()
 	defer levelMu.Unlock()
@@ -66,8 +61,7 @@ func speechLevelGateway(rms C.float) {
 	}
 }
 
-// UseModel selects the model for the next takes and starts loading it. A load
-// failure is reported by the first Stop that needs the model.
+// Starts loading; a load failure is reported by the first Stop that needs the model.
 func (s *FFISpeech) UseModel(path string) error {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
@@ -99,8 +93,7 @@ func (s *FFISpeech) Start() error {
 	return nil
 }
 
-// Stop ends recording and returns the transcript; blocks for the length of transcription, so
-// callers should not run it on the UI goroutine.
+// Blocks for the length of transcription; not for the UI goroutine.
 func (s *FFISpeech) Stop() (string, error) {
 	s.mu.RLock()
 	text := C.encre_stt_stop(s.handle)
@@ -133,7 +126,7 @@ func takeString(text *C.char) (string, error) {
 	return C.GoString(text), nil
 }
 
-// SetDevice chooses the capture device by name (empty means system default); applies to the next recording, not one in progress.
+// Empty means the system default. Applies to the next recording, not one in progress.
 func (s *FFISpeech) SetDevice(name string) error {
 	var cName *C.char
 	if name != "" {
@@ -151,8 +144,7 @@ func (s *FFISpeech) SetDevice(name string) error {
 	return nil
 }
 
-// SetLanguage sets the spoken language as an ISO code, empty to detect; it
-// applies to the next recording, not one in progress.
+// Empty means detect. Applies to the next recording, not one in progress.
 func (s *FFISpeech) SetLanguage(code string) error {
 	var cCode *C.char
 	if code != "" {
@@ -170,8 +162,8 @@ func (s *FFISpeech) SetLanguage(code string) error {
 	return nil
 }
 
-// SetCaptureOnly toggles capture-only recording: audio is captured but never handed to the
-// engine, for a remote transcriber that needs the raw take. Applies to the next recording.
+// Capture-only keeps audio away from the engine, for a remote transcriber that needs the raw
+// take. Applies to the next recording.
 func (s *FFISpeech) SetCaptureOnly(enabled bool) error {
 	s.mu.RLock()
 	result := C.encre_stt_set_capture_only(s.handle, C.bool(enabled))
@@ -183,8 +175,7 @@ func (s *FFISpeech) SetCaptureOnly(enabled bool) error {
 	return nil
 }
 
-// StopPCM ends a capture-only recording and returns the audio as headerless
-// 16-bit signed little-endian PCM, mono, at 16 kHz.
+// Returns headerless 16-bit signed little-endian PCM, mono, at 16 kHz.
 func (s *FFISpeech) StopPCM() ([]byte, error) {
 	var length C.uintptr_t
 
@@ -200,7 +191,7 @@ func (s *FFISpeech) StopPCM() ([]byte, error) {
 	return C.GoBytes(unsafe.Pointer(ptr), C.int(length)), nil
 }
 
-// InputDevices lists microphones; an empty result means none were found, not that enumeration failed.
+// An empty result means none were found, not that enumeration failed.
 func InputDevices() []Device {
 	listed := C.encre_stt_devices()
 	if listed == nil {

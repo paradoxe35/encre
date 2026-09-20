@@ -13,7 +13,7 @@ import (
 
 type autoStart struct{}
 
-// escapeExecPath quotes and escapes a path for the desktop entry Exec field, per the XDG spec.
+// Quoting and escaping per the XDG desktop entry spec for the Exec field.
 func escapeExecPath(path string) string {
 	reservedChars := " \t\n\"'\\><~|&;$*?#()`"
 	needsQuoting := false
@@ -29,15 +29,14 @@ func escapeExecPath(path string) string {
 	}
 
 	escaped := path
-	escaped = strings.ReplaceAll(escaped, `\`, `\\`)  // Backslash first!
-	escaped = strings.ReplaceAll(escaped, `"`, `\"`)  // Double quote
-	escaped = strings.ReplaceAll(escaped, "`", "\\`") // Backtick
-	escaped = strings.ReplaceAll(escaped, `$`, `\$`)  // Dollar sign
+	escaped = strings.ReplaceAll(escaped, `\`, `\\`) // backslash first
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	escaped = strings.ReplaceAll(escaped, "`", "\\`")
+	escaped = strings.ReplaceAll(escaped, `$`, `\$`)
 
 	return fmt.Sprintf(`"%s"`, escaped)
 }
 
-// Enable creates an autostart desktop entry for Linux
 func (a *autoStart) Enable() error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -84,7 +83,6 @@ Categories=Utility;Office;
 	return nil
 }
 
-// Disable removes the autostart desktop entry
 func (a *autoStart) Disable() error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -101,7 +99,6 @@ func (a *autoStart) Disable() error {
 	return nil
 }
 
-// IsEnabled checks if the desktop entry exists
 func (a *autoStart) IsEnabled() bool {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

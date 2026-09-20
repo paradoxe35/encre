@@ -14,7 +14,6 @@ import (
 
 type autoStart struct{}
 
-// getAppPath returns the path to the .app bundle
 func getAppPath() (string, error) {
 	executable, err := os.Executable()
 	if err != nil {
@@ -37,7 +36,6 @@ func getAppPath() (string, error) {
 	return executable, nil
 }
 
-// Enable adds the app to macOS login items using osascript
 func (a *autoStart) Enable() error {
 	appPath, err := getAppPath()
 	if err != nil {
@@ -60,7 +58,6 @@ func (a *autoStart) Enable() error {
 	return nil
 }
 
-// Disable removes the app from macOS login items using osascript
 func (a *autoStart) Disable() error {
 	appPath, err := getAppPath()
 	if err != nil {
@@ -85,7 +82,6 @@ func (a *autoStart) Disable() error {
 	return nil
 }
 
-// IsEnabled checks if the app is in macOS login items
 func (a *autoStart) IsEnabled() bool {
 	appPath, err := getAppPath()
 	if err != nil {

@@ -10,7 +10,6 @@ import (
 	"strings"
 )
 
-// OpenAIProvider implements the Provider interface for OpenAI
 type OpenAIProvider struct {
 	// Name is what errors call this endpoint: "openai" unless a custom provider lends its own.
 	Name        string

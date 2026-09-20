@@ -1,6 +1,5 @@
 package permissions
 
-// Type identifies a macOS permission the application depends on.
 type Type string
 
 const (
@@ -22,9 +21,8 @@ func (t Type) DisplayName() string {
 	}
 }
 
-// State is what macOS currently allows. The microphone is only a problem once
-// refused: while undecided, the system asks by itself the first time dictation
-// records, so the card stays out of the way.
+// The microphone only counts once refused: while undecided, the system asks by itself the
+// first time dictation records.
 type State struct {
 	AccessibilityGranted   bool
 	InputMonitoringGranted bool
@@ -35,8 +33,7 @@ func (s State) AllGranted() bool {
 	return s.AccessibilityGranted && s.InputMonitoringGranted && !s.MicrophoneDenied
 }
 
-// NeedsRestart reports whether a grant only takes effect after a relaunch,
-// which is true of the hotkey permissions and not of the microphone.
+// Hotkey permissions only take effect after a relaunch; the microphone does not.
 func (s State) NeedsRestart() bool {
 	return !s.AccessibilityGranted || !s.InputMonitoringGranted
 }

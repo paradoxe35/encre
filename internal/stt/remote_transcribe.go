@@ -25,9 +25,8 @@ const (
 
 var remoteClient = &http.Client{Timeout: remoteRequestTimeout}
 
-// RemoteTranscribe posts pcm - headerless 16-bit signed little-endian mono PCM at
-// remoteSampleRate, as returned by FFISpeech.StopPCM - to the hosted service
-// configured in cfg and returns the recognized text.
+// pcm is headerless 16-bit signed little-endian mono at remoteSampleRate, as FFISpeech.StopPCM
+// returns it.
 func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) (string, error) {
 	wav := wavFile(pcm)
 	if protocolFor(cfg.RemoteProvider) == ProtocolGemini {
@@ -71,8 +70,6 @@ func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) 
 	return parseRemoteResponse(respBody)
 }
 
-// remoteRequestBody builds the multipart form: the audio file, the model, and -
-// when a language is configured - the field name whose spelling depends on the model.
 func remoteRequestBody(cfg config.SpeechConfig, wav []byte) (io.Reader, string, error) {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -102,9 +99,8 @@ func remoteRequestBody(cfg config.SpeechConfig, wav []byte) (io.Reader, string, 
 	return &buf, writer.FormDataContentType(), nil
 }
 
-// remoteLanguageField picks the form field OpenAI expects for language: the
-// gpt- transcribe models take a repeated languages[], everything else (whisper-1,
-// every Groq model, and unrecognized custom-endpoint models) takes language.
+// The gpt- transcribe models take a repeated languages[]; everything else (whisper-1, Groq,
+// unrecognised custom endpoints) takes language.
 func remoteLanguageField(model string) string {
 	if strings.HasPrefix(strings.ToLower(model), "gpt-") {
 		return "languages[]"
@@ -112,8 +108,7 @@ func remoteLanguageField(model string) string {
 	return "language"
 }
 
-// remoteAPIKey decrypts cfg.RemoteAPIKey, falling back to the raw value when it
-// predates encryption - a config written before that change holds it in plaintext.
+// Falls back to the raw value for a key stored in plaintext.
 func remoteAPIKey(cfg config.SpeechConfig) string {
 	if cfg.RemoteAPIKey == "" {
 		return ""
@@ -137,8 +132,7 @@ func parseRemoteResponse(body []byte) (string, error) {
 	return r.Text, nil
 }
 
-// remoteErrorMessage extracts a provider error message from a non-2xx body,
-// matching both the OpenAI {"error":{"message":...}} shape and a flat {"error":"..."}.
+// Matches both the OpenAI {"error":{"message":...}} shape and a flat {"error":"..."}.
 func remoteErrorMessage(body []byte, status string) string {
 	var withObject struct {
 		Error struct {
@@ -163,8 +157,7 @@ func remoteErrorMessage(body []byte, status string) string {
 	return status
 }
 
-// wavFile prefixes headerless 16-bit LE mono PCM with a canonical 44-byte WAV
-// header, so it can be posted as audio/wav without pulling in a WAV dependency.
+// A canonical 44-byte header, so the audio posts as audio/wav without a WAV dependency.
 func wavFile(pcm []byte) []byte {
 	header := wavHeader(len(pcm))
 	out := make([]byte, 0, len(header)+len(pcm))

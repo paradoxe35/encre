@@ -31,11 +31,9 @@ type speechEngine interface {
 	Close()
 }
 
-// Service turns hotkey edges into transcripts. The engine is created lazily so
-// an app that never dictates never opens an audio device.
-//
-// Rust owns what is loaded and runs its commands in order, so this side only
-// remembers what it last asked for and how many takes are still in flight.
+// The engine is created lazily so an app that never dictates never opens an audio device.
+// Rust owns what is loaded and runs commands in order; this side only remembers what it last
+// asked for and how many takes are in flight.
 type Service struct {
 	store     *Store
 	newEngine func() (speechEngine, error)
@@ -68,7 +66,7 @@ func newFFIEngine() (speechEngine, error) {
 
 func (s *Service) Store() *Store { return s.store }
 
-// OnLevel receives microphone level while recording, from a background thread.
+// The handler runs on a background thread while recording.
 func (s *Service) OnLevel(handler func(float32)) { input.OnLevel(handler) }
 
 func (s *Service) engine() (speechEngine, error) {
@@ -89,8 +87,7 @@ func (s *Service) engine() (speechEngine, error) {
 	return speech, nil
 }
 
-// Prepare starts loading the model ahead of the first dictation; idempotent.
-// A model the user does not want kept in memory is loaded per take instead.
+// Idempotent. A model not kept in memory is loaded per take instead.
 func (s *Service) Prepare(cfg config.SpeechConfig) error {
 	if !cfg.KeepModelLoaded {
 		return nil
@@ -111,11 +108,9 @@ func (s *Service) Prepare(cfg config.SpeechConfig) error {
 	return nil
 }
 
-// applyEngine sets up the selected transcription backend: a local model, or
-// capture-only audio for witai/remote, which transcribe from the raw take.
+// witai and remote transcribe from the raw take, so they get capture-only audio.
 func (s *Service) applyEngine(speech speechEngine, cfg config.SpeechConfig) error {
-	// A build with no embedded keys hides Wit.ai in the UI, but a config carried
-	// over from a build that had them can still name it; fall back to local.
+	// A build without embedded keys hides Wit.ai in the UI, but a config can still name it.
 	engine := cfg.Engine
 	if engine == config.SpeechWitAI && !witai.Available() {
 		engine = config.SpeechLocal
@@ -178,7 +173,6 @@ func (s *Service) applyDevice(speech speechEngine, cfg config.SpeechConfig) {
 	s.device = cfg.InputDevice
 }
 
-// applyLanguage tells the engine what to listen for; see TranscribeLanguage.
 func (s *Service) applyLanguage(speech speechEngine, cfg config.SpeechConfig) {
 	model, ok := FindModel(cfg.ModelID)
 	if !ok {
@@ -308,9 +302,8 @@ func (s *Service) stopRemote(speech speechEngine, cfg config.SpeechConfig) (stri
 	return text, nil
 }
 
-// finishTake unloads once the last take is out when the model is not kept.
-// Sent under the lock, so a take starting afterwards asks for the model again
-// and its load is queued behind the unload.
+// Unloads after the last take when the model is not kept. Sent under the lock, so a take
+// starting afterwards asks for the model again and its load queues behind the unload.
 func (s *Service) finishTake(speech speechEngine) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -339,7 +332,7 @@ func (s *Service) Cancel() {
 	}
 }
 
-// Devices lists microphones; may be the first call that opens an audio device, since the engine is lazy.
+// May be the first call that opens an audio device, since the engine is lazy.
 func (s *Service) Devices() []input.Device {
 	return input.InputDevices()
 }
@@ -357,7 +350,6 @@ func (s *Service) Close() {
 	}
 }
 
-// SystemLanguage is the base code of the system locale.
 func SystemLanguage() string {
 	tag, err := locale.GetLocale()
 	if err != nil {

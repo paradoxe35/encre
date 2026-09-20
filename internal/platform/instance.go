@@ -11,13 +11,9 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-// Handover lets a launch that lost the instance lock reach the copy already running.
-//
-// The lock decides which process runs; this decides what the other one does. Without it, clicking
-// the launcher while Encre sits in the tray appears to do nothing at all.
-//
-// Loopback only: it is the whole of what is needed, and it keeps macOS from asking whether
-// Encre may accept incoming connections.
+// Handover lets a launch that lost the instance lock reach the running copy; without it,
+// clicking the launcher while Encre sits in the tray does nothing. Loopback only, which also
+// keeps macOS from asking about incoming connections.
 type Handover struct {
 	portPath string
 	listener net.Listener
@@ -34,8 +30,7 @@ func NewHandover(portPath string) *Handover {
 	return &Handover{portPath: portPath}
 }
 
-// Serve answers show requests until Close. A failure here is survivable: the app still runs, and
-// only the handover is lost, so it is reported rather than fatal.
+// A failure here only loses the handover, so it is reported rather than fatal.
 func (h *Handover) Serve(onShow func()) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -73,10 +68,7 @@ func (h *Handover) Close() {
 	os.Remove(h.portPath)
 }
 
-// Notify asks the running copy to show itself, reporting whether it took the request.
-//
-// Retried, because the copy holding the lock may still be starting and may not have written its
-// port yet.
+// Retried: the copy holding the lock may still be starting and not have written its port yet.
 func Notify(portPath string) bool {
 	for attempt := 0; attempt < notifyAttempts; attempt++ {
 		if attempt > 0 {

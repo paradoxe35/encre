@@ -14,7 +14,6 @@ import (
 	"github.com/paradoxe35/encre/internal/stt"
 )
 
-// ModelList shows the catalog with per-row download state; rows are recycled, so update rebuilds fields rather than capturing them.
 type ModelList struct {
 	widget.BaseWidget
 
@@ -221,7 +220,6 @@ func (m *ModelList) update(i widget.ListItemID, item fyne.CanvasObject) {
 		row.action.Enable()
 	}
 
-	// Language details are only interesting when the summary hides them.
 	row.info.OnTapped = func() {
 		showModelDetails(m.window, model, m.host, m.store.Downloaded(model))
 	}
@@ -229,7 +227,6 @@ func (m *ModelList) update(i widget.ListItemID, item fyne.CanvasObject) {
 	row.action.Refresh()
 }
 
-// summarise keeps a row to one short line. SpeedLabel's thresholds are shared with the details modal so they can't disagree.
 func summarise(model stt.Model, host stt.Machine) string {
 	return strings.Join([]string{
 		model.LanguageSummary(),
@@ -273,7 +270,7 @@ func (m *ModelList) download(model stt.Model) {
 				dialog.ShowError(err, m.window)
 				return
 			}
-			// Becomes the active model if nothing else was chosen, or confirms a pre-download click now that it can run.
+			// Adopt the model when nothing is active, or when it was chosen before its download finished.
 			if err == nil && (m.selected == "" || m.selected == model.ID) {
 				m.choose(model)
 			}
@@ -309,7 +306,6 @@ func (m *ModelList) SetDeleted(callback func(stt.Model)) {
 	m.onDeleted = callback
 }
 
-// showModelDetails opens the facts about a model, with languages shown by name rather than code.
 func showModelDetails(window fyne.Window, model stt.Model, host stt.Machine, downloaded bool) {
 	showTextDialog(window, model.Name, stt.ModelDetails(model, host, downloaded), fyne.NewSize(420, 360))
 }

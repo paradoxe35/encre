@@ -10,7 +10,6 @@ const (
 	ProtocolGemini RemoteProtocol = "gemini"
 )
 
-// RemotePreset is a hosted transcription endpoint.
 type RemotePreset struct {
 	ID       string
 	Name     string
@@ -56,8 +55,8 @@ var RemotePresets = []RemotePreset{
 	},
 }
 
-// protocolFor resolves the shape to speak. An unknown id is a config naming a
-// preset this build does not have, which is OpenAI-shaped in every case so far.
+// An unknown id is a config naming a preset this build does not have; every such preset
+// is OpenAI-shaped.
 func protocolFor(presetID string) RemoteProtocol {
 	if preset, ok := FindPreset(presetID); ok && preset.Protocol != "" {
 		return preset.Protocol
@@ -82,8 +81,7 @@ func PresetNames() []string {
 	return names
 }
 
-// IsPresetModel reports whether a model is one some preset suggests, which marks
-// it as a default rather than something the user typed.
+// A preset-suggested model is a default rather than something the user typed.
 func IsPresetModel(model string) bool {
 	for _, preset := range RemotePresets {
 		for _, known := range preset.Models {

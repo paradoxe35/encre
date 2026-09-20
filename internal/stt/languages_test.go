@@ -38,7 +38,7 @@ func TestWhisperListExcludesGPTOnlyCodes(t *testing.T) {
 	}
 }
 
-// A model we know nothing about must not get a list we cannot back.
+// An unknown model must not get a list nothing can back.
 func TestLanguagesForUnknownModels(t *testing.T) {
 	cases := [][2]string{
 		{"custom", "some-local-whisper"},

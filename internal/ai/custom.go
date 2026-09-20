@@ -12,8 +12,8 @@ type CustomProvider struct {
 	inner Provider
 }
 
-// NewCustomProvider rejects a providerType it cannot serve rather than silently coercing it.
-// Empty is accepted: configs written before this field existed have nothing to check.
+// Rejects a providerType it cannot serve rather than coercing it. Empty is accepted so a
+// config without the field still loads.
 func NewCustomProvider(name, providerType, apiKey, baseURL, model string, temperature float64) (*CustomProvider, error) {
 	if baseURL == "" {
 		return nil, fmt.Errorf("base URL is required for custom providers")

@@ -6,7 +6,6 @@ import (
 	"sync"
 )
 
-// Provider defines the interface for AI text revision providers
 type Provider interface {
 	ReviseText(ctx context.Context, text, systemPrompt string) (string, error)
 	ValidateConfig() error
@@ -14,7 +13,6 @@ type Provider interface {
 	GetModel() string
 }
 
-// ProviderFactory manages AI providers
 type ProviderFactory struct {
 	mu        sync.RWMutex
 	providers map[string]Provider
@@ -32,8 +30,8 @@ func (f *ProviderFactory) Register(name string, provider Provider) {
 	f.providers[name] = provider
 }
 
-// Reset drops every cached provider. Settings changes invalidate them all:
-// a stale entry would keep using the previous API key or model.
+// Settings changes invalidate every cached provider; a stale entry would keep an
+// outdated API key or model.
 func (f *ProviderFactory) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -4,7 +4,6 @@ import (
 	"fyne.io/fyne/v2"
 )
 
-// GetVersion returns the application version from Fyne metadata
 func GetVersion(app fyne.App) string {
 	if app == nil {
 		return "unknown"
@@ -18,7 +17,6 @@ func GetVersion(app fyne.App) string {
 	return "dev"
 }
 
-// GetBuildNumber returns the build number from Fyne metadata
 func GetBuildNumber(app fyne.App) int {
 	if app == nil {
 		return 0
@@ -28,7 +26,6 @@ func GetBuildNumber(app fyne.App) int {
 	return meta.Build
 }
 
-// IsProduction returns true if this is a production build
 func IsProduction(app fyne.App) bool {
 	if app == nil {
 		return false

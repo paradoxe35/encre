@@ -24,8 +24,7 @@ typedef void *encre_HotkeyManagerHandle;
 typedef void (*encre_HotkeyCallback)(const char*);
 
 /**
- * Push-to-talk delivers both edges: 1 when the key goes down, 0 when it comes
- * up. Kept separate from `HotkeyCallback` so existing bindings keep their ABI.
+ * Receives the action string and 1 on key down, 0 on key up.
  */
 typedef void (*encre_PttCallback)(const char*, int);
 
@@ -34,7 +33,7 @@ typedef void *encre_SimulatorHandle;
 typedef void *encre_SttHandle;
 
 /**
- * Reports microphone level while recording, so the host can draw a meter.
+ * Microphone RMS level while recording, for a meter.
  */
 typedef void (*encre_LevelCallback)(float);
 
@@ -43,7 +42,7 @@ extern bool CGEventSourceKeyState(int32_t state_id, uint16_t key);
 #endif
 
 /**
- * Returns the last error as a C string (free with `encre_free_string`), or NULL if none.
+ * Null when there is no error. Free with `encre_free_string`.
  */
 const char *encre_get_last_error(void);
 
@@ -60,8 +59,7 @@ encre_ClipboardHandle encre_clipboard_new(void);
 char *encre_clipboard_get_text(encre_ClipboardHandle handle);
 
 /**
- * 1 when the clipboard holds text, 0 when not. Distinguishes "copied a picture" from
- * "the copy never landed", which look identical through `get_text`.
+ * 1 when the clipboard holds text, 0 when not.
  */
 int encre_clipboard_has_text(encre_ClipboardHandle handle);
 
@@ -88,8 +86,7 @@ int encre_hotkey_register(encre_HotkeyManagerHandle handle,
                           encre_HotkeyCallback callback);
 
 /**
- * Registers a push-to-talk binding. The callback receives 1 on key down and 0
- * on key up, so the host can record only while the shortcut is held.
+ * Push-to-talk: the callback receives 1 on key down and 0 on key up.
  */
 int encre_hotkey_register_hold(encre_HotkeyManagerHandle handle,
                                const char *binding,
@@ -116,7 +113,7 @@ int encre_simulate_copy(encre_SimulatorHandle handle);
 int encre_simulate_paste(encre_SimulatorHandle handle);
 
 /**
- * Releases modifiers still held from the triggering hotkey. Call once before any combo.
+ * Drops modifiers the triggering hotkey left down. Call once before any combo.
  */
 int encre_simulate_release_modifiers(encre_SimulatorHandle handle);
 
@@ -127,8 +124,7 @@ encre_SttHandle encre_stt_new(encre_LevelCallback level);
 void encre_stt_free(encre_SttHandle handle);
 
 /**
- * Selects the model for the next takes and starts loading it. Returns at
- * once; a load failure is reported by the first transcription that needs it.
+ * Returns at once; a load failure is reported by the first transcription that needs it.
  */
 int encre_stt_use_model(encre_SttHandle handle, const char *path);
 
@@ -137,43 +133,34 @@ int encre_stt_unload(encre_SttHandle handle);
 int encre_stt_start(encre_SttHandle handle);
 
 /**
- * Stops recording and transcribes. Blocks for as long as inference takes, so
- * the host must call it off its UI thread.
+ * Blocks for as long as inference takes; call it off the UI thread.
  */
 char *encre_stt_stop(encre_SttHandle handle);
 
 int encre_stt_cancel(encre_SttHandle handle);
 
 /**
- * Selects the capture device by name. Null or empty means the system default.
- * Takes effect on the next recording.
+ * Null or empty means the system default. Takes effect on the next recording.
  */
 int encre_stt_set_device(encre_SttHandle handle, const char *name);
 
 /**
- * Sets the spoken language as an ISO code; NULL or empty asks the model to
- * detect, which only some can.
+ * ISO code; NULL or empty asks the model to detect the language, which only some can.
  */
 int encre_stt_set_language(encre_SttHandle handle, const char *code);
 
 /**
- * Enables or disables capture-only mode: while on, recording never touches the
- * engine, so `encre_stt_stop` fails and audio must be read back with
- * `encre_stt_stop_pcm`. Takes effect on the next recording.
+ * While on, a take never touches the engine: `encre_stt_stop` fails and audio is
+ * read back with `encre_stt_stop_pcm`. Takes effect on the next recording.
  */
 int encre_stt_set_capture_only(encre_SttHandle handle, bool enabled);
 
 /**
- * Stops a capture-only recording and returns the audio as headerless 16-bit
- * signed little-endian PCM, mono, at `encre_SAMPLE_RATE`. Free with
- * `encre_stt_free_bytes`. Null on failure; a silent take returns a valid
- * zero-length buffer.
+ * Headerless 16-bit signed little-endian mono PCM at `encre_SAMPLE_RATE`; free with
+ * `encre_stt_free_bytes`. Null on failure; a silent take is a valid zero-length buffer.
  */
 uint8_t *encre_stt_stop_pcm(encre_SttHandle handle, uintptr_t *out_len);
 
-/**
- * Frees a buffer returned by `encre_stt_stop_pcm`.
- */
 void encre_stt_free_bytes(uint8_t *ptr, uintptr_t len);
 
 /**

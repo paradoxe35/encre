@@ -25,8 +25,6 @@ const (
 	detectLanguageLabel = "Auto-detect"
 )
 
-// speechLanguageCode maps the displayed label back to a code, from whichever
-// refresh last populated the picker.
 func (w *MainWindow) speechLanguageCode(label string) string {
 	if label == "" || label == detectLanguageLabel {
 		return ""
@@ -34,7 +32,7 @@ func (w *MainWindow) speechLanguageCode(label string) string {
 	if code, ok := w.speechLanguageCodes[label]; ok {
 		return code
 	}
-	// Typed rather than picked: a code for a model we have no list for.
+	// Typed rather than picked: a code for a model with no list.
 	return strings.TrimSpace(label)
 }
 
@@ -76,7 +74,7 @@ func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
 	})
 	w.speechEngine.SetSelected(engineLabel(w.config.SpeechSettings().Engine))
 
-	// Options live in a dialog so the model list, the point of this screen, keeps full height.
+	// Options live in a dialog so the model list keeps full height.
 	options := widget.NewButtonWithIcon("", theme.SettingsIcon(), w.showSpeechOptions)
 	options.Importance = widget.LowImportance
 
@@ -121,8 +119,6 @@ func engineLabel(engine config.SpeechEngine) string {
 	}
 }
 
-// Hidden until macOS reports the microphone refused; the card on launch
-// covers the same case for permissions the hotkeys need.
 func microphoneRefusedNotice() *fyne.Container {
 	text := widget.NewLabel("Dictation was refused the microphone. Allow Encre, then hold the shortcut again.")
 	text.Wrapping = fyne.TextWrapWord
@@ -240,7 +236,7 @@ func (w *MainWindow) remoteSpeechPane() *fyne.Container {
 	))
 }
 
-// applyPreset locks the endpoint for known services, editable only for custom, so a typo can't break a working provider.
+// The endpoint is locked for known services so a typo cannot break a working provider.
 func (w *MainWindow) applyPreset(name string) {
 	preset, ok := stt.PresetByName(name)
 	if !ok {
@@ -262,9 +258,8 @@ func (w *MainWindow) applyPreset(name string) {
 	w.refreshLanguages(config.SpeechRemote)
 }
 
-// adoptPresetModel swaps in the new service's default when the box still holds
-// another service's, which would be rejected: Gemini and OpenAI share no model
-// names. A value belonging to no preset was typed by hand, so it is left alone.
+// Another service's model would be rejected, so it is swapped for the preset default;
+// a value belonging to no preset was typed by hand and is left alone.
 func (w *MainWindow) adoptPresetModel(preset stt.RemotePreset) {
 	if len(preset.Models) == 0 {
 		return
@@ -281,7 +276,7 @@ func (w *MainWindow) adoptPresetModel(preset stt.RemotePreset) {
 	w.speechRemoteModel.SetText(preset.Models[0])
 }
 
-// buildSpeechOptions runs once so Save reads the same widgets whether or not the dialog was ever opened.
+// Built once so Save reads the same widgets whether or not the dialog was opened.
 func (w *MainWindow) buildSpeechOptions() {
 	speech := w.config.SpeechSettings()
 
@@ -298,14 +293,13 @@ func (w *MainWindow) buildSpeechOptions() {
 	w.speechCleanUp = w.dirtyCheck("Tidy the transcript with AI", speech.CleanUp)
 }
 
-// key tells a real change of set from a redraw; resolve is only needed on a change.
+// key tells a change of set from a redraw; resolve only runs on a change.
 type languageSet struct {
 	key     string
 	resolve func() (codes []string, detects bool)
 }
 
-// currentLanguageSet reads the engine, and for a hosted service the provider and
-// model too, since whisper-1 and gpt-transcribe do not accept the same codes.
+// The model is part of a hosted set: whisper-1 and gpt-transcribe accept different codes.
 func (w *MainWindow) currentLanguageSet(engine config.SpeechEngine) languageSet {
 	switch engine {
 	case config.SpeechWitAI:
@@ -335,8 +329,7 @@ func (w *MainWindow) currentLanguageSet(engine config.SpeechEngine) languageSet 
 	}
 }
 
-// The settled language is draft state until Save; the config a dictation reads
-// must not change because the dropdown was looked at.
+// The settled language is draft state until Save; looking at the dropdown must not change the config.
 func (w *MainWindow) refreshLanguages(engine config.SpeechEngine) {
 	set := w.currentLanguageSet(engine)
 
@@ -369,10 +362,8 @@ func (w *MainWindow) refreshLanguages(engine config.SpeechEngine) {
 	}
 }
 
-// refreshRemoteLanguages offers what the chosen service and model accept, which
-// is neither one shared list nor the local model's: whisper-1 takes ISO 639-1,
-// the gpt- models take more, and gemini-3.5-transcribe takes BCP-47 locales.
-// A model we know nothing about gets a typable box rather than a false list.
+// Each hosted model accepts its own codes (whisper-1 ISO 639-1, Gemini BCP-47 locales);
+// an unknown model gets a typable box rather than a false list.
 func (w *MainWindow) refreshRemoteLanguages() {
 	if w.speechLanguage == nil {
 		return
@@ -411,9 +402,7 @@ func (w *MainWindow) refreshRemoteLanguages() {
 	w.speechLanguage.SetSelected(selected)
 }
 
-// showFreeformLanguages hands over to the typable box, suggesting Whisper's
-// codes: a custom endpoint is a Whisper server often enough to be worth
-// offering, and nothing stops the user typing something else.
+// Suggests Whisper's codes: a custom endpoint is usually a Whisper server, and anything else can be typed.
 func (w *MainWindow) showFreeformLanguages() {
 	suggestions := stt.SuggestedLanguages()
 
@@ -446,8 +435,6 @@ func (w *MainWindow) showFixedLanguages() {
 	w.speechLanguageBox.Refresh()
 }
 
-// refreshSpeechLanguages lists what the selected model speaks, offering
-// auto-detect only where the model can actually detect.
 func (w *MainWindow) refreshSpeechLanguages() {
 	if w.speechLanguage == nil {
 		return
@@ -474,8 +461,6 @@ func (w *MainWindow) refreshSpeechLanguages() {
 	w.speechLanguage.SetSelected(speechLanguageLabel(model, w.speechLanguageDraft))
 }
 
-// refreshWitAILanguages lists the languages with an embedded key; there is no
-// auto-detect option, since a Wit app is created for exactly one language.
 func (w *MainWindow) refreshWitAILanguages() {
 	if w.speechLanguage == nil {
 		return
@@ -502,8 +487,7 @@ func (w *MainWindow) refreshWitAILanguages() {
 	w.speechLanguage.SetSelected(selected)
 }
 
-// Alphabetical order would land on Arabic, so try the system language and then
-// English before settling for the first entry.
+// Alphabetical order would land on Arabic, so the system language and English come first.
 func witaiFallbackLanguage(labels []string, codeByName map[string]string) string {
 	for _, code := range []string{stt.SystemLanguage(), "en"} {
 		name := stt.LanguageName(code)
@@ -517,8 +501,6 @@ func witaiFallbackLanguage(labels []string, codeByName map[string]string) string
 	return ""
 }
 
-// witaiSpeechPane needs nothing beyond the shared header language select: Wit.ai
-// is free and takes no key, model or URL.
 func (w *MainWindow) witaiSpeechPane() *fyne.Container {
 	note := widget.NewLabel("Audio is sent to Wit.ai. Nothing is downloaded.")
 	note.Wrapping = fyne.TextWrapWord
@@ -527,7 +509,6 @@ func (w *MainWindow) witaiSpeechPane() *fyne.Container {
 	return container.NewPadded(note)
 }
 
-// speechLanguageLabel shows what will be used, never a blank box.
 func speechLanguageLabel(model stt.Model, chosen string) string {
 	code := model.TranscribeLanguage(chosen, stt.SystemLanguage())
 	if model.LanguageDetect && chosen == "" {
@@ -584,8 +565,7 @@ func (w *MainWindow) applySpeechSettings() {
 	w.config.SetSpeechSettings(current)
 }
 
-// decryptedRemoteAPIKey reveals the key for editing; a key saved before encryption
-// existed fails to decrypt and is shown as-is rather than as garbage.
+// An unencrypted stored key fails to decrypt and is shown as-is rather than as garbage.
 func decryptedRemoteAPIKey(stored string) string {
 	if stored == "" {
 		return ""
@@ -597,8 +577,7 @@ func decryptedRemoteAPIKey(stored string) string {
 	return plain
 }
 
-// encryptedRemoteAPIKey is what gets written to config.json; a failure to encrypt
-// (practically never) still saves the key in plain form rather than losing it.
+// A failure to encrypt still saves the key in plain form rather than losing it.
 func encryptedRemoteAPIKey(plain string) string {
 	if plain == "" {
 		return ""

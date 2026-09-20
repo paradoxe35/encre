@@ -6,8 +6,7 @@ use super::audio::SAMPLE_RATE;
 const VAD_FRAME: usize = 256;
 const VAD_THRESHOLD: f32 = 0.5;
 
-/// Speech is reported for this long after the detector stops seeing it, so a
-/// trailing word is not clipped mid-syllable.
+/// Speech stays open this long after the detector drops it, so a trailing word is not clipped.
 const HANGOVER_FRAMES: usize = 28; // ~450 ms
 /// Frames kept before onset, recovering the attack the detector needed to fire.
 const PREFILL_FRAMES: usize = 28;
@@ -96,8 +95,6 @@ impl Pipeline {
         }
 
         if self.onset >= ONSET_FRAMES {
-            // Onset confirmed: replay the buffered attack, then hold open for
-            // the hangover window so the tail isn't cut.
             self.speech.extend(self.prefill.drain(..).flatten());
             self.hangover = HANGOVER_FRAMES;
         }
@@ -114,12 +111,10 @@ impl Pipeline {
         self.prefill.push_back(frame);
     }
 
-    /// Speech gathered so far, leaving the pipeline free to continue.
     pub fn take(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.speech)
     }
 
-    /// Flushes the resampler's delay line and returns the recording.
     pub fn finish(&mut self) -> Vec<f32> {
         if !self.pending.is_empty() {
             let tail: Vec<f32> = std::mem::take(&mut self.pending);

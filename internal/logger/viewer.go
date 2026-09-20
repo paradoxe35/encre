@@ -10,7 +10,6 @@ import (
 	"strings"
 )
 
-// GetLatestLogFile finds the most recent log file in the logs directory
 func GetLatestLogFile() (string, error) {
 	logDir := GetLogDirectory()
 
@@ -35,7 +34,6 @@ func GetLatestLogFile() (string, error) {
 	return filepath.Join(logDir, logFiles[0]), nil
 }
 
-// OpenLogFile opens the latest log file in the system's default text editor
 func OpenLogFile() error {
 	logFile, err := GetLatestLogFile()
 	if err != nil {
@@ -80,7 +78,6 @@ func OpenLogFile() error {
 	return nil
 }
 
-// OpenLogDirectory opens the logs directory in the system's file manager
 func OpenLogDirectory() error {
 	logDir := GetLogDirectory()
 

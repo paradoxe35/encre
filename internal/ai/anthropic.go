@@ -10,7 +10,6 @@ import (
 	"strings"
 )
 
-// AnthropicProvider implements the Provider interface for Claude
 type AnthropicProvider struct {
 	APIKey      string
 	BaseURL     string

@@ -9,7 +9,6 @@ import (
 	"github.com/paradoxe35/encre/internal/stt"
 )
 
-// Dictation turns push-to-talk edges into typed text.
 type Dictation struct {
 	service   *stt.Service
 	processor *Processor
@@ -21,8 +20,7 @@ type Dictation struct {
 	order   sequence
 }
 
-// sequence types takes in the order they were spoken, however long each one
-// takes to transcribe.
+// sequence types takes in spoken order, however long each transcription takes.
 type sequence struct {
 	mu   sync.Mutex
 	last chan struct{}
@@ -52,8 +50,7 @@ func NewDictation(processor *Processor, current func() *config.Config, report fu
 
 func (d *Dictation) Service() *stt.Service { return d.service }
 
-// Prepare loads the model without opening the microphone. Audio is opened only
-// when the dictate shortcut starts recording.
+// Loads the model without opening the microphone; audio opens only when recording starts.
 func (d *Dictation) Prepare() {
 	cfg := d.config()
 	if !cfg.SpeechReady() {
@@ -67,7 +64,6 @@ func (d *Dictation) Prepare() {
 	}()
 }
 
-// Toggle is the hotkey edge: down starts, up stops and types.
 func (d *Dictation) Toggle(down bool) {
 	if down {
 		d.start()

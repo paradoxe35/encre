@@ -48,8 +48,7 @@ type ProviderSettings struct {
 	Temperature  float64 `json:"temperature,omitempty"`
 	IsCustom     bool    `json:"is_custom,omitempty"`
 	ProviderType string  `json:"provider_type,omitempty"`
-	// NoAPIKey suits a model running on this machine. Absent means a key is required, so every
-	// configuration written before this existed keeps its meaning.
+	// NoAPIKey suits a model running on this machine. Absent means a key is required.
 	NoAPIKey bool `json:"no_api_key,omitempty"`
 	// LowReasoning asks a reasoning model to think less. Off by default: a model that does not
 	// reason rejects the parameter, and the retry that recovers from it costs a round trip.
@@ -133,7 +132,6 @@ func defaultAppearance() AppearanceConfig {
 	}
 }
 
-// Load reads the configuration from disk, writing defaults on first run.
 func Load() (*Config, error) {
 	configMutex.Lock()
 	defer configMutex.Unlock()
@@ -194,7 +192,6 @@ func (c *Config) write() error {
 	return nil
 }
 
-// Save persists the config, publishes it as current, and notifies listeners.
 func (c *Config) Save() error {
 	if err := c.write(); err != nil {
 		return err
@@ -214,8 +211,7 @@ func Get() *Config {
 	return currentConfig
 }
 
-// Update mutates the live configuration and persists it. Save takes the same
-// package mutex, so the lock is released before calling it.
+// Save takes the same package mutex, so the lock is released before calling it.
 func Update(fn func(*Config)) error {
 	configMutex.RLock()
 	cfg := currentConfig
@@ -392,9 +388,6 @@ func (c *Config) GetAllProviderNames() []string {
 	return names
 }
 
-// GetConfiguredProviderNames returns providers usable by an AI-backed operation: built-ins need a
-// model and API key, custom providers may skip the key when NoAPIKey is set but still need a model
-// and endpoint.
 func (c *Config) GetConfiguredProviderNames() []string {
 	c.mu.RLock()
 	providers := make(map[string]ProviderSettings, len(c.AIProvider.Providers))
@@ -518,8 +511,7 @@ func osLocale() string {
 	return strings.ReplaceAll(tag, "_", "-")
 }
 
-// applyDefaults fills anything a hand-edited config left out, so a partial file
-// still starts rather than booting with zero-valued hotkeys and limits.
+// A hand-edited partial config still starts rather than booting with zero-valued hotkeys and limits.
 func (c *Config) applyDefaults() {
 	if c.Actions == nil {
 		c.Actions = DefaultActions()

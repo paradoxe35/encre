@@ -44,7 +44,6 @@ pub fn set_last_error(err: String) {
     *error_store.lock() = Some(err);
 }
 
-/// Clears and returns the last error.
 pub fn take_last_error() -> Option<String> {
     let error_store = LAST_ERROR.get_or_init(|| Mutex::new(None));
     error_store.lock().take()

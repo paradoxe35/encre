@@ -19,8 +19,6 @@ import (
 	"github.com/paradoxe35/encre/internal/stt"
 )
 
-// Processor runs the text actions: capture a selection, send it to a provider,
-// write the result back where it came from.
 type Processor struct {
 	mu               sync.Mutex
 	config           *config.Config
@@ -87,7 +85,6 @@ func (p *Processor) initializeProviders() error {
 	return nil
 }
 
-// buildProvider is the single place a provider is constructed from settings.
 func (p *Processor) buildProvider(cfg *config.Config, name string) (ai.Provider, error) {
 	apiKey, err := cfg.GetAPIKey(name)
 	if err != nil {
@@ -137,8 +134,7 @@ func (p *Processor) providerNamed(name string) (ai.Provider, error) {
 	return provider, nil
 }
 
-// begin takes the one-at-a-time guard. Two overlapping runs would fight over the clipboard, a
-// single global resource each of them saves and restores.
+// Two overlapping runs would fight over the clipboard, which each saves and restores.
 func (p *Processor) begin() (func(), error) {
 	p.mu.Lock()
 	if p.processing {
@@ -167,7 +163,6 @@ func outcomeError(outcome input.CaptureOutcome) error {
 	}
 }
 
-// Run captures text for the action, transforms it, and writes it back.
 func (p *Processor) Run(kind config.ActionKind) error {
 	release, err := p.begin()
 	if err != nil {
@@ -219,8 +214,7 @@ func (p *Processor) History() *history.Store {
 	return p.history
 }
 
-// RecordSpeech stores a finished dictation. Raw and final differ when the
-// AI cleanup pass ran; showing both is what makes the history useful.
+// Raw and final differ when the AI cleanup ran; showing both is what makes the history useful.
 func (p *Processor) RecordSpeech(raw, final string) {
 	model := ""
 	if m, ok := stt.FindModel(p.currentConfig().Speech.ModelID); ok {
@@ -236,8 +230,7 @@ func (p *Processor) RecordSpeech(raw, final string) {
 	})
 }
 
-// recordHistory stores a finished action. It never blocks the caller: history
-// is a convenience, not a dependency.
+// Never blocks the caller: history is a convenience, not a dependency.
 func (p *Processor) recordHistory(kind config.ActionKind, original, result, model string) {
 	cfg := p.currentConfig()
 
@@ -353,8 +346,6 @@ func (p *Processor) Close() {
 	}
 }
 
-// parseProviderMention strips a leading "@provider" and reports which provider
-// it named, so a selection can opt into a provider for one run.
 func (p *Processor) parseProviderMention(cfg *config.Config, text string) (provider, remainder string, ok bool) {
 	if !cfg.ProviderMentionsEnabled() {
 		return "", text, false
@@ -374,7 +365,7 @@ func (p *Processor) parseProviderMention(cfg *config.Config, text string) (provi
 	return name, strings.TrimSpace(rest), true
 }
 
-// findProvider matches case-insensitively and returns the stored spelling.
+// Matches case-insensitively and returns the stored spelling.
 func findProvider(cfg *config.Config, name string) (string, bool) {
 	for stored := range cfg.AIProvider.Providers {
 		if strings.EqualFold(stored, name) {
@@ -384,8 +375,8 @@ func findProvider(cfg *config.Config, name string) (string, bool) {
 	return "", false
 }
 
-// checkCharacterLimit counts in characters, not bytes: an accented letter is two bytes in UTF-8,
-// so len() halved the limit for exactly the text this app exists to correct.
+// Counts characters, not bytes: an accented letter is two bytes in UTF-8, and len() would
+// halve the limit for exactly the text this app corrects.
 func checkCharacterLimit(text string, limit int) error {
 	if characters := utf8.RuneCountInString(text); characters > limit {
 		return fmt.Errorf("selection is %d characters, over the %d limit", characters, limit)
@@ -401,8 +392,7 @@ func trailingWhitespace(text string) string {
 	return text[len(strings.TrimRightFunc(text, unicode.IsSpace)):]
 }
 
-// InsertText types text at the cursor without replacing a selection, for
-// dictation. SaveCurrent first so the user's clipboard survives.
+// SaveCurrent first so the user's clipboard survives.
 func (p *Processor) InsertText(text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
@@ -420,9 +410,8 @@ func (p *Processor) InsertText(text string) error {
 	return p.clipboardManager.ReplaceSelectedText(text)
 }
 
-// CleanTranscript tidies dictated text with the provider selected in the AI
-// tab, using the dedicated dictation prompt rather than an editable action
-// prompt, so unrelated instructions cannot change the task.
+// Uses the dedicated dictation prompt rather than an editable action prompt, so unrelated
+// instructions cannot change the task.
 func (p *Processor) CleanTranscript(text string) (string, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {

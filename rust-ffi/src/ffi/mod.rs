@@ -7,7 +7,7 @@ pub mod ffi_types;
 pub use ffi_types::*;
 use std::os::raw::c_char;
 
-/// Returns the last error as a C string (free with `encre_free_string`), or NULL if none.
+/// Null when there is no error. Free with `encre_free_string`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_get_last_error() -> *const c_char {
     match take_last_error() {

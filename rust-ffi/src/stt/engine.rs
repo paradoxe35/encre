@@ -5,14 +5,8 @@ use transcribe_cpp::{RunOptions, StreamOptions};
 
 use super::take::{Live, Recognizer};
 
-/// Holds the loaded model between calls. Loading costs seconds; recording costs
-/// milliseconds. Keeping the session resident is the largest win available to
-/// dictation latency.
-///
-/// The engine supports one streaming dictation at a time: [`Engine::stream_begin`]
-/// claims the model's compute lease, [`Engine::stream_feed`] delivers live audio,
-/// and [`Engine::stream_finalize`] ends input. Models without streaming support
-/// reject `stream_begin` and the host falls back to [`Engine::transcribe`].
+/// Keeps the session resident between takes: loading costs seconds, a take costs
+/// milliseconds.
 pub struct Engine {
     loaded: Option<Loaded>,
     /// Why the last load failed, reported by the transcription that needed it.
@@ -40,8 +34,7 @@ impl Engine {
         self.loaded.as_ref().map(|l| l.path.as_path())
     }
 
-    /// Idempotent for the resident model. The old model is freed before the new
-    /// one is read, so two are never in memory at once.
+    /// The resident model is freed before the new one is read, so two are never in memory at once.
     pub fn load(&mut self, path: &Path) -> Result<()> {
         if self.loaded.as_ref().is_some_and(|l| l.path == path) {
             return Ok(());
@@ -95,17 +88,13 @@ impl Engine {
             .map_err(|e| anyhow!("transcription failed: {e}"))
     }
 
-    /// Reports whether the resident model can stream. Models advertise this in
-    /// their GGUF metadata; it is not a build-time property.
+    /// A per-model property read from GGUF metadata, not a build-time one.
     pub fn supports_streaming(&self) -> bool {
         self.loaded
             .as_ref()
             .is_some_and(|l| l.session.model().capabilities().supports_streaming)
     }
 
-    /// Begins a live stream. The returned `Stream` borrows the session, so it
-    /// must be fed and finalized by the same owner with no other `run` call
-    /// in between; the recorder thread guarantees that.
     pub fn stream_begin(&mut self, language: Option<&str>) -> Result<transcribe_cpp::Stream<'_>> {
         let unavailable = self.unavailable();
         let loaded = self.loaded.as_mut().ok_or(unavailable)?;

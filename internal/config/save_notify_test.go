@@ -7,7 +7,6 @@ import (
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
-// resetListeners clears the package listeners for one test and puts them back.
 func resetListeners(t *testing.T) {
 	t.Helper()
 
@@ -23,8 +22,8 @@ func resetListeners(t *testing.T) {
 	})
 }
 
-// SetAPIKey used to save, publishing a config the rest of saveSettings had not
-// been written into: a hotkey enabled in the same save went unregistered.
+// SetAPIKey must not publish: the rest of saveSettings is not written yet, and a hotkey
+// enabled in the same save would go unregistered.
 func TestSetAPIKeyDoesNotPublish(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	utils.EnsureAppHomeDir()

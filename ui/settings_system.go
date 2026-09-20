@@ -17,7 +17,7 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	themeLabel := widget.NewLabel("Theme")
 	themeLabel.TextStyle.Bold = true
 
-	// Theme is applied in saveSettings, like every other control here.
+	// Applied in saveSettings, like every other control here.
 	themeSelect := w.dirtySelect(themeLabels(), func(label string) {
 		w.themeBinding.Set(themeValueFor(label))
 	})
@@ -28,7 +28,7 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	themeDesc := widget.NewLabel("Auto follows the system theme.")
 	themeDesc.Wrapping = fyne.TextWrapWord
 
-	// Bind installs its own OnChanged, so a callback on the check would get overwritten; dirty tracking hooks the binding instead.
+	// Bind overwrites OnChanged, so dirty tracking hooks the binding instead.
 	w.startMinimizedCheck = widget.NewCheck("Start minimized to system tray", nil)
 	w.startMinimizedCheck.Bind(w.startMinimizedBinding)
 
@@ -111,7 +111,6 @@ func (w *MainWindow) restartApplication() {
 	}()
 }
 
-// The config stores lower-case theme names; the dropdown shows them capitalised.
 var themes = []struct{ value, label string }{
 	{"auto", "Auto"},
 	{"light", "Light"},

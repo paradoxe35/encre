@@ -55,8 +55,8 @@ type geminiGenerConfig struct {
 	ThinkingConfig *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
-// Gemini 3 renamed the control from a token budget to a level, and rejects a
-// request carrying both. Exactly one field is ever set.
+// Gemini 3 takes a level, older models a token budget, and a request carrying both is
+// rejected. Exactly one field is ever set.
 type geminiThinkingConfig struct {
 	ThinkingLevel  string `json:"thinkingLevel,omitempty"`
 	ThinkingBudget *int   `json:"thinkingBudget,omitempty"`
@@ -81,10 +81,8 @@ type geminiResponsePart struct {
 	Thought bool `json:"thought"`
 }
 
-// thinkingConfigFor asks for the least thinking the model allows. Gemini 3 takes
-// a level, where "minimal" is the floor - it cannot be switched off - and older
-// models take a zero budget. Sending the wrong one is not rejected, merely
-// ignored, so the choice has to be made here rather than left to a retry.
+// The least thinking the model allows: Gemini 3 takes a level, where "minimal" is the floor;
+// older models take a zero budget. The wrong one is ignored, not rejected, so a retry cannot fix it.
 func thinkingConfigFor(model string) *geminiThinkingConfig {
 	switch major := geminiMajorVersion(model); {
 	case major >= 3:
@@ -99,8 +97,7 @@ func thinkingConfigFor(model string) *geminiThinkingConfig {
 	}
 }
 
-// geminiMajorVersion reads the 3 out of gemini-3.8-flash and the 2 out of
-// gemini-2.5-flash; 0 when the name does not follow the pattern.
+// 3 for gemini-3.8-flash, 2 for gemini-2.5-flash, 0 when the name does not follow the pattern.
 func geminiMajorVersion(model string) int {
 	rest, found := strings.CutPrefix(strings.ToLower(strings.TrimSpace(model)), "gemini-")
 	if !found {
@@ -122,9 +119,8 @@ func geminiMajorVersion(model string) int {
 	return major
 }
 
-// geminiTranscribe asks a Gemini model to transcribe wav. Gemini exposes no
-// Whisper-style endpoint, so this goes through generateContent, which Google
-// still recommends over the newer interactions API for production use.
+// Gemini exposes no Whisper-style endpoint, so this goes through generateContent, which
+// Google recommends over the interactions API for production use.
 func geminiTranscribe(ctx context.Context, cfg config.SpeechConfig, wav []byte) (string, error) {
 	// A speech model has its own endpoint; the chat models below are the fallback
 	// for anyone who points this at a flash model by hand.

@@ -23,7 +23,7 @@ var historyFilters = []struct {
 	{"Speech", history.KindSpeech},
 }
 
-// historyRow caches an entry's rendered row lines so the list update path never re-formats.
+// Row text is formatted once here so the list update path never re-formats.
 type historyRow struct {
 	entry  history.Entry
 	title  string
@@ -113,7 +113,6 @@ func filterKind(label string) history.Kind {
 	return ""
 }
 
-// historyRows is the list's model: loaded once per filter change.
 type historyRows struct {
 	store *history.Store
 	mu    sync.Mutex
@@ -168,7 +167,6 @@ func historyTitle(entry history.Entry) string {
 	return fmt.Sprintf("%s · %s", label, entry.At.Format("2 Jan 15:04"))
 }
 
-// historyDetail keeps the row to one line: the result sent to the target app. The dialog shows the full original.
 func historyDetail(entry history.Entry) string {
 	text := entry.Result
 	if text == "" {

@@ -33,8 +33,6 @@ func (w *MainWindow) showStatusDetail() {
 	showTextDialog(w.Window, "Status", text, fyne.NewSize(460, 280))
 }
 
-// statusIcon is an info icon that becomes clickable, with a pointer cursor,
-// when there is more to read than the bar can show.
 type statusIcon struct {
 	widget.BaseWidget
 	icon     *widget.Icon

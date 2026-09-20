@@ -20,7 +20,7 @@ import (
 
 const (
 	partialSuffix = ".partial"
-	// A download delivering nothing for this long is treated as dead; a stalled TCP connection can hang without erroring.
+	// A stalled TCP connection can hang without erroring; no data for this long counts as dead.
 	stallTimeout  = 60 * time.Second
 	progressEvery = 200 * time.Millisecond
 )
@@ -61,7 +61,7 @@ type Store struct {
 func NewStore() *Store {
 	return &Store{
 		dir: utils.AppHomeDir("models"),
-		// No overall timeout: a large model on a slow line isn't an error; the stall watchdog handles dead transfers.
+		// No overall timeout: a large model on a slow line is not an error; the stall watchdog catches dead transfers.
 		client:   &http.Client{},
 		urlFor:   Model.DownloadURL,
 		inflight: make(map[string]context.CancelFunc),
@@ -103,8 +103,6 @@ func (s *Store) Delete(model Model) error {
 	return nil
 }
 
-// Resumes an interrupted attempt and verifies the checksum before accepting
-// the file. report may be nil.
 func (s *Store) Download(ctx context.Context, model Model, report func(Progress)) error {
 	if s.Downloaded(model) {
 		return nil

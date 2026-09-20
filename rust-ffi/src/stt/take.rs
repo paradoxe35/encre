@@ -10,12 +10,10 @@ use parking_lot::{Mutex, MutexGuard};
 use super::audio::{Command, SAMPLE_RATE, Stopped};
 use super::pipeline::Pipeline;
 
-/// How often the take drains the microphone and, while waiting for a model,
-/// looks at the engine.
 const DRAIN_INTERVAL: Duration = Duration::from_millis(20);
 
-/// Audio captured before a switch to streaming is fed this much at a time,
-/// draining the microphone in between so its queue stays bounded.
+/// Backlog is fed a slice at a time, draining the microphone in between so its
+/// queue stays bounded.
 const BACKLOG_SLICE: usize = SAMPLE_RATE as usize;
 
 /// Audio arriving from the microphone, so a take can run without a device in tests.
@@ -24,7 +22,6 @@ pub trait Source {
     fn take(&self) -> Vec<f32>;
 }
 
-/// A live recognition session on the engine.
 pub trait Live {
     fn feed(&mut self, samples: &[f32]) -> Result<()>;
     /// `Ok(None)` is a successful take without speech, not an error.
@@ -45,23 +42,17 @@ pub trait Recognizer {
 /// The model a take should stream with as soon as the engine is free and holds it.
 pub struct Wanted<'a, E> {
     pub engine: &'a Arc<Mutex<E>>,
-    /// Commands still queued for the engine thread. A take never claims the
-    /// engine ahead of them, or an earlier take's transcription would wait
-    /// for this one to end.
+    /// A take never claims the engine ahead of queued commands, or an earlier
+    /// take's transcription would wait for this one to end.
     pub queued: &'a AtomicUsize,
     pub model: &'a Path,
 }
 
-/// One recording session, from Start to Stop or Cancel.
-///
-/// A take begins by capturing on its own. If a model is wanted, every tick it
-/// looks at the engine, and the moment the engine is idle and holds that model
-/// it opens a stream, feeds what was captured so far, and streams the rest.
-/// Everything captured is also kept, so a stream that breaks, or a model that
-/// never arrives, still hands the host the audio for a batch pass.
+/// Captures until the engine is idle with the wanted model, then streams. All audio
+/// is kept, so a broken stream or a model that never arrives still gets a batch pass.
 pub struct Take<S: Source> {
-    /// `Err` when the microphone could not be opened; the take then reports that
-    /// at stop instead of handing back an empty transcript.
+    /// `Err` when the microphone could not be opened; reported at stop instead of
+    /// an empty transcript.
     source: Result<S, String>,
     pipeline: Pipeline,
     spoken: Vec<f32>,
@@ -69,7 +60,6 @@ pub struct Take<S: Source> {
 }
 
 enum Captured<'a, E> {
-    /// The take ended; `false` only on shutdown.
     Ended(bool),
     Ready(MutexGuard<'a, E>),
 }
@@ -91,7 +81,7 @@ impl<S: Source> Take<S> {
         }
     }
 
-    /// Runs the session and returns when it ends, `false` only on shutdown.
+    /// `false` only on shutdown.
     pub fn run<E: Recognizer>(
         mut self,
         commands: &Receiver<Command>,
@@ -199,8 +189,8 @@ impl<S: Source> Take<S> {
         }
     }
 
-    /// Ends the stream. A partial transcript is worse than none, since the host
-    /// cannot tell what is missing, so any failure hands back the audio instead.
+    /// Any failure hands back the audio: a partial transcript is worse than none,
+    /// since the host cannot tell what is missing.
     fn finish<L: Live>(&mut self, mut live: Streaming<L>) -> Stopped {
         if live.degraded || self.source.is_err() {
             live.abort();
@@ -220,7 +210,6 @@ impl<S: Source> Take<S> {
         }
     }
 
-    /// Pulls what the microphone has queued and returns the speech in it.
     fn pull(&mut self) -> Vec<f32> {
         if let Ok(source) = &self.source {
             self.pipeline.feed(&source.take());
@@ -230,7 +219,6 @@ impl<S: Source> Take<S> {
         speech
     }
 
-    /// Pulls the rest, flushing the resampler, and returns the final speech.
     fn drain(&mut self) -> Vec<f32> {
         if let Ok(source) = &self.source {
             self.pipeline.feed(&source.take());
@@ -253,8 +241,7 @@ impl<S: Source> Take<S> {
     }
 }
 
-/// A live stream that remembers the first failure: after it, nothing more is
-/// fed and the take falls back to the audio it kept.
+/// After the first failure nothing more is fed; the take falls back to the audio it kept.
 struct Streaming<L: Live> {
     inner: L,
     degraded: bool,
@@ -307,9 +294,7 @@ mod tests {
         aborted: bool,
     }
 
-    /// A streaming take holds the engine lock, so observations go through a
-    /// lock of their own. The resident path is owned here too, so `resident`
-    /// can hand out a plain borrow.
+    /// A streaming take holds the engine lock, so observations go through a lock of their own.
     struct FakeEngine {
         resident: Option<PathBuf>,
         state: Arc<Mutex<FakeState>>,
@@ -477,7 +462,6 @@ mod tests {
         assert_eq!(stopped.language.as_deref(), Some("fr"));
     }
 
-    /// A microphone that never opened must not look like a take with nothing said in it.
     #[test]
     fn a_take_without_a_microphone_reports_why() {
         let (commands, rx) = channel();

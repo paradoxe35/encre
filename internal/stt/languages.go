@@ -318,13 +318,9 @@ var languageSets = map[string][]NamedLanguage{
 	"gemini-transcribe": geminiTranscribeLanguages,
 }
 
-// LanguageSetName identifies which set a service and model answer to. Empty
-// means none is known: a custom endpoint runs whatever its owner installed, and
-// a Gemini chat model is told the language in prose rather than a code.
-//
-// Callers use the name to tell a real change of set from a model being typed
-// one letter at a time, so this is the single dispatch and LanguagesFor reads
-// through it.
+// Empty means no set is known: a custom endpoint runs whatever its owner installed, and a
+// Gemini chat model is told the language in prose. Callers compare names to tell a real change
+// of set from a model being typed one letter at a time, so LanguagesFor reads through this.
 func LanguageSetName(presetID, model string) string {
 	model = strings.ToLower(strings.TrimSpace(model))
 
@@ -345,28 +341,24 @@ func LanguageSetName(presetID, model string) string {
 	return ""
 }
 
-// LanguagesFor is what a service accepts for a model, nil when nothing is known
-// about it. Callers offer free text in that case rather than claiming a list
-// they cannot back.
+// nil when nothing is known; callers then offer free text rather than a list they cannot back.
 func LanguagesFor(presetID, model string) []NamedLanguage {
 	return languageSets[LanguageSetName(presetID, model)]
 }
 
-// IsGeminiTranscribeModel separates the purpose-built speech models, which have
-// a language field, from the chat models, which have to be asked in prose.
+// Speech models have a language field; chat models have to be asked in prose.
 func IsGeminiTranscribeModel(model string) bool {
 	return strings.Contains(strings.ToLower(model), "transcribe")
 }
 
-// SuggestedLanguages backs the free-text picker. A custom OpenAI-compatible
-// server is a Whisper server often enough for its list to be the better guess
-// than an empty dropdown, and nothing stops the user typing past it.
+// A custom OpenAI-compatible server is a Whisper server often enough for its list to beat an
+// empty dropdown, and the user can still type past it.
 func SuggestedLanguages() []NamedLanguage {
 	return whisperLanguages
 }
 
-// BaseLanguageCode reduces a code to its language subtag, so a choice survives
-// a change of service: Gemini's fr-FR and Groq's fr are the same request.
+// The language subtag is what survives a change of service: Gemini's fr-FR and Groq's fr
+// are the same request.
 func BaseLanguageCode(code string) string {
 	code = strings.ToLower(strings.TrimSpace(code))
 	if base, _, found := strings.Cut(code, "-"); found {
@@ -375,7 +367,6 @@ func BaseLanguageCode(code string) string {
 	return code
 }
 
-// Codes pulls the wire codes out of a set.
 func Codes(languages []NamedLanguage) []string {
 	codes := make([]string, len(languages))
 	for i, language := range languages {
@@ -384,15 +375,12 @@ func Codes(languages []NamedLanguage) []string {
 	return codes
 }
 
-// MatchLanguage finds the entry for a code in a set, falling back to whichever
-// entry shares its base subtag. Returns "" when the set cannot serve it at all.
+// Falls back to the entry sharing the base subtag; "" when the set cannot serve it.
 func MatchLanguage(languages []NamedLanguage, code string) string {
 	return MatchCode(Codes(languages), code)
 }
 
-// MatchCode is MatchLanguage over bare codes. The base subtag is what carries a
-// choice between engines that spell it differently: Gemini's fr-FR, Groq's fr
-// and a local model's fr are one language.
+// MatchLanguage over bare codes: Gemini's fr-FR, Groq's fr and a local model's fr are one language.
 func MatchCode(codes []string, want string) string {
 	if want == "" {
 		return ""
@@ -412,13 +400,9 @@ func MatchCode(codes []string, want string) string {
 	return ""
 }
 
-// SwitchLanguage settles the language when moving from one engine to another.
-//
-// An engine that works the language out for itself is left to: that is the best
-// answer whenever it is available, and the user can still override it. One that
-// cannot is never left blank, because it would then assume English silently -
-// so it keeps the previous choice if it can serve it, else the system language,
-// else English, else whatever it lists first.
+// Settles the language when moving between engines. An engine that detects is left to; one
+// that cannot is never left blank (it would silently assume English), so it keeps the previous
+// choice if servable, else the system language, else English, else the first listed.
 func SwitchLanguage(codes []string, detects bool, previous, system string) string {
 	if detects {
 		return ""

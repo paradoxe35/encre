@@ -8,8 +8,7 @@ import (
 	"golang.org/x/text/language/display"
 )
 
-// Language pairs an IETF tag with its English name. Name is what prompts use:
-// the model should see a stable label regardless of the user's UI locale.
+// Name is what prompts use: the model sees a stable label regardless of the UI locale.
 type Language struct {
 	Code string
 	Name string
@@ -116,8 +115,6 @@ var byCode = func() map[string]Language {
 
 func All() []Language { return all }
 
-// Find returns the registry entry for a tag, or a synthesised one so an
-// unknown code still renders instead of vanishing.
 func Find(code string) Language {
 	if l, ok := byCode[strings.ToLower(strings.TrimSpace(code))]; ok {
 		return l
@@ -131,8 +128,6 @@ func IsKnown(code string) bool {
 	return ok
 }
 
-// Endonym returns the language's name in its own language, falling back to
-// the English name when the tag is not one x/text can parse.
 func (l Language) Endonym() string {
 	tag, err := language.Parse(l.Code)
 	if err != nil {
@@ -144,7 +139,6 @@ func (l Language) Endonym() string {
 	return l.Name
 }
 
-// Search filters by code, English name or endonym, preferring prefix matches.
 func Search(query string) []Language {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
@@ -164,16 +158,14 @@ func Search(query string) []Language {
 	return append(prefix, contains...)
 }
 
-// Sorted returns the registry ordered by English name, for pickers that want
-// alphabetical rather than the curated popularity order of All.
+// All keeps the curated popularity order; Sorted is for alphabetical pickers.
 func Sorted() []Language {
 	out := append([]Language(nil), all...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-// Defaults seeds a primary/secondary pair from the OS locale. The secondary is whichever of
-// English or French the primary is not, so the pair is never degenerate.
+// The secondary is whichever of English or French the primary is not, so the pair is never degenerate.
 func Defaults(localeTag string) (primary, secondary string) {
 	primary = "en"
 	if IsKnown(localeTag) {

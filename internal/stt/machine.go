@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-// Machine is what can cheaply be learned about the computer, used to rank models by whether they'll keep up.
+// What can cheaply be learned about the computer, to rank models by whether they will keep up.
 type Machine struct {
 	Cores    int
 	MemoryMB int
@@ -53,7 +53,6 @@ func (m Model) Comfortable(host Machine) bool {
 	return m.FitsMemory(host) && m.EstimatedRealtime(host) >= 2
 }
 
-// Fit is how a model is expected to behave on this machine.
 type Fit int
 
 const (
@@ -108,7 +107,6 @@ func totalMemoryMB() int {
 	return sysMemoryMB()
 }
 
-// RankForMachine puts what is already downloaded first, then what this machine can comfortably run, then the rest by accuracy.
 func RankForMachine(models []Model, host Machine, downloaded func(Model) bool) {
 	sort.SliceStable(models, func(i, j int) bool {
 		a, b := models[i], models[j]

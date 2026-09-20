@@ -6,8 +6,8 @@ use std::thread;
 use parking_lot::Mutex;
 use rdev::{Event, EventType, Key};
 
-// Wayland needs rdev's evdev grab, which requires the user to be in the `input` group. X11,
-// macOS and Windows all work through listen() with no special permissions.
+// Wayland needs rdev's evdev grab (user in the `input` group); X11, macOS and Windows work
+// through listen() with no special permissions.
 #[cfg(not(target_os = "linux"))]
 use rdev::listen;
 #[cfg(target_os = "linux")]
@@ -17,7 +17,6 @@ use super::ffi_types::*;
 
 #[cfg(target_os = "linux")]
 fn is_wayland() -> bool {
-    // XDG_SESSION_TYPE is authoritative; WAYLAND_DISPLAY is only a fallback.
     if let Ok(session_type) = std::env::var("XDG_SESSION_TYPE") {
         if session_type.to_lowercase() == "wayland" {
             return true;
@@ -33,8 +32,7 @@ fn is_wayland() -> bool {
 /// Receives the action string the binding was registered with.
 pub type HotkeyCallback = extern "C" fn(*const c_char);
 
-/// Push-to-talk delivers both edges: 1 when the key goes down, 0 when it comes
-/// up. Kept separate from `HotkeyCallback` so existing bindings keep their ABI.
+/// Receives the action string and 1 on key down, 0 on key up.
 pub type PttCallback = extern "C" fn(*const c_char, c_int);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,8 +65,8 @@ impl Modifier {
     }
 }
 
-/// Which modifiers are down. Resolved once when a binding is registered rather than re-derived
-/// from strings on every key press, because this runs inside the system's own event callback.
+/// Resolved once at registration rather than re-derived from strings on every key press, since
+/// matching runs inside the system's own event callback.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct Modifiers {
     ctrl: bool,
@@ -110,10 +108,8 @@ impl Modifiers {
     }
 }
 
-/// The only keys a binding can name, and the names it uses for them.
-///
-/// One table for both directions, so a name the recorder emits but the listener can't match fails
-/// at registration instead of saving as a binding that silently never fires.
+/// One table for both directions, so a name the recorder emits but the listener cannot match
+/// fails at registration instead of saving as a binding that silently never fires.
 const KEYS: &[(Key, &str)] = &[
     (Key::KeyA, "a"),
     (Key::KeyB, "b"),
@@ -228,7 +224,6 @@ fn parse_binding(binding: &str) -> Result<(Modifiers, Option<&'static str>), Str
     Ok((modifiers, key))
 }
 
-/// How a binding reports itself: once on press, or on both edges.
 enum Trigger {
     Tap(HotkeyCallback),
     Hold(PttCallback),
@@ -250,8 +245,6 @@ impl HotkeyBinding {
 }
 
 fn fire(binding: &HotkeyBinding, down: bool) {
-    // Auto-repeat redelivers edges while a key is held; the host logs the
-    // settled state.
     tracing::debug!(
         "Hotkey {} : {} (action: {})",
         if down { "down" } else { "up" },
@@ -272,10 +265,8 @@ fn fire(binding: &HotkeyBinding, down: bool) {
     }
 }
 
-/// What the listener remembers between events.
-///
-/// A modifier-only binding fires on release, not on press, and only if nothing else was pressed
-/// while it was held — firing early would trigger `ctrl+cmd` before `ctrl+cmd+space` completes.
+/// A modifier-only binding fires on release, and only if nothing else happened while it was held;
+/// firing on press would trigger `ctrl+cmd` on the way to `ctrl+cmd+space`.
 #[derive(Default)]
 struct ListenerState {
     held: Modifiers,
@@ -285,8 +276,7 @@ struct ListenerState {
     interrupted: bool,
     /// The non-modifier key currently down, so auto-repeat is not read as a second press.
     held_key: Option<&'static str>,
-    /// The key that started a push-to-talk binding, so the up edge is only sent
-    /// for a hold that actually began.
+    /// The key that started a push-to-talk hold, so the up edge is only sent for a hold that began.
     holding: Option<&'static str>,
     delivery_announced: bool,
     unmatched_announced: Vec<&'static str>,
@@ -327,7 +317,7 @@ impl ListenerState {
         self.held_key = Some(name);
         self.interrupted = true;
 
-        // Once, and without naming the key: proof that key events reach us at all.
+        // Logged once, without naming the key: proof that key events arrive at all.
         if !self.delivery_announced {
             self.delivery_announced = true;
             tracing::info!("The system is delivering key events to Encre");
@@ -355,8 +345,7 @@ impl ListenerState {
             if self.held_key == name {
                 self.held_key = None;
             }
-            // Only the named key ends a hold. Releasing a modifier first is a
-            // slipped finger, not an instruction to stop recording.
+            // Only the named key ends a hold; a modifier released first is a slipped finger.
             if let (Some(name), Some(holding)) = (name, self.holding) {
                 if name == holding {
                     self.holding = None;
@@ -386,8 +375,8 @@ impl ListenerState {
         }
     }
 
-    /// Once per key. A bound key seen with modifiers that matched nothing is what tells a wrong
-    /// binding apart from a listener the system never delivers to.
+    /// Logged once per key; it tells a wrong binding apart from a listener the system never
+    /// delivers to.
     fn note_unmatched(&mut self, name: &'static str, bindings: &[HotkeyBinding]) {
         if self.held.is_empty() || self.unmatched_announced.contains(&name) {
             return;
@@ -411,8 +400,8 @@ pub struct SimpleHotkeyManager {
     bindings: Arc<Mutex<Vec<HotkeyBinding>>>,
     listener_handle: Option<thread::JoinHandle<()>>,
     active: Arc<Mutex<bool>>,
-    /// Why the listener never started. It fails on its own thread, and a macOS .app bundle
-    /// discards stdout, so without this the shortcut just goes dead with no trace.
+    /// The listener fails on its own thread and a macOS .app bundle discards stdout, so the
+    /// error is surfaced here instead of the shortcut going dead without a trace.
     listen_error: Arc<Mutex<Option<String>>>,
 }
 
@@ -440,8 +429,6 @@ impl SimpleHotkeyManager {
         self.push(binding, action, Trigger::Tap(callback))
     }
 
-    /// Registers a binding that reports both edges. A hold needs a real key:
-    /// a modifier-only chord has no press to hold down.
     pub fn register_hold(
         &mut self,
         binding: String,
@@ -478,8 +465,8 @@ impl SimpleHotkeyManager {
         *active = true;
         drop(active);
 
-        // rdev has no way to stop a listener, so `stop` only closes the gate. Resume must reuse
-        // this thread rather than spawn a second one, or every action would fire twice.
+        // rdev cannot stop a listener, so resume reuses this thread; a second one would fire
+        // every action twice.
         if self.listener_handle.is_some() {
             return Ok(());
         }
@@ -505,7 +492,6 @@ impl SimpleHotkeyManager {
                         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             dispatch(&event);
                         }));
-                        // Always pass the event through (don't consume it)
                         Some(event)
                     };
 
@@ -557,8 +543,7 @@ impl SimpleHotkeyManager {
         *active = false;
         drop(active);
 
-        // rdev cannot stop a listener, so this only closes the gate; the thread lives until the
-        // process exits and is reused on resume.
+        // rdev cannot stop a listener; this only closes the gate.
         Ok(())
     }
 }
@@ -631,8 +616,7 @@ pub unsafe extern "C" fn encre_hotkey_register(
     }
 }
 
-/// Registers a push-to-talk binding. The callback receives 1 on key down and 0
-/// on key up, so the host can record only while the shortcut is held.
+/// Push-to-talk: the callback receives 1 on key down and 0 on key up.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_register_hold(
     handle: HotkeyManagerHandle,
@@ -768,7 +752,6 @@ mod tests {
 
     use Tap::{Click, Down, Up};
 
-    /// Feeds `taps` to a listener holding `bindings`, and returns the actions it fired.
     fn fired(bindings: &[(&str, &str)], taps: &[Tap]) -> Vec<String> {
         let _serial = SERIAL.lock();
         FIRED.lock().clear();
@@ -800,7 +783,7 @@ mod tests {
         ("ctrl+option+g", "translate_selection"),
     ];
 
-    /// The macOS default that never fired. Option arrives as `Key::Alt`, the space bar as "space".
+    /// Option arrives as `Key::Alt`, the space bar as "space".
     #[test]
     fn ctrl_option_space_revises_everything() {
         let actions = fired(
@@ -835,8 +818,6 @@ mod tests {
         assert_eq!(actions, vec!["translate_selection"]);
     }
 
-    /// A modifier-only binding cannot fire while the combination is still held: at that moment the
-    /// user may be on their way to a longer shortcut.
     #[test]
     fn ctrl_cmd_fires_when_the_combination_is_released() {
         let held = fired(MAC, &[Down(Key::ControlLeft), Down(Key::MetaLeft)]);
@@ -854,8 +835,8 @@ mod tests {
         assert_eq!(actions, vec!["revise_selection"]);
     }
 
-    /// Regression test: ctrl+cmd+space opens the macOS emoji picker, so the modifier-only binding
-    /// must not fire on the way there.
+    /// ctrl+cmd+space opens the macOS emoji picker; the modifier-only binding must not fire on
+    /// the way there.
     #[test]
     fn ctrl_cmd_space_leaves_the_selection_alone() {
         let actions = fired(
@@ -897,7 +878,6 @@ mod tests {
         }
     }
 
-    /// The chord begins at the first modifier. Whatever the user typed before it is not part of it.
     #[test]
     fn typing_before_the_chord_does_not_cancel_it() {
         let actions = fired(
@@ -915,7 +895,6 @@ mod tests {
         assert_eq!(actions, vec!["revise_selection"]);
     }
 
-    /// And a chord that was cancelled must not poison the next one.
     #[test]
     fn a_cancelled_chord_does_not_cancel_the_next() {
         let actions = fired(
@@ -970,7 +949,6 @@ mod tests {
         assert!(actions.is_empty(), "ctrl+cmd+click triggered it");
     }
 
-    /// Tapping the command key twice while control is held is two deliberate gestures.
     #[test]
     fn the_chord_can_be_repeated_without_releasing_every_modifier() {
         let actions = fired(
@@ -988,7 +966,7 @@ mod tests {
         assert_eq!(actions, vec!["revise_selection", "revise_selection"]);
     }
 
-    /// Holding the shortcut repeats the key press. One press was one request.
+    /// Auto-repeat redelivers the key press while the shortcut is held.
     #[test]
     fn holding_a_shortcut_runs_the_action_once() {
         let actions = fired(
@@ -1081,7 +1059,6 @@ mod tests {
         assert!(error.contains("f13"), "unhelpful message: {}", error);
     }
 
-    /// Without a modifier the binding would fire on ordinary typing.
     #[test]
     fn a_binding_without_a_modifier_is_refused() {
         let mut manager = SimpleHotkeyManager::new();
@@ -1128,8 +1105,7 @@ mod tests {
         }
     }
 
-    /// Every name `HotkeyRecorder.keyName` can produce must be one the listener recognizes, or the
-    /// binding saves cleanly and then silently never fires.
+    /// The list mirrors what `HotkeyRecorder.keyName` on the host side can produce.
     #[test]
     fn every_name_the_recorder_can_produce_is_a_key_the_listener_knows() {
         let recorded = [
@@ -1164,8 +1140,6 @@ mod tests {
         }
     }
 
-    /// rdev's listener can't be stopped, so resume must reuse this thread, not spawn a second one
-    /// that would double-fire every action.
     #[test]
     fn resuming_reuses_the_listener_thread() {
         let mut manager = SimpleHotkeyManager::new();

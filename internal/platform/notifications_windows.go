@@ -12,10 +12,8 @@ import (
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
-// RegisterNotifier tells Windows what to show as the sender of our toasts.
-// Toasts are posted under the app ID, and without this registration the
-// header is that raw ID with no icon. The ID belongs to the caller: Fyne
-// posts under app.UniqueID().
+// Toasts are posted under the app ID; without this registration the header is the raw ID
+// with no icon. Fyne posts under app.UniqueID().
 func RegisterNotifier(id, name string, icon []byte) {
 	iconPath := utils.AppHomeDir("notifier.ico")
 	if current, err := os.ReadFile(iconPath); err != nil || !bytes.Equal(current, icon) {

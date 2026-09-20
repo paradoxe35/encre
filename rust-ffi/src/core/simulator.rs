@@ -74,10 +74,8 @@ mod macos_native {
             .any(|key| unsafe { CGEventSourceKeyState(HID_SYSTEM_STATE, *key) })
     }
 
-    /// Drops the modifiers the triggering shortcut left down.
-    ///
-    /// Hardware modifier state merges into posted events regardless of the event's own flags, so a
-    /// stray Cmd+A must be stopped by releasing and polling real key state, not by masking flags.
+    /// Hardware modifier state merges into posted events regardless of their flags, so a stray
+    /// Cmd+A is prevented by releasing and polling real key state, not by masking flags.
     pub fn release_modifiers() -> Result<()> {
         debug!("Releasing held modifiers");
         for key in MODIFIER_KEYS {
@@ -98,7 +96,6 @@ mod macos_native {
     fn command_combo(key_code: u16) -> Result<()> {
         post(key_code, true, FLAG_COMMAND)?;
         sleep(KEY_HOLD);
-        // The key must come up even if the press failed, or it stays logically held.
         post(key_code, false, FLAG_COMMAND)
     }
 
@@ -124,8 +121,7 @@ impl KeySimulator {
         })
     }
 
-    /// Drops modifiers still held from the triggering hotkey, so Ctrl+A does not arrive as
-    /// Ctrl+Alt+A.
+    /// Drops modifiers the triggering hotkey left down, so Ctrl+A does not arrive as Ctrl+Alt+A.
     pub fn release_modifiers(&mut self) -> Result<()> {
         #[cfg(target_os = "macos")]
         {

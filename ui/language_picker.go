@@ -7,7 +7,6 @@ import (
 	"github.com/paradoxe35/encre/internal/language"
 )
 
-// LanguagePicker is a standard dropdown backed by the language registry.
 type LanguagePicker struct {
 	*widget.Select
 	code          string
@@ -37,7 +36,6 @@ func NewLanguagePicker(code string) *LanguagePicker {
 	return picker
 }
 
-// Code returns the selected language code.
 func (p *LanguagePicker) Code() string {
 	return p.code
 }
@@ -51,7 +49,7 @@ func (p *LanguagePicker) SetCode(code string) {
 	p.Refresh()
 }
 
-// SetExcludedCode removes code from this picker's choices, so a translation pair can't match.
+// Excluding the other side's code keeps a translation pair from matching.
 func (p *LanguagePicker) SetExcludedCode(code string) {
 	p.excludedCode = code
 	if strings.EqualFold(p.code, code) {

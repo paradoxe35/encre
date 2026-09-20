@@ -24,10 +24,8 @@ const (
 
 var client = &http.Client{Timeout: 30 * time.Second}
 
-// Transcribe sends pcm - headerless 16-bit signed little-endian PCM, mono, at
-// captureSampleRate - to Wit.ai for lang and returns the recognized text. Wit.ai
-// caps how much audio one request may carry, so pcm is downsampled to 8 kHz and
-// split into chunkSeconds windows, transcribed in order, and joined.
+// pcm is headerless 16-bit signed little-endian mono at captureSampleRate. Wit.ai caps the audio
+// per request, so it is downsampled to 8 kHz, split into chunkSeconds windows, and joined.
 func Transcribe(ctx context.Context, pcm []byte, lang string) (string, error) {
 	token, ok := tokenFor(lang)
 	if !ok {
@@ -91,8 +89,7 @@ type response struct {
 	Error  string `json:"error"`
 }
 
-// parseResponse reads a single Wit.ai JSON object, falling back to the legacy
-// _text field; an error field is a failure.
+// Falls back to the legacy _text field; an error field is a failure.
 func parseResponse(body []byte) (string, error) {
 	var r response
 	if err := json.Unmarshal(body, &r); err != nil {
@@ -107,8 +104,7 @@ func parseResponse(body []byte) (string, error) {
 	return r.Legacy, nil
 }
 
-// downsample halves the sample rate by averaging consecutive sample pairs,
-// converting 16-bit LE PCM at captureSampleRate to 16-bit LE PCM at witSampleRate.
+// Halves the sample rate by averaging consecutive sample pairs.
 func downsample(pcm []byte) []byte {
 	samples := len(pcm) / bytesPerSample
 	out := make([]byte, 0, len(pcm)/2)

@@ -16,9 +16,6 @@ import (
 
 const modelListTimeout = 15 * time.Second
 
-// loadModels lists a provider's models off the UI goroutine and opens the picker
-// once they arrive. report is wherever the caller shows progress: the status
-// bar on the AI tab, an inline line inside a dialog.
 func (w *MainWindow) loadModels(provider, apiKey, baseURL, current string, report progress, apply func(string)) {
 	report.Busy("Loading models…")
 
@@ -43,8 +40,6 @@ func (w *MainWindow) loadModels(provider, apiKey, baseURL, current string, repor
 	}()
 }
 
-// showModelPicker lists the models and writes the chosen id back through apply.
-// The search box earns its place: a provider can answer with a hundred entries.
 func (w *MainWindow) showModelPicker(models []ai.ModelInfo, current string, apply func(string)) {
 	visible := models
 
@@ -96,9 +91,8 @@ func (w *MainWindow) showModelPicker(models []ai.ModelInfo, current string, appl
 	picker.Show()
 }
 
-// describeModel trails the id in a row. Every built-in provider names a model
-// after its id, so this is usually blank; a proxy like OpenRouter is the case
-// where the display name carries something the id does not.
+// Blank when the name only repeats the id, as with every built-in provider;
+// a proxy like OpenRouter carries a name the id does not.
 func describeModel(model ai.ModelInfo) string {
 	if model.Name == "" || normalizeModelName(model.Name) == normalizeModelName(model.ID) {
 		return ""
@@ -132,7 +126,7 @@ func matchingModels(models []ai.ModelInfo, query string) []ai.ModelInfo {
 	return matched
 }
 
-// shortMessage keeps a provider error inside the one line the status bar has.
+// Keeps a provider error inside the one line the status bar has.
 func shortMessage(message string) string {
 	message = strings.ReplaceAll(message, "\n", " ")
 	if len(message) <= 80 {

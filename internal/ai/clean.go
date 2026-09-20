@@ -2,11 +2,8 @@ package ai
 
 import "strings"
 
-// CleanResponse strips wrapping a model added despite being told not to.
-//
-// The reply is pasted straight into the user's text, so a code fence or a pair of quotes around it
-// has to go. Deliberately conservative: it only unwraps when the delimiters enclose the whole
-// reply, so a genuine code snippet or a quoted sentence inside longer prose survives untouched.
+// Strips a code fence or quote pair wrapping the whole reply, since it is pasted straight into
+// the user's text. Delimiters inside longer prose are content and stay.
 func CleanResponse(raw string) string {
 	text := strings.TrimSpace(raw)
 	if text == "" {

@@ -6,17 +6,13 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// progress is how a task run off the UI goroutine reports back: a busy state
-// while it runs, then an outcome in the tone it deserves. The buttons that
-// started it are locked for the duration, so a slow request cannot be fired twice.
+// The buttons that started a task stay locked until it settles, so a slow request cannot be fired twice.
 type progress interface {
 	Busy(message string)
 	Done(message string)
 	Fail(message string)
 }
 
-// feedback is the inline form of progress for dialogs: a text line with an
-// activity bar while busy, then the outcome in plain or error styling.
 type feedback struct {
 	widget.BaseWidget
 	label *widget.Label
@@ -82,8 +78,6 @@ func (f *feedback) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(container.NewVBox(f.bar, f.label))
 }
 
-// statusProgress reports through the window's status bar, for tasks started
-// from a tab rather than a dialog.
 type statusProgress struct {
 	window *MainWindow
 	locks  []fyne.Disableable

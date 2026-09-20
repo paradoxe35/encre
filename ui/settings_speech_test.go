@@ -44,12 +44,10 @@ func TestAdoptPresetModel(t *testing.T) {
 	}
 }
 
-// newLanguageWindow builds just enough MainWindow for the language picker.
 func newLanguageWindow(service, model, saved string) *MainWindow {
 	return newEngineWindow(service, model, saved, "")
 }
 
-// newEngineWindow adds a local model, so a switch between engines can be driven.
 func newEngineWindow(service, model, saved, localModelID string) *MainWindow {
 	w := &MainWindow{config: config.Default()}
 
@@ -71,7 +69,6 @@ func newEngineWindow(service, model, saved, localModelID string) *MainWindow {
 	return w
 }
 
-// The list follows the service and the model, not the local catalogue.
 func TestRefreshRemoteLanguagesPerService(t *testing.T) {
 	cases := []struct {
 		service, model string
@@ -111,8 +108,6 @@ func TestRefreshRemoteLanguagesPerService(t *testing.T) {
 	}
 }
 
-// A saved language is restored on load, in the form the service takes: the same
-// fr in the config reads as fr-FR under Gemini and fr under Groq.
 func TestSavedLanguageRestoredInServiceForm(t *testing.T) {
 	gemini := newLanguageWindow("Google Gemini", "gemini-3.5-transcribe", "fr")
 	gemini.refreshLanguages(config.SpeechRemote)
@@ -127,8 +122,8 @@ func TestSavedLanguageRestoredInServiceForm(t *testing.T) {
 	}
 }
 
-// Changing service is the same event as picking another local model: the new
-// engine decides, and every hosted engine detects. Matches Model.LanguageAfterSwitch.
+// Changing service is a switch like picking another local model; every hosted engine detects.
+// Matches Model.LanguageAfterSwitch.
 func TestServiceSwitchFallsBackToDetect(t *testing.T) {
 	w := newLanguageWindow("Google Gemini", "gemini-3.5-transcribe", "fr")
 	w.refreshLanguages(config.SpeechRemote)
@@ -151,9 +146,7 @@ func TestServiceSwitchFallsBackToDetect(t *testing.T) {
 	}
 }
 
-// whisper-1 and gpt-transcribe are different sets, so moving between them is a
-// switch; retyping inside one set is not, or typing a name would clear the
-// language on every keystroke.
+// Retyping inside one set is not a switch, or typing a name would clear the language on every keystroke.
 func TestModelSwitchOnlyResetsOnSetChange(t *testing.T) {
 	w := newLanguageWindow("OpenAI", "whisper-1", "fr")
 	w.refreshLanguages(config.SpeechRemote)
@@ -174,7 +167,6 @@ func TestModelSwitchOnlyResetsOnSetChange(t *testing.T) {
 	}
 }
 
-// A language the new service cannot serve falls back rather than being sent.
 func TestUnservableLanguageFallsBackToDetect(t *testing.T) {
 	w := newLanguageWindow("Groq", "whisper-large-v3", "kea-CV")
 	w.refreshLanguages(config.SpeechRemote)
@@ -187,7 +179,6 @@ func TestUnservableLanguageFallsBackToDetect(t *testing.T) {
 	}
 }
 
-// A code typed for an unknown model is saved as typed, not dropped.
 func TestFreeTextLanguageIsSaved(t *testing.T) {
 	w := newLanguageWindow("Custom", "some-local-server", "")
 	w.refreshLanguages(config.SpeechRemote)
@@ -210,8 +201,6 @@ func TestFreeTextLanguageIsSaved(t *testing.T) {
 	}
 }
 
-// englishOnlyModel is a real catalogue entry that cannot detect: the case the
-// rule exists for.
 func englishOnlyModel(t *testing.T) stt.Model {
 	t.Helper()
 	for _, model := range stt.Catalogue() {
@@ -234,8 +223,6 @@ func multilingualDetectingModel(t *testing.T) stt.Model {
 	return stt.Model{}
 }
 
-// Case 1: hosted detects, the local model cannot, so the switch lands on a
-// concrete language rather than leaving the engine to guess.
 func TestSwitchFromHostedAutoToNonDetectingLocal(t *testing.T) {
 	local := englishOnlyModel(t)
 	w := newEngineWindow("OpenAI", "gpt-transcribe", "", local.ID)
@@ -255,14 +242,13 @@ func TestSwitchFromHostedAutoToNonDetectingLocal(t *testing.T) {
 	}
 }
 
-// Case 2: a language the next engine can serve is kept, not thrown away.
 func TestSpecificLanguageSurvivesToAnEngineThatSpeaksIt(t *testing.T) {
 	local := multilingualDetectingModel(t)
 	if !local.Speaks("fr") {
 		t.Skip("the detecting model does not speak French")
 	}
 
-	// Same set both times, so nothing is re-decided: French must simply stay.
+	// Same set both times, so nothing is re-decided.
 	w := newEngineWindow("Groq", "whisper-large-v3", "fr", local.ID)
 	w.refreshLanguages(config.SpeechRemote)
 
@@ -274,7 +260,6 @@ func TestSpecificLanguageSurvivesToAnEngineThatSpeaksIt(t *testing.T) {
 	}
 }
 
-// Switching to an engine that detects hands the decision back to it.
 func TestSwitchToDetectingEngineReturnsToAuto(t *testing.T) {
 	local := englishOnlyModel(t)
 	w := newEngineWindow("Groq", "whisper-large-v3", "en", local.ID)
@@ -294,8 +279,7 @@ func TestSwitchToDetectingEngineReturnsToAuto(t *testing.T) {
 	}
 }
 
-// The first draw shows what was saved rather than re-deciding it, or reopening
-// the window would quietly discard the user's choice.
+// The first draw restores rather than decides, or reopening the window would discard the saved choice.
 func TestFirstDrawRestoresRatherThanDecides(t *testing.T) {
 	local := multilingualDetectingModel(t)
 	w := newEngineWindow("Groq", "whisper-large-v3", "de", local.ID)
@@ -310,7 +294,6 @@ func TestFirstDrawRestoresRatherThanDecides(t *testing.T) {
 	}
 }
 
-// Redrawing the same engine is not a switch and must decide nothing.
 func TestRedrawingTheSameEngineKeepsTheLanguage(t *testing.T) {
 	local := multilingualDetectingModel(t)
 	w := newEngineWindow("Groq", "whisper-large-v3", "de", local.ID)
@@ -324,8 +307,6 @@ func TestRedrawingTheSameEngineKeepsTheLanguage(t *testing.T) {
 	}
 }
 
-// Typing a model name one letter at a time must not clear the language on every
-// keystroke; only crossing into another set counts as a switch.
 func TestTypingAModelNameDoesNotClearTheLanguage(t *testing.T) {
 	w := newEngineWindow("OpenAI", "whisper-1", "fr", "")
 	w.refreshLanguages(config.SpeechRemote)

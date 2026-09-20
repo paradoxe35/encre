@@ -10,8 +10,8 @@ import (
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
-// Regression: saving while the AI tab shows a built-in provider used to blank its BaseURL,
-// dropping it from GetConfiguredProviderNames and silently resetting any operation override.
+// Saving with a built-in provider on the AI tab must keep its BaseURL, or
+// GetConfiguredProviderNames drops it and any operation override silently resets.
 func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	utils.EnsureAppHomeDir()
@@ -26,7 +26,6 @@ func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 		t.Fatal("test setup: openai must ship with a BaseURL")
 	}
 
-	// The user deliberately pinned translate to OpenAI.
 	cfg.SetOperation(config.OpTranslate, config.OperationConfig{
 		SystemPrompt:   "custom prompt",
 		CharacterLimit: 500,
@@ -54,7 +53,7 @@ func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 	editor.provider.SetSelected(providerLabel(config.BuiltInOpenAI))
 	w.operationEditors = map[config.Operation]*operationEditor{config.OpTranslate: editor}
 
-	// Same order saveSettings runs them in: an unrelated hotkey/action save right after the AI tab.
+	// Same order as saveSettings.
 	if err := w.applyProviderSettings(); err != nil {
 		t.Fatalf("applyProviderSettings: %v", err)
 	}
@@ -70,9 +69,8 @@ func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 	}
 }
 
-// Enabling a hotkey and saving used to publish the config from inside
-// applyProviderSettings, before the hotkey flags were written: listeners
-// re-registered shortcuts from settings that still said this one was off.
+// Publishing before applyActionSettings writes the hotkey flags would make
+// listeners re-register shortcuts from a config that still says this one is off.
 func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	utils.EnsureAppHomeDir()

@@ -47,12 +47,11 @@ type interactionsResponse struct {
 	} `json:"steps"`
 }
 
-// geminiTranscribeSpeech runs gemini-3.5-transcribe, a speech model rather than
-// a chat model: no prompt to write, no preamble to strip, no thinking budget to
-// argue with, and the language is a field instead of a sentence.
+// gemini-3.5-transcribe is a speech model, not a chat model: no prompt, no preamble to strip,
+// no thinking budget, and the language is a field instead of a sentence.
 func geminiTranscribeSpeech(ctx context.Context, cfg config.SpeechConfig, wav []byte) (string, error) {
-	// The -live twin streams over the Live API's websocket. Saying so beats the
-	// endpoint's own error, which does not mention the model that would work.
+	// The -live twin needs the Live API websocket; naming the model that works beats the
+	// endpoint's own error.
 	if isGeminiLiveModel(cfg.RemoteModel) {
 		return "", fmt.Errorf("%s streams over the Live API; use gemini-3.5-transcribe instead",
 			cfg.RemoteModel)

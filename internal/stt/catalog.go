@@ -41,7 +41,6 @@ type Catalog struct {
 	fetched time.Time
 }
 
-// Origin is "embedded" or "cached", so settings can say where the list is from.
 func (c *Catalog) Origin() string     { return c.origin }
 func (c *Catalog) Fetched() time.Time { return c.fetched }
 
@@ -52,7 +51,7 @@ var (
 
 func cachePath() string { return utils.AppHomeDir("catalog.json") }
 
-// Models prefers a cached download over the shipped copy.
+// A cached download wins over the shipped copy.
 func Models() *Catalog {
 	catalogMu.RLock()
 	current := active
@@ -69,7 +68,7 @@ func Models() *Catalog {
 	return active
 }
 
-// discoverCustom finds model files not claimed by the catalog, for fine-tuned or community models.
+// Model files not claimed by the catalog: fine-tuned or community models.
 func discoverCustom() []Model {
 	return discoverCustomIn(utils.AppHomeDir("models"))
 }
@@ -162,7 +161,7 @@ func stale() bool {
 	return catalog.origin == "embedded" || time.Since(catalog.fetched) > catalogMaxAge
 }
 
-// Refresh replaces the cached list; parsed before writing so a truncated download never displaces a working one.
+// Parsed before writing, so a truncated download never displaces a working list.
 func Refresh(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, CatalogURL, nil)
 	if err != nil {
@@ -204,7 +203,7 @@ func Refresh(ctx context.Context) error {
 	return nil
 }
 
-// RefreshInBackground never blocks startup; failures aren't surfaced since the shipped list still works.
+// Failures are not surfaced: the shipped list still works.
 func RefreshInBackground() {
 	if !stale() {
 		return
@@ -218,9 +217,8 @@ func RefreshInBackground() {
 	}()
 }
 
-// Catalogue is the published list plus whatever the user dropped into the models directory.
 // Copies rather than appends in place: the parsed slice has spare capacity, and appending
-// would write into memory the catalog still owns, racing other callers.
+// would write into memory the catalog still owns.
 func Catalogue() []Model {
 	published := Models().Models
 	custom := discoverCustom()

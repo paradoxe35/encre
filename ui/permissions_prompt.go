@@ -74,7 +74,7 @@ func newPermissionPrompt() *permissionPrompt {
 	body := container.NewVBox(
 		title,
 		info,
-		widget.NewLabel(""), // spacing
+		widget.NewLabel(""),
 		dividerAbove,
 		accessibilitySection,
 		inputMonitoringSection,

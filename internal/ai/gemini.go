@@ -10,7 +10,6 @@ import (
 	"strings"
 )
 
-// GeminiProvider implements the Provider interface for Google Gemini
 type GeminiProvider struct {
 	APIKey      string
 	BaseURL     string

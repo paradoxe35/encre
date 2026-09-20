@@ -31,13 +31,12 @@ struct Settings {
     language: Option<String>,
     /// Capture without the engine, for a remote service that transcribes the audio itself.
     capture_only: bool,
-    /// The model takes should use. Streaming waits until it is the one resident;
-    /// until then a take is captured and transcribed behind the load.
+    /// Streaming waits until this model is resident; until then a take is captured
+    /// and transcribed behind the load.
     model: Option<PathBuf>,
 }
 
-/// Handled on their own thread, so a load or a transcription can run while the
-/// next take is already being captured.
+/// Handled on their own thread, so a load or transcription overlaps the next take's capture.
 pub enum EngineCommand {
     /// A failure is kept by the engine and reported by the transcription that needed it.
     Load(PathBuf),
@@ -46,25 +45,19 @@ pub enum EngineCommand {
     Shutdown,
 }
 
-/// What a recording produced. `text` carries the transcript: `Some("")` for a
-/// take without speech, `Some(text)` on success, `Err(message)` on failure.
-/// When a transcript is present, `samples` is left empty; otherwise `samples`
-/// holds the speech for the host to batch-transcribe.
+/// `samples` is empty when `text` carries a transcript; otherwise it holds the
+/// speech for the host to batch-transcribe.
 pub struct Stopped {
     pub samples: Vec<f32>,
     pub text: Result<Option<String>, String>,
-    /// The language in force when the take was recorded.
+    /// The language in force when the take was recorded, for the batch pass.
     pub language: Option<String>,
 }
 
-/// Owns the capture stream on its own thread. cpal delivers audio on a realtime
-/// callback that must not block, so it only forwards buffers; every conversion
-/// happens here.
 pub struct Recorder {
     commands: Sender<Command>,
     engine_commands: Sender<EngineCommand>,
-    /// Commands the engine thread has not finished yet; a take only claims the
-    /// engine for streaming when this is zero.
+    /// Unfinished engine commands; a take only claims the engine for streaming at zero.
     queued: Arc<AtomicUsize>,
     settings: Arc<Mutex<Settings>>,
 }
@@ -79,7 +72,15 @@ impl Recorder {
         let recorder_engine = engine.clone();
         let recorder_queued = queued.clone();
         let recorder_settings = settings.clone();
-        thread::spawn(move || run(rx, levels, recorder_engine, recorder_queued, recorder_settings));
+        thread::spawn(move || {
+            run(
+                rx,
+                levels,
+                recorder_engine,
+                recorder_queued,
+                recorder_settings,
+            )
+        });
 
         let (engine_tx, engine_rx) = channel();
         let engine_queued = queued.clone();
@@ -117,8 +118,7 @@ impl Recorder {
         self.settings().capture_only = enabled;
     }
 
-    /// Selects the model for the next takes and queues its load. Returns at
-    /// once; anything queued after it, such as a take's batch pass, runs behind.
+    /// Returns at once; anything queued after, such as a take's batch pass, runs behind the load.
     pub fn use_model(&self, path: PathBuf) {
         self.settings().model = Some(path.clone());
         let _ = self.queue(EngineCommand::Load(path));
@@ -129,9 +129,13 @@ impl Recorder {
         let _ = self.queue(EngineCommand::Unload);
     }
 
-    /// Queued behind any load in progress, so a take captured while its model
-    /// was coming up is transcribed once it is there.
-    pub fn transcribe_samples(&self, samples: Vec<f32>, language: Option<String>) -> Result<String> {
+    /// Queued behind any load in progress, so a take captured during a load is
+    /// transcribed once the model is there.
+    pub fn transcribe_samples(
+        &self,
+        samples: Vec<f32>,
+        language: Option<String>,
+    ) -> Result<String> {
         let (tx, rx) = channel();
         self.queue(EngineCommand::TranscribeSamples(samples, language, tx))?;
         rx.recv().map_err(|_| anyhow!("engine dropped the reply"))?
@@ -150,8 +154,8 @@ impl Recorder {
         let _ = self.engine_commands.send(EngineCommand::Shutdown);
     }
 
-    /// Split from `await_stop` so a caller can send under its own lock without
-    /// holding it through transcription.
+    /// Split from `await_stop` so a caller can send under its own lock without holding
+    /// it through transcription.
     pub fn begin_stop(&self) -> Result<Receiver<Stopped>> {
         let (tx, rx) = channel();
         self.commands
@@ -188,7 +192,11 @@ fn run(
     }
 }
 
-fn run_engine(commands: Receiver<EngineCommand>, engine: Arc<Mutex<Engine>>, queued: Arc<AtomicUsize>) {
+fn run_engine(
+    commands: Receiver<EngineCommand>,
+    engine: Arc<Mutex<Engine>>,
+    queued: Arc<AtomicUsize>,
+) {
     loop {
         match commands.recv() {
             Ok(EngineCommand::Load(path)) => {
@@ -206,7 +214,7 @@ fn run_engine(commands: Receiver<EngineCommand>, engine: Arc<Mutex<Engine>>, que
     }
 }
 
-/// Runs one recording session and returns when it ends, `false` only on shutdown.
+/// `false` only on shutdown.
 fn record(
     commands: &Receiver<Command>,
     levels: Sender<f32>,
@@ -269,8 +277,7 @@ impl StreamGuard {
         let (tx, rx) = channel();
 
         let stream = build_stream(&device, &config, tx, levels)?;
-        // cpal 0.18 doesn't auto-start streams; without this the callback never
-        // fires and recordings come back silent.
+        // cpal does not auto-start streams; without this recordings come back silent.
         stream.play()?;
 
         Ok(Self {
@@ -297,8 +304,7 @@ struct SelectedConfig {
     format: SampleFormat,
 }
 
-/// Falls back to the default device when the chosen one is gone, so an
-/// unplugged microphone doesn't stop dictation from working.
+/// An unplugged microphone falls back to the default rather than failing the take.
 fn open_device(preferred: Option<&str>) -> Result<Device> {
     let host = host();
 
@@ -318,7 +324,6 @@ fn open_device(preferred: Option<&str>) -> Result<Device> {
         .ok_or_else(|| anyhow!("no input device available"))
 }
 
-/// Input device names, the default marked with a leading '*'.
 pub fn devices() -> (Vec<String>, Option<String>) {
     let host = host();
     let names = host
@@ -336,8 +341,8 @@ pub fn devices() -> (Vec<String>, Option<String>) {
 }
 
 fn host() -> cpal::Host {
-    // ALSA over cpal's default on Linux: PulseAudio/PipeWire both expose an
-    // ALSA interface, and going direct avoids a resampling hop.
+    // ALSA over cpal's default: PulseAudio and PipeWire both expose an ALSA
+    // interface, and going direct avoids a resampling hop.
     #[cfg(target_os = "linux")]
     {
         cpal::host_from_id(cpal::HostId::Alsa).unwrap_or_else(|_| cpal::default_host())
@@ -348,9 +353,8 @@ fn host() -> cpal::Host {
     }
 }
 
-/// Uses the device's own rate instead of forcing 16 kHz: forcing a rate the
-/// hardware doesn't want can drop Bluetooth headsets into headset profile or
-/// make ALSA refuse the stream outright.
+/// Uses the device's own rate: forcing 16 kHz can drop Bluetooth headsets into
+/// headset profile or make ALSA refuse the stream.
 fn preferred_config(device: &Device) -> Result<SelectedConfig> {
     let default = device.default_input_config()?;
     let rate = default.sample_rate();
@@ -416,8 +420,7 @@ fn build_stream(
     Ok(stream)
 }
 
-/// Runs on the realtime audio callback: send and return, never allocate slowly
-/// or block, or the driver drops buffers.
+/// Runs on the realtime audio callback: never block, or the driver drops buffers.
 fn forward(data: Vec<f32>, samples: &Sender<Vec<f32>>, levels: &Sender<f32>) {
     if !data.is_empty() {
         let sum: f32 = data.iter().map(|s| s * s).sum();
@@ -430,8 +433,7 @@ fn forward(data: Vec<f32>, samples: &Sender<Vec<f32>>, levels: &Sender<f32>) {
 mod tests {
     use super::*;
 
-    /// A failed load is reported by the transcription that needed it, with the
-    /// reason, not as a bare "no model loaded".
+    /// The error names the reason, not a bare "no model loaded".
     #[test]
     fn load_failure_reaches_the_transcription() {
         let (levels, _level_rx) = channel();
@@ -442,7 +444,9 @@ mod tests {
         let result = recorder.transcribe_samples(vec![0.0; 1600], None);
 
         recorder.shutdown();
-        let message = result.expect_err("transcribing without a model must fail").to_string();
+        let message = result
+            .expect_err("transcribing without a model must fail")
+            .to_string();
         assert!(
             message.contains(&missing.display().to_string()),
             "error should name the file that failed to load, got: {message}"
@@ -472,7 +476,10 @@ mod settings_tests {
         assert_eq!(snapshot.language.as_deref(), Some("fr"));
         assert_eq!(snapshot.device.as_deref(), Some("USB Microphone"));
         assert!(snapshot.capture_only);
-        assert_eq!(snapshot.model.as_deref(), Some(std::path::Path::new("/models/a.gguf")));
+        assert_eq!(
+            snapshot.model.as_deref(),
+            Some(std::path::Path::new("/models/a.gguf"))
+        );
         assert!(after_unload.is_none(), "unload forgets the wanted model");
     }
 }
@@ -481,7 +488,6 @@ mod settings_tests {
 mod degraded_tests {
     use super::*;
 
-    /// A degraded streaming take hands back audio, not a transcript missing words.
     #[test]
     fn degraded_stream_returns_samples_for_batch() {
         let stopped = Stopped {
@@ -500,8 +506,7 @@ mod degraded_tests {
         );
     }
 
-    /// Silence and a degraded stream both carry no text; only the samples tell
-    /// them apart, which is what the FFI branches on.
+    /// Only the samples tell silence from a degraded stream; the FFI branches on that.
     #[test]
     fn silence_carries_no_samples() {
         let stopped = Stopped {

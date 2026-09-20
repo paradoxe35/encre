@@ -172,9 +172,8 @@ func (w *MainWindow) initBindings() {
 	w.themeBinding.Set(theme)
 }
 
-// SetPermissionState shows the permission card while the hotkeys cannot work.
-// A refused microphone only stops dictation, so it is a notice on the Speech
-// tab rather than a wall in front of the settings.
+// A refused microphone only stops dictation, so it is a Speech tab notice
+// rather than the blocking permission card.
 func (w *MainWindow) SetPermissionState(state permissions.State, showRestart bool) {
 	if w.permissionPrompt == nil {
 		return
@@ -257,11 +256,11 @@ func (w *MainWindow) createContent() fyne.CanvasObject {
 	w.unsavedLabel.Hide()
 
 	content := container.NewBorder(
-		nil, // top
-		container.NewBorder(nil, nil, nil, container.NewHBox(w.unsavedLabel, saveBtn), statusBar), // bottom
-		nil,  // left
-		nil,  // right
-		tabs, // center
+		nil,
+		container.NewBorder(nil, nil, nil, container.NewHBox(w.unsavedLabel, saveBtn), statusBar),
+		nil,
+		nil,
+		tabs,
 	)
 
 	return container.NewPadded(content)
@@ -296,7 +295,6 @@ func (w *MainWindow) historyStoreRef() *history.Store {
 	return w.historyStore
 }
 
-// SetHistoryStore shares the processor's history store with the UI, refreshing an open History tab on new entries.
 func (w *MainWindow) SetHistoryStore(store *history.Store) {
 	w.historyStore = store
 	store.OnChange(func() {
@@ -321,7 +319,6 @@ func (w *MainWindow) ShowWindow() {
 	w.Content().Refresh()
 }
 
-// HideWindow hides the window and handles platform-specific behavior (e.g., macOS Dock)
 func (w *MainWindow) HideWindow() {
 	w.Hide()
 	if w.onHideCallback != nil {

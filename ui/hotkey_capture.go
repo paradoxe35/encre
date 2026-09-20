@@ -14,7 +14,6 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// HotkeyCapture is a custom widget for capturing keyboard shortcuts using Fyne's keyboard events
 type HotkeyCapture struct {
 	widget.BaseWidget
 	binding        binding.String
@@ -38,7 +37,6 @@ type HotkeyCapture struct {
 	allowModifierOnly bool
 }
 
-// captureEntry is a custom entry widget that captures keyboard events with white background
 type captureEntry struct {
 	widget.Entry
 	parent *HotkeyCapture
@@ -50,7 +48,7 @@ func (e *captureEntry) TypedKey(key *fyne.KeyEvent) {
 	}
 }
 
-// TypedRune prevents normal text input during capture, so pressing F doesn't type "f".
+// Swallows runes so pressing F during capture does not type "f".
 func (e *captureEntry) TypedRune(r rune) {
 }
 
@@ -119,7 +117,6 @@ func NewHotkeyCapture(binding binding.String, placeholder string) *HotkeyCapture
 	buttonContainer := container.NewHBox(h.captureBtn, h.stopBtn, h.clearBtn)
 	h.syncClearButton()
 
-	// Stack so only the label or the entry is visible at a time.
 	displayStack := container.NewStack(h.displayLabel, h.entry)
 
 	h.container = container.NewBorder(
@@ -150,7 +147,7 @@ func (h *HotkeyCapture) startCapture() {
 		sibling.captureBtn.Disable()
 	}
 
-	// Global hotkeys must be off while capturing, or they'd fire on the keys being recorded.
+	// Global hotkeys must be off while capturing, or they fire on the keys being recorded.
 	if h.onCaptureStart != nil {
 		h.onCaptureStart()
 	}
@@ -274,7 +271,6 @@ func (h *HotkeyCapture) updateDisplay() {
 	}
 }
 
-// saveHotkey returns true if the combination is valid and was saved.
 func (h *HotkeyCapture) saveHotkey() bool {
 	parts := []string{}
 
@@ -297,7 +293,6 @@ func (h *HotkeyCapture) saveHotkey() bool {
 	}
 	parts = append(parts, keyNames...)
 
-	// Requires at least one modifier, plus either a key or (if allowed) a modifier-only combo like Ctrl+Super.
 	valid := false
 	if len(h.modifiers) > 0 {
 		if len(h.pressedKeys) > 0 {
@@ -339,7 +334,6 @@ func (h *HotkeyCapture) clearHotkey() {
 	h.UpdateFromBinding()
 }
 
-// The clear button only earns its place next to a hotkey that exists.
 func (h *HotkeyCapture) syncClearButton() {
 	if value, _ := h.binding.Get(); value != "" {
 		h.clearBtn.Show()
@@ -348,7 +342,6 @@ func (h *HotkeyCapture) syncClearButton() {
 	}
 }
 
-// StopCapture stops capture if currently capturing.
 func (h *HotkeyCapture) StopCapture() {
 	h.mu.Lock()
 	isCapturing := h.isCapturing
@@ -359,7 +352,6 @@ func (h *HotkeyCapture) StopCapture() {
 	}
 }
 
-// UpdateFromBinding refreshes the label and the clear button from the binding's current value.
 func (h *HotkeyCapture) UpdateFromBinding() {
 	currentValue, _ := h.binding.Get()
 	if currentValue != "" {
@@ -370,12 +362,10 @@ func (h *HotkeyCapture) UpdateFromBinding() {
 	h.syncClearButton()
 }
 
-// SetSiblings sets other capture widgets that should be disabled during capture
 func (h *HotkeyCapture) SetSiblings(siblings ...*HotkeyCapture) {
 	h.siblings = siblings
 }
 
-// SetAllowModifierOnly allows accepting modifier-only combinations (e.g., Ctrl+Win)
 func (h *HotkeyCapture) SetAllowModifierOnly(allow bool) {
 	h.allowModifierOnly = allow
 }
@@ -398,9 +388,9 @@ func keyNameToString(key fyne.KeyName) string {
 	case fyne.KeySpace:
 		return "space"
 	case fyne.KeyEscape:
-		return "escape" // Match FFI expectation
+		return "escape" // name the FFI hotkey parser expects
 	case fyne.KeyReturn, fyne.KeyEnter:
-		return "return" // Match FFI expectation
+		return "return" // name the FFI hotkey parser expects
 	case fyne.KeyTab:
 		return "tab"
 	case fyne.KeyBackspace:

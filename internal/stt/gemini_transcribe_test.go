@@ -225,7 +225,7 @@ func TestThinkingConfigMatchesModelGeneration(t *testing.T) {
 	}
 }
 
-// Guessing a parameter for a name we cannot place costs a refused round trip.
+// Guessing a parameter for an unplaceable name costs a refused round trip.
 func TestThinkingConfigSkippedForUnknownModel(t *testing.T) {
 	for _, model := range []string{"", "gemini-flash-latest", "whisper-1", "gemini"} {
 		if config := thinkingConfigFor(model); config != nil {
@@ -439,8 +439,8 @@ func TestParseInteractionsResponseJoinsTextContent(t *testing.T) {
 	}
 }
 
-// The -live twin needs a websocket we do not open; the error should name the
-// model that does work rather than relaying a confusing one from the endpoint.
+// The -live twin needs a websocket this code does not open; the error should name the
+// model that does work rather than relay the endpoint's confusing one.
 func TestGeminiLiveModelIsRefusedWithAdvice(t *testing.T) {
 	var called bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

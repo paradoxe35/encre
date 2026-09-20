@@ -8,7 +8,6 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-// RestartApplication restarts the application using platform-specific methods
 func RestartApplication() error {
 	executable, err := os.Executable()
 	if err != nil {

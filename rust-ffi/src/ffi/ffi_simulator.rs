@@ -76,7 +76,7 @@ pub unsafe extern "C" fn encre_simulate_paste(handle: SimulatorHandle) -> c_int 
     }
 }
 
-/// Releases modifiers still held from the triggering hotkey. Call once before any combo.
+/// Drops modifiers the triggering hotkey left down. Call once before any combo.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_simulate_release_modifiers(handle: SimulatorHandle) -> c_int {
     unsafe {

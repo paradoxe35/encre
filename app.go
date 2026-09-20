@@ -76,7 +76,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 			})
 		})
 
-	// Set up permission monitoring before hotkeys so the UI reflects state early.
+	// Before hotkeys, so the UI reflects permission state early.
 	application.setupPermissions()
 
 	application.setupHotkeys()
@@ -115,7 +115,6 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	return application, nil
 }
 
-// setupHotkeys binds every enabled action to its shortcut.
 func (a *Application) setupHotkeys() {
 	for _, kind := range config.ActionOrder {
 		action := a.currentConfig().Action(kind)
@@ -145,7 +144,6 @@ func (a *Application) registerDictation(action config.ActionConfig) {
 		return
 	}
 
-	// Toggle mode: each press flips recording, so the same handler serves both.
 	recording := false
 	err := a.hotkeyManager.RegisterHotkey(action.Hotkey, string(config.ActionDictate), func() {
 		recording = !recording
@@ -174,8 +172,7 @@ func (a *Application) actionHandler(kind config.ActionKind) func() {
 	}
 }
 
-// reportBindingFailure surfaces a failed shortcut registration; silent failure would be
-// indistinguishable from a binding the system just never delivers.
+// A silent failure would look like a binding the system never delivers.
 func (a *Application) reportBindingFailure(binding string, err error) {
 	if err == nil {
 		return
@@ -186,11 +183,8 @@ func (a *Application) reportBindingFailure(binding string, err error) {
 	})
 }
 
-// reloadHotkeysFromConfig re-registers every hotkey against the current config.
-//
-// Serialised: listeners run on their own goroutine, so two saves close together
-// arrive at once, and interleaving the clear with the re-registration would
-// leave shortcuts unbound.
+// Serialised: listeners run on their own goroutine, and interleaving one reload's
+// clear with another's re-registration would leave shortcuts unbound.
 func (a *Application) reloadHotkeysFromConfig() {
 	a.reloadMutex.Lock()
 	defer a.reloadMutex.Unlock()
@@ -217,7 +211,6 @@ func (a *Application) reloadHotkeysFromConfig() {
 	logger.Info("Hotkeys reloaded successfully")
 }
 
-// setupPermissions initialises macOS permission handling and keeps the UI in sync.
 func (a *Application) currentConfig() *config.Config {
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
@@ -305,8 +298,7 @@ func (a *Application) monitorPermissions(ctx context.Context, previous permissio
 	}
 }
 
-// ShowWindow brings the settings window up. Safe to call from any goroutine, which is what the
-// instance handover needs.
+// Safe to call from any goroutine; the instance handover relies on that.
 func (a *Application) ShowWindow() {
 	fyne.Do(a.mainWindow.ShowWindow)
 }
@@ -329,7 +321,6 @@ func (a *Application) Start() error {
 		}
 	}()
 
-	// Show the window if permissions are pending, on first run, or unless starting minimized.
 	if a.permissionsMissingOnLaunch {
 		a.mainWindow.ShowWindow()
 		logger.Info("Showing permissions screen", "permissions_pending", true)

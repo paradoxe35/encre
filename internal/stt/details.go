@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-// LanguageName resolves a catalog language code to its English name, falling back to the code itself when unknown.
 func LanguageName(code string) string {
 	if name, ok := languageNames[strings.ToLower(code)]; ok {
 		return name
@@ -14,7 +13,6 @@ func LanguageName(code string) string {
 	return code
 }
 
-// languageNames covers the codes the model catalog uses; not exhaustive, unknown codes display as-is.
 var languageNames = map[string]string{
 	"en": "English", "fr": "French", "es": "Spanish", "de": "German",
 	"it": "Italian", "pt": "Portuguese", "nl": "Dutch", "pl": "Polish",
@@ -48,7 +46,6 @@ var languageNames = map[string]string{
 	"yi": "Yiddish",
 }
 
-// SpeedLabel describes how a model is expected to keep up on this machine.
 // Thresholds match the row summaries: comfortable is "fast", 10x realtime or better is "very fast".
 func SpeedLabel(model Model, host Machine) string {
 	switch model.Fit(host) {
@@ -66,8 +63,7 @@ func SpeedLabel(model Model, host Machine) string {
 	}
 }
 
-// ModelDetails renders the human-facing facts about a model: languages, cost to run, and
-// expected behavior on this machine. Omits the catalog description and raw benchmark numbers.
+// Omits the catalog description and raw benchmark numbers on purpose.
 func ModelDetails(model Model, host Machine, downloaded bool) string {
 	var lines []string
 

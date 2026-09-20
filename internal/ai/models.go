@@ -64,8 +64,7 @@ func endpointFor(provider, apiKey, baseURL string) modelsEndpoint {
 	}
 }
 
-// ListModels asks a provider what it can run. Custom providers and anything not
-// recognised are treated as OpenAI-compatible.
+// Custom providers and anything unrecognised are treated as OpenAI-compatible.
 func ListModels(ctx context.Context, provider, apiKey, baseURL string) ([]ModelInfo, error) {
 	endpoint := endpointFor(provider, apiKey, baseURL)
 

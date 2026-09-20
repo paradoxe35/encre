@@ -7,8 +7,7 @@ const (
 	PlaceholderSecondary = "{{secondary_language}}"
 )
 
-// Revise is the prompt this app shipped with. Changing a default silently
-// changes behaviour for everyone, so it stays as it was.
+// The shipped default; changing it silently changes behaviour for everyone.
 const Revise = `You are a multilingual text enhancer: fix errors, improve clarity and quality while preserving tone, context, and intent in the original language. Return only the enhanced version without additional text.`
 
 const Translate = `You are a professional translator working between ` + PlaceholderPrimary + ` and ` + PlaceholderSecondary + `.

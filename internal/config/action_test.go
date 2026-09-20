@@ -209,8 +209,8 @@ func TestActionKindClassification(t *testing.T) {
 	}
 }
 
-// main shipped a 1000-character limit and a 30-second timeout. Both are
-// defaults people never touch, so a quiet change would go unnoticed.
+// The 1000-character limit and 30-second timeout are defaults nobody touches, so a
+// quiet change would go unnoticed.
 func TestShippedDefaultsAreUnchanged(t *testing.T) {
 	if DefaultCharacterLimit != 1000 {
 		t.Errorf("DefaultCharacterLimit = %d, want 1000", DefaultCharacterLimit)
@@ -226,7 +226,6 @@ func TestShippedDefaultsAreUnchanged(t *testing.T) {
 func TestDefaultHotkeysMatchWhatShipped(t *testing.T) {
 	actions := DefaultActions()
 
-	// These were proven in daily use before the rename; they must not drift.
 	want := map[ActionKind]string{
 		ActionReviseAll: "ctrl+alt+space",
 		ActionTranslate: "ctrl+alt+g",

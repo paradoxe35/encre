@@ -17,7 +17,7 @@ fn classify(current: Option<String>) -> Saved {
         Some(text) if text.is_empty() => Saved::Empty,
         Some(text) => Saved::Text(text),
         // Telling "empty" from "holds a PNG" needs a per-platform format query. Assuming occupied
-        // is the safe way to be wrong: restore then clears instead of leaving our text behind.
+        // is the safe way to be wrong: restore then clears instead of leaving pasted text behind.
         None => Saved::Foreign,
     }
 }

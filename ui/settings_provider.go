@@ -87,7 +87,7 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	apiKeyEntry := w.dirtyPasswordEntry()
 	apiKeyEntry.Bind(w.apiKeyBinding)
 	apiKeyEntry.PlaceHolder = "Enter your API key"
-	apiKeyEntry.Validator = nil // no validation icon
+	apiKeyEntry.Validator = nil // Bind installs a validator that shows an icon
 
 	modelLabel := widget.NewLabel("Model")
 	modelLabel.TextStyle.Bold = true
@@ -101,7 +101,6 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	browseModels.OnTapped = func() { w.browseProviderModels(w.statusProgress(browseModels)) }
 	modelRow := container.NewBorder(nil, nil, nil, browseModels, modelEntry)
 
-	// Only shown for custom/OpenAI-compatible providers.
 	baseURLLabel := widget.NewLabel("Base URL")
 	baseURLLabel.TextStyle.Bold = true
 	w.baseURLEntry = w.dirtyEntry()
@@ -127,9 +126,7 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	return configForm
 }
 
-// browseProviderModels lists what the provider currently selected on the AI tab
-// offers, using the key and URL on screen rather than the saved ones so an
-// unsaved edit can be tried out.
+// Uses the key and URL on screen rather than the saved ones, so an unsaved edit can be tried out.
 func (w *MainWindow) browseProviderModels(report progress) {
 	provider, _ := w.providerBinding.Get()
 	apiKey, _ := w.apiKeyBinding.Get()
@@ -203,8 +200,7 @@ func (w *MainWindow) testAPIConnection(report progress) {
 	}()
 }
 
-// providerUnderTest builds a provider from what is on screen rather than what
-// is saved, so settings can be tried before committing to them.
+// Builds the provider from what is on screen, so settings can be tried before they are saved.
 func (w *MainWindow) providerUnderTest(provider string, settings config.ProviderSettings, apiKey, baseURL, model string) (ai.Provider, error) {
 	if w.config.IsCustomProvider(provider) {
 		return ai.NewCustomProvider(provider, settings.ProviderType, apiKey, baseURL, model, settings.Temperature)
@@ -282,8 +278,6 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 	fetchModels := widget.NewButtonWithIcon("Fetch models", theme.ListIcon(), nil)
 	fetchModels.Importance = widget.LowImportance
 
-	// One line under the model box for fetching; another under the buttons for
-	// what stops the provider from being added.
 	fetchReport := newFeedback(fetchModels)
 	addReport := newFeedback()
 
@@ -291,7 +285,6 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 		w.fetchModelsForCustomProvider(apiKeyEntry.Text, baseURLEntry.Text, requiresKey.Checked, modelEntry, fetchReport)
 	}
 
-	// A complaint about a field goes away as soon as the field is being fixed.
 	nameEntry.OnChanged = func(string) { addReport.Clear() }
 	baseURLEntry.OnChanged = func(string) { addReport.Clear() }
 
@@ -418,8 +411,7 @@ func (w *MainWindow) fetchModelsForCustomProvider(apiKey, baseURL string, requir
 		return
 	}
 
-	// A provider being added has no name yet, so it lists as OpenAI-compatible,
-	// which is the only type custom providers can be.
+	// No name yet, so the provider lists as OpenAI-compatible, the only type a custom provider can be.
 	w.loadModels("", apiKey, strings.TrimSpace(baseURL), modelEntry.Text, report, func(model string) {
 		modelEntry.SetText(model)
 		report.Done("Model set to " + model)

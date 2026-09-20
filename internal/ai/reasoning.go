@@ -6,9 +6,8 @@ import (
 	"sync"
 )
 
-// ReasoningStyle is how a provider wants to be told to think less. There is no portable parameter:
-// OpenAI 400s on reasoning_effort for a non-reasoning model, and OpenRouter 400s if it sees both
-// shapes at once.
+// ReasoningStyle is how a provider is told to think less. There is no portable parameter: OpenAI
+// 400s on reasoning_effort for a non-reasoning model, OpenRouter 400s on both shapes at once.
 type ReasoningStyle int
 
 const (
@@ -31,16 +30,13 @@ func DetectReasoningStyle(baseURL string) ReasoningStyle {
 	return ReasoningOpenAIEffort
 }
 
-// rejected caches endpoint/model pairs that refused a reasoning parameter, so the wasted round trip
-// happens once per launch rather than on every correction. Process-scoped: persisting it would risk
-// a stale rejection outliving a model upgrade.
+// Endpoint/model pairs that refused a reasoning parameter, so the wasted round trip happens once
+// per launch. Process-scoped: persisted, a stale rejection could outlive a model upgrade.
 var rejected sync.Map
 
-// withReasoningFallback sends with the reasoning parameter, retrying without it on rejection. It
-// matches on status code rather than message text, since every provider words the error
-// differently, and only caches the rejection once dropping the parameter is confirmed to fix it —
-// a 400 has other causes too, and caching on status alone could silence reasoning for a model that
-// never objected.
+// Retries without the reasoning parameter on a 400 (matched on status: providers word the error
+// differently). The rejection is cached only once dropping the parameter fixes it, since a 400
+// has other causes.
 func withReasoningFallback(endpoint, model string, wanted bool, send func(includeReasoning bool) (string, error)) (string, error) {
 	key := endpoint + "::" + model
 	if _, refused := rejected.Load(key); !wanted || refused {

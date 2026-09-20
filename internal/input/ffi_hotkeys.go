@@ -5,14 +5,11 @@ package input
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../rust-ffi
 
-// Linux (includes X11 and Wayland dependencies)
 #cgo linux LDFLAGS: ${SRCDIR}/../../lib/libencre_ffi.a -lpthread -ldl -lm -lxdo -lX11 -lXtst -lXi -lxkbcommon
 
-// macOS
 #cgo darwin LDFLAGS: ${SRCDIR}/../../lib/libencre_ffi.a
 #cgo darwin LDFLAGS: -framework CoreFoundation -framework Security -framework AppKit -framework ApplicationServices -framework Carbon
 
-// Windows
 #cgo windows LDFLAGS: ${SRCDIR}/../../lib/libencre_ffi.a
 #cgo windows LDFLAGS: -lws2_32 -luserenv -lbcrypt -lntdll -static
 
@@ -46,7 +43,7 @@ type FFIHotkeyManager struct {
 	lastTrigger map[string]time.Time
 }
 
-// Global instance for callback routing
+// Rust callbacks carry no context, so routing goes through a global.
 var globalFFIHotkeyManager *FFIHotkeyManager
 var globalFFIMu sync.Mutex
 
@@ -239,8 +236,6 @@ func (h *FFIHotkeyManager) Enable() {
 	logger.Info("FFI: Hotkeys enabled (Go-level gate)")
 }
 
-// hotkeyCallbackGateway is called from Rust when a hotkey fires.
-//
 //export hotkeyCallbackGateway
 func hotkeyCallbackGateway(action *C.char) {
 	if action == nil {

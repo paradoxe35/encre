@@ -184,9 +184,8 @@ func TestLeadingAndTrailingWhitespace(t *testing.T) {
 		wantTrailing string
 	}{
 		{"no whitespace", "hello", "", ""},
-		// Both halves claim the whole string here: each is computed independently from its own
-		// side, and callers only reach this pair after confirming the text has non-whitespace
-		// content (transform's empty check runs first), so the two never actually overlap in use.
+		// Both halves claim the whole string: each is computed from its own side, and callers
+		// only reach the pair after transform's empty check.
 		{"all whitespace", "   ", "   ", "   "},
 		{"empty string", "", "", ""},
 		{"leading and trailing", "  hello  ", "  ", "  "},

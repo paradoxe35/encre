@@ -5,14 +5,11 @@ package input
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../rust-ffi
 
-// Linux (includes X11 and Wayland dependencies)
 #cgo linux LDFLAGS: ${SRCDIR}/../../lib/libencre_ffi.a -lpthread -ldl -lm -lxdo -lX11 -lXtst -lxkbcommon
 
-// macOS
 #cgo darwin LDFLAGS: ${SRCDIR}/../../lib/libencre_ffi.a
 #cgo darwin LDFLAGS: -framework CoreFoundation -framework AppKit -framework ApplicationServices -framework Carbon
 
-// Windows
 #cgo windows LDFLAGS: ${SRCDIR}/../../lib/libencre_ffi.a
 #cgo windows LDFLAGS: -lws2_32 -luserenv -lbcrypt -lntdll -static
 
@@ -39,7 +36,6 @@ func NewFFIKeySimulator() (*FFIKeySimulator, error) {
 	return &FFIKeySimulator{handle: handle}, nil
 }
 
-// SelectAll simulates Ctrl+A / Cmd+A.
 func (s *FFIKeySimulator) SelectAll() error {
 	if s.handle == nil {
 		return fmt.Errorf("key simulator not initialized")
@@ -54,7 +50,6 @@ func (s *FFIKeySimulator) SelectAll() error {
 	return nil
 }
 
-// Copy simulates Ctrl+C / Cmd+C.
 func (s *FFIKeySimulator) Copy() error {
 	if s.handle == nil {
 		return fmt.Errorf("key simulator not initialized")
@@ -69,7 +64,6 @@ func (s *FFIKeySimulator) Copy() error {
 	return nil
 }
 
-// Paste simulates Ctrl+V / Cmd+V.
 func (s *FFIKeySimulator) Paste() error {
 	if s.handle == nil {
 		return fmt.Errorf("key simulator not initialized")
@@ -84,9 +78,8 @@ func (s *FFIKeySimulator) Paste() error {
 	return nil
 }
 
-// ReleaseModifiers drops modifiers still held from the triggering hotkey; otherwise simulating
-// Ctrl+A while Alt is down sends Ctrl+Alt+A. On macOS it also waits for the keyboard to confirm
-// the keys are up, since a posted event merges with modifiers still held.
+// Modifiers still held from the triggering hotkey would turn Ctrl+A into Ctrl+Alt+A. On macOS
+// it also waits for the keyboard to report the keys up, since a posted event merges with them.
 func (s *FFIKeySimulator) ReleaseModifiers() error {
 	if s.handle == nil {
 		return fmt.Errorf("key simulator not initialized")

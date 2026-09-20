@@ -18,7 +18,6 @@ const (
 	registryName = "Encre"
 )
 
-// Enable adds the application to Windows startup registry
 func (a *autoStart) Enable() error {
 	executable, err := os.Executable()
 	if err != nil {
@@ -47,7 +46,6 @@ func (a *autoStart) Enable() error {
 	return nil
 }
 
-// Disable removes the application from Windows startup registry
 func (a *autoStart) Disable() error {
 	key, err := registry.OpenKey(registry.CURRENT_USER, registryKey, registry.SET_VALUE)
 	if err != nil {
@@ -63,7 +61,6 @@ func (a *autoStart) Disable() error {
 	return nil
 }
 
-// IsEnabled checks if the registry entry exists
 func (a *autoStart) IsEnabled() bool {
 	key, err := registry.OpenKey(registry.CURRENT_USER, registryKey, registry.QUERY_VALUE)
 	if err != nil {
