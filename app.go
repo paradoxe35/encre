@@ -106,6 +106,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	app.Lifecycle().SetOnStarted(func() {
 		systray.SetTooltip("Encre - AI Text Revision Tool")
 		installReopenHandler(application.ShowWindow)
+		prepareNotifications()
 	})
 
 	mainWindow.SetCloseIntercept(func() {
