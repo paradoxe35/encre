@@ -76,6 +76,8 @@ func (r *themedBackgroundRenderer) BackgroundColor() color.Color {
 	return theme.Color(theme.ColorNameInputBackground)
 }
 
+const unsetHotkeyText = "Click 'Capture' to set"
+
 func NewHotkeyCapture(binding binding.String, placeholder string) *HotkeyCapture {
 	h := &HotkeyCapture{
 		binding:     binding,
@@ -114,7 +116,8 @@ func NewHotkeyCapture(binding binding.String, placeholder string) *HotkeyCapture
 	h.clearBtn.Importance = widget.LowImportance
 	h.clearBtn.Hide()
 
-	buttonContainer := container.NewHBox(h.captureBtn, h.stopBtn)
+	buttonContainer := container.NewHBox(h.captureBtn, h.stopBtn, h.clearBtn)
+	h.syncClearButton()
 
 	// Stack so only the label or the entry is visible at a time.
 	displayStack := container.NewStack(h.displayLabel, h.entry)
@@ -159,6 +162,7 @@ func (h *HotkeyCapture) startCapture() {
 	h.entry.SetText("")
 	h.entry.Show()
 	h.captureBtn.Hide()
+	h.clearBtn.Hide()
 	h.stopBtn.Show()
 
 	if h.window != nil {
@@ -195,13 +199,7 @@ func (h *HotkeyCapture) stopCapture() {
 	h.entry.Hide()
 	h.stopBtn.Hide()
 	h.captureBtn.Show()
-
-	currentValue, _ := h.binding.Get()
-	if currentValue != "" {
-		h.displayLabel.SetText(currentValue)
-	} else {
-		h.displayLabel.SetText("Click 'Capture' to set hotkey")
-	}
+	h.UpdateFromBinding()
 	h.displayLabel.Show()
 }
 
@@ -338,7 +336,16 @@ func (h *HotkeyCapture) clearHotkey() {
 	if h.onChanged != nil {
 		h.onChanged()
 	}
-	h.displayLabel.SetText("Click 'Capture' to set hotkey")
+	h.UpdateFromBinding()
+}
+
+// The clear button only earns its place next to a hotkey that exists.
+func (h *HotkeyCapture) syncClearButton() {
+	if value, _ := h.binding.Get(); value != "" {
+		h.clearBtn.Show()
+	} else {
+		h.clearBtn.Hide()
+	}
 }
 
 // StopCapture stops capture if currently capturing.
@@ -352,14 +359,15 @@ func (h *HotkeyCapture) StopCapture() {
 	}
 }
 
-// UpdateFromBinding refreshes the label from the binding's current value.
+// UpdateFromBinding refreshes the label and the clear button from the binding's current value.
 func (h *HotkeyCapture) UpdateFromBinding() {
 	currentValue, _ := h.binding.Get()
 	if currentValue != "" {
 		h.displayLabel.SetText(currentValue)
 	} else {
-		h.displayLabel.SetText("Click 'Capture' to set hotkey")
+		h.displayLabel.SetText(unsetHotkeyText)
 	}
+	h.syncClearButton()
 }
 
 // SetSiblings sets other capture widgets that should be disabled during capture

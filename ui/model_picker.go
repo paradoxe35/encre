@@ -17,10 +17,10 @@ import (
 const modelListTimeout = 15 * time.Second
 
 // loadModels lists a provider's models off the UI goroutine and opens the picker
-// once they arrive. status reports progress wherever the caller shows it: the
-// status bar on the AI tab, an inline label inside a dialog.
-func (w *MainWindow) loadModels(provider, apiKey, baseURL, current string, status func(string), apply func(string)) {
-	status("Loading models...")
+// once they arrive. report is wherever the caller shows progress: the status
+// bar on the AI tab, an inline line inside a dialog.
+func (w *MainWindow) loadModels(provider, apiKey, baseURL, current string, report progress, apply func(string)) {
+	report.Busy("Loading models…")
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), modelListTimeout)
@@ -32,11 +32,11 @@ func (w *MainWindow) loadModels(provider, apiKey, baseURL, current string, statu
 			switch {
 			case err != nil:
 				logger.Error("Could not list models", "provider", provider, "error", err)
-				status("Could not load models: " + shortMessage(err.Error()))
+				report.Fail("Could not load models: " + shortMessage(err.Error()))
 			case len(models) == 0:
-				status("No models available")
+				report.Done("The provider lists no models")
 			default:
-				status(fmt.Sprintf("%d models available", len(models)))
+				report.Done(fmt.Sprintf("%d models available", len(models)))
 				w.showModelPicker(models, current, apply)
 			}
 		})

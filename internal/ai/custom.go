@@ -22,10 +22,10 @@ func NewCustomProvider(name, providerType, apiKey, baseURL, model string, temper
 		return nil, fmt.Errorf("unsupported custom provider type: %s", providerType)
 	}
 
-	return &CustomProvider{
-		name:  name,
-		inner: NewOpenAIProvider(apiKey, baseURL, model, temperature),
-	}, nil
+	inner := NewOpenAIProvider(apiKey, baseURL, model, temperature)
+	inner.Name = name
+
+	return &CustomProvider{name: name, inner: inner}, nil
 }
 
 func (p *CustomProvider) ReviseText(ctx context.Context, text, systemPrompt string) (string, error) {

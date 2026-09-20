@@ -61,14 +61,14 @@ func (w *MainWindow) createHotkeysSection() fyne.CanvasObject {
 			widget.NewLabel("How to capture hotkeys"),
 			help,
 		)),
-		reset,
+		container.NewHBox(reset),
 	)
 
 	return container.NewVScroll(container.NewPadded(container.NewVBox(rows...)))
 }
 
 func (w *MainWindow) newCapture(kind config.ActionKind) *HotkeyCapture {
-	capture := NewHotkeyCapture(w.hotkeyBindings[kind], "Click 'Capture' to set")
+	capture := NewHotkeyCapture(w.hotkeyBindings[kind], unsetHotkeyText)
 	capture.window = w.Window
 	capture.SetAllowModifierOnly(true)
 

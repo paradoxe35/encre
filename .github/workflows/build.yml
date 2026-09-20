@@ -673,11 +673,14 @@ jobs:
           fi
           echo "Encre.app created successfully"
 
-      - name: Verify Info.plist
+      - name: Complete and verify Info.plist
         run: |
+          # Notification Center and Finder show CFBundleDisplayName; fyne leaves it out.
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Encre" Encre.app/Contents/Info.plist
           echo "Info.plist contents:"
           /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" Encre.app/Contents/Info.plist
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" Encre.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" Encre.app/Contents/Info.plist
 
       - name: Ad-hoc sign app bundle (inside-out approach)
         run: |
@@ -711,6 +714,13 @@ jobs:
         run: |
           cat > INSTALL_MACOS.txt <<'EOF'
           Encre for macOS - Installation Instructions
+
+          BEFORE THE FIRST LAUNCH:
+
+          Drag Encre.app into your Applications folder. macOS only attributes
+          notifications to an app it has registered: launched from the
+          download folder or the disk image, they carry the technical name
+          "me.pngwasi.encre" and no icon.
 
           FIRST LAUNCH:
 

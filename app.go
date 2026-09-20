@@ -13,6 +13,7 @@ import (
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/permissions"
+	"github.com/paradoxe35/encre/internal/platform"
 	"github.com/paradoxe35/encre/internal/revision"
 	"github.com/paradoxe35/encre/internal/stt"
 	"github.com/paradoxe35/encre/ui"
@@ -50,6 +51,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	}
 
 	notifications := ui.NewNotificationManager(app)
+	platform.RegisterNotifier(config.APP_ID, "Encre", windowIconICO)
 
 	mainWindow := ui.NewMainWindow(app, cfg, hotkeyManager)
 	mainWindow.SetIcon(resourceIconPng)

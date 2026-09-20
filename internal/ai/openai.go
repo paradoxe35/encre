@@ -12,6 +12,8 @@ import (
 
 // OpenAIProvider implements the Provider interface for OpenAI
 type OpenAIProvider struct {
+	// Name is what errors call this endpoint: "openai" unless a custom provider lends its own.
+	Name        string
 	APIKey      string
 	BaseURL     string
 	Model       string
@@ -37,6 +39,7 @@ func NewOpenAIProvider(apiKey, baseURL, model string, temperature float64) *Open
 		temperature = 1.0
 	}
 	return &OpenAIProvider{
+		Name:        "openai",
 		APIKey:      apiKey,
 		BaseURL:     strings.TrimRight(baseURL, "/"),
 		Model:       model,
@@ -131,12 +134,12 @@ func (p *OpenAIProvider) send(ctx context.Context, requestBody OpenAIRequest) (s
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", ParseAPIError(resp.StatusCode, body, "openai")
+		return "", ParseAPIError(resp.StatusCode, body, p.Name)
 	}
 
 	var response OpenAIResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return "", ParseUnmarshalError(err, body, resp.StatusCode, "openai")
+		return "", ParseUnmarshalError(err, body, resp.StatusCode, p.Name)
 	}
 
 	if response.Error != nil {
@@ -158,7 +161,7 @@ func (p *OpenAIProvider) ValidateConfig() error {
 }
 
 func (p *OpenAIProvider) GetName() string {
-	return "openai"
+	return p.Name
 }
 
 func (p *OpenAIProvider) GetModel() string {

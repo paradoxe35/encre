@@ -14,18 +14,18 @@ import (
 )
 
 func (w *MainWindow) createSystemSection() fyne.CanvasObject {
-	themeLabel := widget.NewLabel("Theme:")
+	themeLabel := widget.NewLabel("Theme")
 	themeLabel.TextStyle.Bold = true
 
 	// Theme is applied in saveSettings, like every other control here.
-	themeSelect := w.dirtySelect([]string{"auto", "light", "dark"}, func(value string) {
-		w.themeBinding.Set(value)
+	themeSelect := w.dirtySelect(themeLabels(), func(label string) {
+		w.themeBinding.Set(themeValueFor(label))
 	})
 
 	currentTheme, _ := w.themeBinding.Get()
-	themeSelect.SetSelected(currentTheme)
+	themeSelect.SetSelected(themeLabelFor(currentTheme))
 
-	themeDesc := widget.NewLabel("Auto: Follow system theme\nLight: Always use light theme\nDark: Always use dark theme")
+	themeDesc := widget.NewLabel("Auto follows the system theme.")
 	themeDesc.Wrapping = fyne.TextWrapWord
 
 	// Bind installs its own OnChanged, so a callback on the check would get overwritten; dirty tracking hooks the binding instead.
@@ -109,4 +109,37 @@ func (w *MainWindow) restartApplication() {
 			w.app.Quit()
 		})
 	}()
+}
+
+// The config stores lower-case theme names; the dropdown shows them capitalised.
+var themes = []struct{ value, label string }{
+	{"auto", "Auto"},
+	{"light", "Light"},
+	{"dark", "Dark"},
+}
+
+func themeLabels() []string {
+	labels := make([]string, len(themes))
+	for i, theme := range themes {
+		labels[i] = theme.label
+	}
+	return labels
+}
+
+func themeLabelFor(value string) string {
+	for _, theme := range themes {
+		if theme.value == value {
+			return theme.label
+		}
+	}
+	return themes[0].label
+}
+
+func themeValueFor(label string) string {
+	for _, theme := range themes {
+		if theme.label == label {
+			return theme.value
+		}
+	}
+	return themes[0].value
 }
