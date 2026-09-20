@@ -75,6 +75,7 @@ type MainWindow struct {
 	speechRemoteModel   *widget.SelectEntry
 	speechRemoteURL     *widget.Entry
 	speechRemoteKey     *widget.Entry
+	microphoneNotice    *fyne.Container
 
 	baseURLContainer *fyne.Container
 	baseURLEntry     *widget.Entry
@@ -171,7 +172,9 @@ func (w *MainWindow) initBindings() {
 	w.themeBinding.Set(theme)
 }
 
-// SetPermissionState updates the permission prompt visibility and messaging.
+// SetPermissionState shows the permission card while the hotkeys cannot work.
+// A refused microphone only stops dictation, so it is a notice on the Speech
+// tab rather than a wall in front of the settings.
 func (w *MainWindow) SetPermissionState(state permissions.State, showRestart bool) {
 	if w.permissionPrompt == nil {
 		return
@@ -179,10 +182,18 @@ func (w *MainWindow) SetPermissionState(state permissions.State, showRestart boo
 
 	w.permissionPrompt.update(state, showRestart)
 
-	if !state.AllGranted() || showRestart {
+	if state.NeedsRestart() || showRestart {
 		w.showPermissionContent()
 	} else {
 		w.showMainContent()
+	}
+
+	if w.microphoneNotice != nil {
+		if state.MicrophoneDenied {
+			w.microphoneNotice.Show()
+		} else {
+			w.microphoneNotice.Hide()
+		}
 	}
 }
 

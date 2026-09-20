@@ -8,11 +8,15 @@ import (
 	"github.com/paradoxe35/encre/internal/permissions"
 )
 
+const pendingPermissionsInfo = "Encre needs the following permissions to function properly. " +
+	"If Encre is not in the list, add it with +."
+
 type permissionPrompt struct {
 	root                   *fyne.Container
 	infoLabel              *widget.Label
 	accessibilitySection   fyne.CanvasObject
 	inputMonitoringSection fyne.CanvasObject
+	microphoneSection      fyne.CanvasObject
 	dividerAboveList       *widget.Separator
 	dividerBelowList       *widget.Separator
 	restartRow             fyne.CanvasObject
@@ -22,7 +26,7 @@ type permissionPrompt struct {
 func newPermissionPrompt() *permissionPrompt {
 	title := widget.NewLabelWithStyle("Permissions Required", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
-	info := widget.NewLabel("Encre needs the following permissions to function properly.")
+	info := widget.NewLabel(pendingPermissionsInfo)
 	info.Wrapping = fyne.TextWrapWord
 
 	accessibilityButton := newPermissionButton("Grant Access", func() {
@@ -31,7 +35,7 @@ func newPermissionPrompt() *permissionPrompt {
 
 	accessibilitySection := buildPermissionRow(
 		"Accessibility",
-		"Required to automate keyboard input and clipboard operations. If Encre is not in the list, add it with +.",
+		"Required to automate keyboard input and clipboard operations.",
 		accessibilityButton,
 	)
 
@@ -45,9 +49,17 @@ func newPermissionPrompt() *permissionPrompt {
 		inputMonitoringButton,
 	)
 
-	restartButton := widget.NewButtonWithIcon("Restart Application", theme.MediaReplayIcon(), func() {
-		// Will be set by the window
+	microphoneButton := newPermissionButton("Grant Access", func() {
+		permissions.OpenPreference(permissions.Microphone)
 	})
+
+	microphoneSection := buildPermissionRow(
+		"Microphone",
+		"Dictation was refused the microphone. Allow Encre, then hold the dictate shortcut again.",
+		microphoneButton,
+	)
+
+	restartButton := widget.NewButtonWithIcon("Restart Application", theme.MediaReplayIcon(), nil)
 	restartButton.Importance = widget.HighImportance
 
 	restartRow := container.NewPadded(
@@ -66,6 +78,7 @@ func newPermissionPrompt() *permissionPrompt {
 		dividerAbove,
 		accessibilitySection,
 		inputMonitoringSection,
+		microphoneSection,
 		dividerBelow,
 		restartRow,
 	)
@@ -77,6 +90,7 @@ func newPermissionPrompt() *permissionPrompt {
 		infoLabel:              info,
 		accessibilitySection:   accessibilitySection,
 		inputMonitoringSection: inputMonitoringSection,
+		microphoneSection:      microphoneSection,
 		dividerAboveList:       dividerAbove,
 		dividerBelowList:       dividerBelow,
 		restartRow:             restartRow,
@@ -89,25 +103,23 @@ func (p *permissionPrompt) canvasObject() fyne.CanvasObject {
 }
 
 func (p *permissionPrompt) update(state permissions.State, showRestart bool) {
-	pendingAccessibility := !state.AccessibilityGranted
-	pendingInput := !state.InputMonitoringGranted
-	hasPending := pendingAccessibility || pendingInput
-
-	if pendingAccessibility {
-		p.accessibilitySection.Show()
-	} else {
-		p.accessibilitySection.Hide()
+	pending := state.NeedsRestart()
+	rows := map[fyne.CanvasObject]bool{
+		p.accessibilitySection:   !state.AccessibilityGranted,
+		p.inputMonitoringSection: !state.InputMonitoringGranted,
+		p.microphoneSection:      pending && state.MicrophoneDenied,
 	}
-
-	if pendingInput {
-		p.inputMonitoringSection.Show()
-	} else {
-		p.inputMonitoringSection.Hide()
+	for row, show := range rows {
+		if show {
+			row.Show()
+		} else {
+			row.Hide()
+		}
 	}
 
 	switch {
-	case hasPending:
-		p.infoLabel.SetText("Encre needs the following permissions to function properly.")
+	case pending:
+		p.infoLabel.SetText(pendingPermissionsInfo)
 		p.dividerAboveList.Show()
 		p.dividerBelowList.Hide()
 		p.restartRow.Hide()

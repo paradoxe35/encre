@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/permissions"
 	"github.com/paradoxe35/encre/internal/stt"
 	"github.com/paradoxe35/encre/internal/stt/witai"
 )
@@ -81,9 +82,12 @@ func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
 
 	w.buildSpeechOptions()
 
+	w.microphoneNotice = microphoneRefusedNotice()
+
 	return container.NewBorder(
 		container.NewPadded(container.NewVBox(
 			w.speechHeader(),
+			w.microphoneNotice,
 			container.NewBorder(nil, nil, widget.NewLabel("Transcribe"), options,
 				container.NewGridWithColumns(2, w.speechEngine, w.speechLanguageBox)),
 		)),
@@ -115,6 +119,22 @@ func engineLabel(engine config.SpeechEngine) string {
 	default:
 		return "On this computer"
 	}
+}
+
+// Hidden until macOS reports the microphone refused; the card on launch
+// covers the same case for permissions the hotkeys need.
+func microphoneRefusedNotice() *fyne.Container {
+	text := widget.NewLabel("Dictation was refused the microphone. Allow Encre, then hold the shortcut again.")
+	text.Wrapping = fyne.TextWrapWord
+	text.Importance = widget.WarningImportance
+
+	grant := widget.NewButtonWithIcon("Grant access", theme.SettingsIcon(), func() {
+		permissions.OpenPreference(permissions.Microphone)
+	})
+
+	notice := container.NewBorder(nil, nil, nil, grant, text)
+	notice.Hide()
+	return notice
 }
 
 func (w *MainWindow) speechHeader() fyne.CanvasObject {

@@ -60,7 +60,9 @@ pub struct Wanted<'a, E> {
 /// Everything captured is also kept, so a stream that breaks, or a model that
 /// never arrives, still hands the host the audio for a batch pass.
 pub struct Take<S: Source> {
-    source: Option<S>,
+    /// `Err` when the microphone could not be opened; the take then reports that
+    /// at stop instead of handing back an empty transcript.
+    source: Result<S, String>,
     pipeline: Pipeline,
     spoken: Vec<f32>,
     language: Option<String>,
@@ -79,7 +81,7 @@ enum Streamed {
 }
 
 impl<S: Source> Take<S> {
-    pub fn new(source: Option<S>, language: Option<String>) -> Self {
+    pub fn new(source: Result<S, String>, language: Option<String>) -> Self {
         let rate = source.as_ref().map(Source::rate).unwrap_or(SAMPLE_RATE);
         Self {
             source,
@@ -200,7 +202,7 @@ impl<S: Source> Take<S> {
     /// Ends the stream. A partial transcript is worse than none, since the host
     /// cannot tell what is missing, so any failure hands back the audio instead.
     fn finish<L: Live>(&mut self, mut live: Streaming<L>) -> Stopped {
-        if live.degraded {
+        if live.degraded || self.source.is_err() {
             live.abort();
             return self.stopped_with_samples();
         }
@@ -220,7 +222,7 @@ impl<S: Source> Take<S> {
 
     /// Pulls what the microphone has queued and returns the speech in it.
     fn pull(&mut self) -> Vec<f32> {
-        if let Some(source) = &self.source {
+        if let Ok(source) = &self.source {
             self.pipeline.feed(&source.take());
         }
         let speech = self.pipeline.take();
@@ -230,7 +232,7 @@ impl<S: Source> Take<S> {
 
     /// Pulls the rest, flushing the resampler, and returns the final speech.
     fn drain(&mut self) -> Vec<f32> {
-        if let Some(source) = &self.source {
+        if let Ok(source) = &self.source {
             self.pipeline.feed(&source.take());
         }
         let tail = self.pipeline.finish();
@@ -239,9 +241,13 @@ impl<S: Source> Take<S> {
     }
 
     fn stopped_with_samples(&mut self) -> Stopped {
+        let text = match &self.source {
+            Ok(_) => Ok(None),
+            Err(reason) => Err(reason.clone()),
+        };
         Stopped {
             samples: std::mem::take(&mut self.spoken),
-            text: Ok(None),
+            text,
             language: self.language.clone(),
         }
     }
@@ -408,7 +414,7 @@ mod tests {
                 queued: &thread_queued,
                 model,
             });
-            Take::new(Some(Microphone(incoming)), Some("fr".to_owned())).run(&rx, wanted)
+            Take::new(Ok(Microphone(incoming)), Some("fr".to_owned())).run(&rx, wanted)
         });
 
         Harness {
@@ -469,6 +475,26 @@ mod tests {
         assert!(matches!(stopped.text, Ok(None)));
         assert_eq!(stopped.samples.len(), tone(2.0).len());
         assert_eq!(stopped.language.as_deref(), Some("fr"));
+    }
+
+    /// A microphone that never opened must not look like a take with nothing said in it.
+    #[test]
+    fn a_take_without_a_microphone_reports_why() {
+        let (commands, rx) = channel();
+        let handle = thread::spawn(move || {
+            Take::<Microphone>::new(Err("no input device available".to_owned()), None)
+                .run::<FakeEngine>(&rx, None)
+        });
+
+        let (reply, stopped) = channel();
+        commands.send(Command::Stop(reply)).unwrap();
+        let stopped = stopped
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the take must answer a stop");
+
+        assert!(handle.join().unwrap(), "a stop keeps the recorder running");
+        assert_eq!(stopped.text, Err("no input device available".to_owned()));
+        assert!(stopped.samples.is_empty());
     }
 
     #[test]

@@ -71,6 +71,8 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 		func(err error) {
 			fyne.Do(func() {
 				application.notifications.ShowError("Dictation failed", err.Error())
+				// A refused microphone is the one permission that can go missing after launch.
+				application.mainWindow.SetPermissionState(permissions.CurrentState(), application.permissionsMissingOnLaunch)
 			})
 		})
 
@@ -231,7 +233,7 @@ func (a *Application) setConfig(cfg *config.Config) {
 func (a *Application) setupPermissions() {
 	state := permissions.CurrentState()
 	supported := permissions.IsSupported()
-	missingOnLaunch := supported && !state.AllGranted()
+	missingOnLaunch := supported && state.NeedsRestart()
 
 	a.permissionsMissingOnLaunch = missingOnLaunch
 	a.mainWindow.SetPermissionState(state, missingOnLaunch)
@@ -240,7 +242,7 @@ func (a *Application) setupPermissions() {
 		return
 	}
 
-	if missingOnLaunch {
+	if !state.AllGranted() {
 		logger.Warn("macOS permissions required for full functionality")
 		for _, perm := range state.Missing() {
 			logger.Warn("permission pending", "name", perm.DisplayName())
@@ -278,6 +280,14 @@ func (a *Application) monitorPermissions(ctx context.Context, previous permissio
 					logger.Info("Input Monitoring permission granted")
 				} else {
 					logger.Warn("Input Monitoring permission revoked")
+				}
+			}
+
+			if state.MicrophoneDenied != previous.MicrophoneDenied {
+				if state.MicrophoneDenied {
+					logger.Warn("Microphone permission refused")
+				} else {
+					logger.Info("Microphone permission granted")
 				}
 			}
 

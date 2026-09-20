@@ -677,10 +677,13 @@ jobs:
         run: |
           # Notification Center and Finder show CFBundleDisplayName; fyne leaves it out.
           /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Encre" Encre.app/Contents/Info.plist
+          # macOS only shows the microphone prompt to a bundle that carries a usage description.
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Encre listens to the microphone while you hold the dictate shortcut." Encre.app/Contents/Info.plist
           echo "Info.plist contents:"
           /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" Encre.app/Contents/Info.plist
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" Encre.app/Contents/Info.plist
           /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" Encre.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" Encre.app/Contents/Info.plist
 
       - name: Ad-hoc sign app bundle (inside-out approach)
         run: |

@@ -4,72 +4,64 @@ package permissions
 
 /*
 #cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework Cocoa -framework ApplicationServices
+#cgo LDFLAGS: -framework Cocoa -framework ApplicationServices -framework AVFoundation
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <AVFoundation/AVFoundation.h>
 
-// Return true when the app already has Accessibility permission.
+// Both checks are silent: the card on screen replaces the system prompt.
 bool IsAccessibilityTrusted(void) {
     return AXIsProcessTrusted();
 }
 
-// Dummy callback used to probe Input Monitoring permissions.
-static CGEventRef DummyEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
-    return event;
-}
-
-// Return true when the app already has Input Monitoring permission.
 bool HasInputMonitoringPermission(void) {
-    CFMachPortRef eventTap = CGEventTapCreate(
-        kCGSessionEventTap,
-        kCGHeadInsertEventTap,
-        kCGEventTapOptionListenOnly,
-        CGEventMaskBit(kCGEventKeyDown),
-        DummyEventCallback,
-        NULL
-    );
-
-    if (eventTap) {
-        CFRelease(eventTap);
-        return true;
-    }
-
-    return false;
+    return CGPreflightListenEventAccess();
 }
 
-// Open System Settings to the Accessibility section.
+// Reading the status never prompts; only a capture request does.
+bool IsMicrophoneDenied(void) {
+    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    return status == AVAuthorizationStatusDenied || status == AVAuthorizationStatusRestricted;
+}
+
+static void OpenPrivacyPane(NSString *pane) {
+    NSString *urlString = [@"x-apple.systempreferences:com.apple.preference.security?" stringByAppendingString:pane];
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:urlString]];
+}
+
 void OpenAccessibilityPreferences(void) {
-    NSString *urlString = @"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:urlString]];
+    OpenPrivacyPane(@"Privacy_Accessibility");
 }
 
-// Open System Settings to the Input Monitoring section.
 void OpenInputMonitoringPreferences(void) {
-    NSString *urlString = @"x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:urlString]];
+    OpenPrivacyPane(@"Privacy_ListenEvent");
+}
+
+void OpenMicrophonePreferences(void) {
+    OpenPrivacyPane(@"Privacy_Microphone");
 }
 */
 import "C"
 
-// IsSupported reports whether the current build targets macOS specific permissions.
 func IsSupported() bool {
 	return true
 }
 
-// CurrentState reads the latest macOS permission state.
 func CurrentState() State {
 	return State{
 		AccessibilityGranted:   bool(C.IsAccessibilityTrusted()),
 		InputMonitoringGranted: bool(C.HasInputMonitoringPermission()),
+		MicrophoneDenied:       bool(C.IsMicrophoneDenied()),
 	}
 }
 
-// OpenPreference opens the relevant System Settings pane for the given permission.
 func OpenPreference(t Type) {
 	switch t {
 	case Accessibility:
 		C.OpenAccessibilityPreferences()
 	case InputMonitoring:
 		C.OpenInputMonitoringPreferences()
+	case Microphone:
+		C.OpenMicrophonePreferences()
 	}
 }

@@ -221,7 +221,10 @@ fn record(
         model,
     } = settings;
 
-    let source = StreamGuard::open(levels, device.as_deref()).ok();
+    let source = StreamGuard::open(levels, device.as_deref()).map_err(|e| {
+        tracing::warn!("microphone unavailable: {e:#}");
+        format!("microphone unavailable: {e:#}")
+    });
     let wanted = match (&model, capture_only) {
         (Some(model), false) => Some(Wanted {
             engine,
