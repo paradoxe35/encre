@@ -7,7 +7,7 @@ use std::thread;
 
 use anyhow::{Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SampleFormat, StreamConfig};
+use cpal::{Device, SampleFormat, StreamConfig, SupportedStreamConfigRange};
 use parking_lot::{Mutex, MutexGuard};
 
 use super::engine::Engine;
@@ -278,6 +278,10 @@ impl StreamGuard {
         let stream = build_stream(&device, &config, tx, levels)?;
         // cpal does not auto-start streams; without this recordings come back silent.
         stream.play()?;
+        tracing::info!(
+            "Capture opened on '{device}': {rate} Hz, {channels} channel(s), {:?}",
+            config.format
+        );
 
         Ok(Self {
             _stream: stream,
@@ -358,17 +362,7 @@ fn preferred_config(device: &Device) -> Result<SelectedConfig> {
     let default = device.default_input_config()?;
     let rate = default.sample_rate();
 
-    let best = device
-        .supported_input_configs()?
-        .filter(|range| range.min_sample_rate() <= rate && rate <= range.max_sample_rate())
-        .max_by_key(|range| match range.sample_format() {
-            SampleFormat::F32 => 3,
-            SampleFormat::I16 => 2,
-            SampleFormat::I32 => 1,
-            _ => 0,
-        });
-
-    match best {
+    match choose_config(device.supported_input_configs()?, rate) {
         Some(range) => Ok(SelectedConfig {
             format: range.sample_format(),
             config: range.with_sample_rate(rate).config(),
@@ -377,6 +371,33 @@ fn preferred_config(device: &Device) -> Result<SelectedConfig> {
             format: default.sample_format(),
             config: default.config(),
         }),
+    }
+}
+
+/// Fewest channels first, then the format that costs least to convert. The
+/// pipeline mixes down to mono anyway, and ALSA plugin devices (PipeWire,
+/// PulseAudio) advertise every channel count up to 64: opening the widest one
+/// makes the sound server upmix ~12 MB/s in its realtime thread, which on a
+/// modest machine froze the desktop.
+fn choose_config(
+    ranges: impl IntoIterator<Item = SupportedStreamConfigRange>,
+    rate: u32,
+) -> Option<SupportedStreamConfigRange> {
+    ranges
+        .into_iter()
+        .filter(|range| range.min_sample_rate() <= rate && rate <= range.max_sample_rate())
+        .filter_map(|range| format_cost(range.sample_format()).map(|cost| (range, cost)))
+        .min_by_key(|(range, cost)| (range.channels(), *cost))
+        .map(|(range, _)| range)
+}
+
+/// Formats `build_stream` can open, cheapest first; `None` is unsupported.
+fn format_cost(format: SampleFormat) -> Option<u8> {
+    match format {
+        SampleFormat::F32 => Some(0),
+        SampleFormat::I16 => Some(1),
+        SampleFormat::I32 => Some(2),
+        _ => None,
     }
 }
 
@@ -431,6 +452,79 @@ fn forward(data: Vec<f32>, samples: &Sender<Vec<f32>>, levels: &Sender<f32>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cpal::SupportedBufferSize;
+
+    fn range(channels: u16, format: SampleFormat) -> SupportedStreamConfigRange {
+        SupportedStreamConfigRange::new(
+            channels,
+            8_000,
+            96_000,
+            SupportedBufferSize::Unknown,
+            format,
+        )
+    }
+
+    /// ALSA plugin devices enumerate one range per channel count, ascending.
+    fn plugin_device(format: SampleFormat) -> Vec<SupportedStreamConfigRange> {
+        (1..=64).map(|channels| range(channels, format)).collect()
+    }
+
+    #[test]
+    fn a_plugin_device_is_opened_in_mono() {
+        let mut ranges = plugin_device(SampleFormat::I16);
+        ranges.extend(plugin_device(SampleFormat::F32));
+
+        let chosen = choose_config(ranges, 48_000).expect("something matches");
+        assert_eq!(chosen.channels(), 1);
+        assert_eq!(chosen.sample_format(), SampleFormat::F32);
+    }
+
+    #[test]
+    fn a_stereo_only_device_is_opened_in_stereo() {
+        let ranges = vec![range(2, SampleFormat::I16), range(4, SampleFormat::F32)];
+
+        let chosen = choose_config(ranges, 48_000).expect("something matches");
+        assert_eq!(chosen.channels(), 2, "fewer channels beat a nicer format");
+        assert_eq!(chosen.sample_format(), SampleFormat::I16);
+    }
+
+    #[test]
+    fn the_best_format_wins_among_equal_channel_counts() {
+        let ranges = vec![
+            range(1, SampleFormat::I32),
+            range(1, SampleFormat::F32),
+            range(1, SampleFormat::I16),
+        ];
+        let chosen = choose_config(ranges, 48_000).unwrap();
+        assert_eq!(chosen.sample_format(), SampleFormat::F32);
+
+        let ranges = vec![range(1, SampleFormat::I32), range(1, SampleFormat::I16)];
+        let chosen = choose_config(ranges, 48_000).unwrap();
+        assert_eq!(chosen.sample_format(), SampleFormat::I16);
+    }
+
+    #[test]
+    fn ranges_that_cannot_be_opened_are_skipped() {
+        let out_of_rate = SupportedStreamConfigRange::new(
+            1,
+            8_000,
+            16_000,
+            SupportedBufferSize::Unknown,
+            SampleFormat::F32,
+        );
+        let ranges = vec![
+            out_of_rate,
+            range(1, SampleFormat::U8),
+            range(2, SampleFormat::F32),
+        ];
+
+        let chosen = choose_config(ranges, 48_000).unwrap();
+        assert_eq!(
+            (chosen.channels(), chosen.sample_format()),
+            (2, SampleFormat::F32)
+        );
+        assert!(choose_config(vec![range(1, SampleFormat::U8)], 48_000).is_none());
+    }
 
     /// The error names the reason, not a bare "no model loaded".
     #[test]
