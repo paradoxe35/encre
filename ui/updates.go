@@ -39,7 +39,7 @@ type updateState struct {
 }
 
 func newUpdateState() updateState {
-	return updateState{status: "Encre checks for updates at startup."}
+	return updateState{status: "Encre checks for updates automatically."}
 }
 
 func (s *updateState) checking() { s.set(updateChecking, "Checking for updates", false) }
