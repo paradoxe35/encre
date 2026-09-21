@@ -197,7 +197,7 @@ func (p *Processor) Run(kind config.ActionKind) error {
 		}
 	}
 
-	if err := p.clipboardManager.ReplaceSelectedText(result); err != nil {
+	if err := p.clipboardManager.ReplaceSelectedText(result, p.currentConfig().PasteShortcut()); err != nil {
 		return fmt.Errorf("failed to replace text: %w", err)
 	}
 
@@ -396,7 +396,7 @@ func (p *Processor) InsertText(text string) error {
 	if err := p.clipboardManager.SaveCurrent(); err != nil {
 		logger.Warn("Could not save the clipboard before dictating", "error", err)
 	}
-	return p.clipboardManager.ReplaceSelectedText(text)
+	return p.clipboardManager.ReplaceSelectedText(text, p.currentConfig().PasteShortcut())
 }
 
 // Uses the dedicated dictation prompt rather than an editable action prompt, so unrelated

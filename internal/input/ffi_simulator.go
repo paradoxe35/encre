@@ -78,6 +78,21 @@ func (s *FFIKeySimulator) Paste() error {
 	return nil
 }
 
+// PasteTerminal sends Ctrl+Shift+V, the chord terminals bind. Cmd+V on macOS, like Paste.
+func (s *FFIKeySimulator) PasteTerminal() error {
+	if s.handle == nil {
+		return fmt.Errorf("key simulator not initialized")
+	}
+
+	logger.Debug("FFI: Simulating terminal Paste")
+	result := C.encre_simulate_paste_terminal(s.handle)
+	if result != 0 {
+		return fmt.Errorf("failed to simulate terminal paste: %s", getLastError())
+	}
+
+	return nil
+}
+
 // Modifiers still held from the triggering hotkey would turn Ctrl+A into Ctrl+Alt+A. On macOS
 // it also waits for the keyboard to report the keys up, since a posted event merges with them.
 func (s *FFIKeySimulator) ReleaseModifiers() error {

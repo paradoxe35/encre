@@ -39,6 +39,7 @@ type MainWindow struct {
 	startMinimizedBinding binding.Bool
 	startOnLoginBinding   binding.Bool
 	themeBinding          binding.String
+	pasteShortcutBinding  binding.String
 	unsavedLabel          *widget.Label
 	dirty                 bool
 	initializing          bool
@@ -124,6 +125,8 @@ func (w *MainWindow) initBindings() {
 	w.startMinimizedBinding = binding.NewBool()
 	w.startOnLoginBinding = binding.NewBool()
 	w.themeBinding = binding.NewString()
+	w.pasteShortcutBinding = binding.NewString()
+	w.pasteShortcutBinding.Set(string(w.config.PasteShortcut()))
 
 	currentProvider := w.config.GetCurrentProvider()
 	w.providerBinding.Set(currentProvider)

@@ -112,6 +112,11 @@ int encre_simulate_copy(encre_SimulatorHandle handle);
 int encre_simulate_paste(encre_SimulatorHandle handle);
 
 /**
+ * Ctrl+Shift+V, the paste chord terminals bind. Cmd+V on macOS, like `encre_simulate_paste`.
+ */
+int encre_simulate_paste_terminal(encre_SimulatorHandle handle);
+
+/**
  * Drops modifiers the triggering hotkey left down. Call once before any combo.
  */
 int encre_simulate_release_modifiers(encre_SimulatorHandle handle);

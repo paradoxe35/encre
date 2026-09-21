@@ -23,6 +23,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
@@ -222,7 +223,7 @@ func (c *FFIClipboardManager) capture(selectAllFirst bool) (string, CaptureOutco
 
 // The selection is still active from the capture, so pasting replaces it; the clipboard is
 // put back afterwards.
-func (c *FFIClipboardManager) ReplaceSelectedText(newText string) error {
+func (c *FFIClipboardManager) ReplaceSelectedText(newText string, shortcut config.PasteShortcut) error {
 	if err := c.SetText(newText); err != nil {
 		c.Abandon()
 		return fmt.Errorf("failed to set clipboard text: %w", err)
@@ -248,7 +249,7 @@ func (c *FFIClipboardManager) ReplaceSelectedText(newText string) error {
 		logger.Warn("Could not release held modifiers", "error", err)
 	}
 
-	if err := sim.Paste(); err != nil {
+	if err := pasteWith(sim, shortcut); err != nil {
 		c.Abandon()
 		return fmt.Errorf("failed to simulate paste: %w", err)
 	}

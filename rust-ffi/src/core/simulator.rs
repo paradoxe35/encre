@@ -2,11 +2,48 @@ use anyhow::Result;
 use tracing::debug;
 
 #[cfg(not(target_os = "macos"))]
-use enigo::{Enigo, Key, Keyboard, Settings};
+use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
 pub struct KeySimulator {
     #[cfg(not(target_os = "macos"))]
     enigo: Enigo,
+}
+
+/// The one call a chord needs from the keyboard, so the ordering can be checked without one.
+#[cfg(not(target_os = "macos"))]
+trait KeyEvents {
+    fn event(&mut self, key: Key, direction: Direction) -> Result<()>;
+}
+
+#[cfg(not(target_os = "macos"))]
+impl KeyEvents for Enigo {
+    fn event(&mut self, key: Key, direction: Direction) -> Result<()> {
+        self.key(key, direction)?;
+        Ok(())
+    }
+}
+
+/// Presses the keys in order and releases them in reverse. Every key that went down comes
+/// back up even after a failure, or every keystroke that follows is a shortcut.
+#[cfg(not(target_os = "macos"))]
+fn press_chord(keyboard: &mut impl KeyEvents, keys: &[Key]) -> Result<()> {
+    let mut outcome = Ok(());
+    let mut held = 0;
+    for &key in keys {
+        match keyboard.event(key, Direction::Press) {
+            Ok(()) => held += 1,
+            Err(e) => {
+                outcome = Err(e);
+                break;
+            }
+        }
+    }
+    for &key in keys[..held].iter().rev() {
+        if let Err(e) = keyboard.event(key, Direction::Release) {
+            outcome = outcome.and(Err(e));
+        }
+    }
+    outcome
 }
 
 /// Stamped on every event the simulator posts, so the hotkey listener can tell them from the
@@ -149,23 +186,16 @@ impl KeySimulator {
             debug!("Releasing held modifiers");
             // Best effort; a modifier that was never down releases harmlessly.
             for key in [Key::Control, Key::Alt, Key::Shift, Key::Meta] {
-                let _ = self.enigo.key(key, enigo::Direction::Release);
+                let _ = self.enigo.key(key, Direction::Release);
             }
             Ok(())
         }
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn control_combo(&mut self, letter: char) -> Result<()> {
+    fn chord(&mut self, keys: &[Key]) -> Result<()> {
         self.release_modifiers()?;
-        self.enigo.key(Key::Control, enigo::Direction::Press)?;
-        let clicked = self
-            .enigo
-            .key(Key::Unicode(letter), enigo::Direction::Click);
-        // Control must come up even if the letter failed, or every later keystroke is a shortcut.
-        self.enigo.key(Key::Control, enigo::Direction::Release)?;
-        clicked?;
-        Ok(())
+        press_chord(&mut self.enigo, keys)
     }
 
     pub fn select_all(&mut self) -> Result<()> {
@@ -176,7 +206,7 @@ impl KeySimulator {
 
         #[cfg(not(target_os = "macos"))]
         {
-            self.control_combo('a')
+            self.chord(&[Key::Control, Key::Unicode('a')])
         }
     }
 
@@ -188,7 +218,7 @@ impl KeySimulator {
 
         #[cfg(not(target_os = "macos"))]
         {
-            self.control_combo('c')
+            self.chord(&[Key::Control, Key::Unicode('c')])
         }
     }
 
@@ -200,7 +230,86 @@ impl KeySimulator {
 
         #[cfg(not(target_os = "macos"))]
         {
-            self.control_combo('v')
+            self.chord(&[Key::Control, Key::Unicode('v')])
         }
+    }
+
+    /// Terminals bind Ctrl+Shift+V; macOS terminals take the same Cmd+V as everything else.
+    pub fn paste_terminal(&mut self) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            macos_native::paste()
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.chord(&[Key::Control, Key::Shift, Key::Unicode('v')])
+        }
+    }
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Recorder {
+        events: Vec<(Key, Direction)>,
+        refuses: Option<Key>,
+    }
+
+    impl KeyEvents for Recorder {
+        fn event(&mut self, key: Key, direction: Direction) -> Result<()> {
+            if direction == Direction::Press && self.refuses == Some(key) {
+                anyhow::bail!("refused");
+            }
+            self.events.push((key, direction));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn terminal_paste_releases_in_reverse_order() {
+        let mut keyboard = Recorder::default();
+        press_chord(
+            &mut keyboard,
+            &[Key::Control, Key::Shift, Key::Unicode('v')],
+        )
+        .unwrap();
+
+        assert_eq!(
+            keyboard.events,
+            vec![
+                (Key::Control, Direction::Press),
+                (Key::Shift, Direction::Press),
+                (Key::Unicode('v'), Direction::Press),
+                (Key::Unicode('v'), Direction::Release),
+                (Key::Shift, Direction::Release),
+                (Key::Control, Direction::Release),
+            ]
+        );
+    }
+
+    #[test]
+    fn held_modifiers_come_up_when_the_letter_fails() {
+        let mut keyboard = Recorder {
+            refuses: Some(Key::Unicode('v')),
+            ..Recorder::default()
+        };
+        let outcome = press_chord(
+            &mut keyboard,
+            &[Key::Control, Key::Shift, Key::Unicode('v')],
+        );
+
+        assert!(outcome.is_err());
+        assert_eq!(
+            keyboard.events,
+            vec![
+                (Key::Control, Direction::Press),
+                (Key::Shift, Direction::Press),
+                (Key::Shift, Direction::Release),
+                (Key::Control, Direction::Release),
+            ]
+        );
     }
 }

@@ -2,12 +2,14 @@ package ui
 
 import (
 	"fmt"
+	"runtime"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/platform"
 	"github.com/paradoxe35/encre/internal/version"
@@ -35,10 +37,16 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	startOnLogin := widget.NewCheck("Start on login", nil)
 	startOnLogin.Bind(w.startOnLoginBinding)
 
+	system := container.NewVBox(startMinimized, startOnLogin)
+	// Only Linux terminals refuse Ctrl+V: macOS always pastes with Cmd+V and Windows Terminal takes both.
+	if runtime.GOOS == "linux" {
+		system.Add(w.createPasteShortcutControls())
+	}
+
 	form := container.NewVBox(
 		container.NewPadded(container.NewVBox(themeLabel, themeSelect, themeDesc)),
 		widget.NewSeparator(),
-		container.NewPadded(container.NewVBox(startMinimized, startOnLogin)),
+		container.NewPadded(system),
 	)
 
 	if version.IsProduction(w.app) {
@@ -51,6 +59,23 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	}
 
 	return container.NewVScroll(form)
+}
+
+func (w *MainWindow) createPasteShortcutControls() fyne.CanvasObject {
+	label := widget.NewLabel("Paste shortcut")
+	label.TextStyle.Bold = true
+
+	pasteSelect := w.dirtySelect(pasteShortcutLabels(), func(label string) {
+		w.pasteShortcutBinding.Set(string(pasteShortcutValueFor(label)))
+	})
+
+	current, _ := w.pasteShortcutBinding.Get()
+	pasteSelect.SetSelected(pasteShortcutLabelFor(config.PasteShortcut(current)))
+
+	hint := widget.NewLabel("Terminals paste with Ctrl+Shift+V. Pick it when you mostly dictate into a terminal.")
+	hint.Wrapping = fyne.TextWrapWord
+
+	return container.NewVBox(label, pasteSelect, hint)
 }
 
 func (w *MainWindow) applyTheme(themeName string) {
@@ -134,4 +159,38 @@ func themeValueFor(label string) string {
 		}
 	}
 	return themes[0].value
+}
+
+var pasteShortcuts = []struct {
+	value config.PasteShortcut
+	label string
+}{
+	{config.PasteStandard, "Ctrl+V (standard)"},
+	{config.PasteTerminal, "Ctrl+Shift+V (terminals)"},
+}
+
+func pasteShortcutLabels() []string {
+	labels := make([]string, len(pasteShortcuts))
+	for i, shortcut := range pasteShortcuts {
+		labels[i] = shortcut.label
+	}
+	return labels
+}
+
+func pasteShortcutLabelFor(value config.PasteShortcut) string {
+	for _, shortcut := range pasteShortcuts {
+		if shortcut.value == value {
+			return shortcut.label
+		}
+	}
+	return pasteShortcuts[0].label
+}
+
+func pasteShortcutValueFor(label string) config.PasteShortcut {
+	for _, shortcut := range pasteShortcuts {
+		if shortcut.label == label {
+			return shortcut.value
+		}
+	}
+	return pasteShortcuts[0].value
 }

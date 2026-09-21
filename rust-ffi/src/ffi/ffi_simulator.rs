@@ -60,6 +60,18 @@ pub unsafe extern "C" fn encre_simulate_paste(handle: SimulatorHandle) -> c_int 
     outcome(simulator.paste(), "Paste simulation failed")
 }
 
+/// Ctrl+Shift+V, the paste chord terminals bind. Cmd+V on macOS, like `encre_simulate_paste`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn encre_simulate_paste_terminal(handle: SimulatorHandle) -> c_int {
+    let Some(simulator) = simulator(handle) else {
+        return FFIErrorCode::NullPointer as c_int;
+    };
+    outcome(
+        simulator.paste_terminal(),
+        "Terminal paste simulation failed",
+    )
+}
+
 /// Drops modifiers the triggering hotkey left down. Call once before any combo.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_simulate_release_modifiers(handle: SimulatorHandle) -> c_int {

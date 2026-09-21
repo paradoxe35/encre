@@ -39,6 +39,9 @@ type Config struct {
 	// EnableProviderMentions lets a selection opt into a provider by starting
 	// with "@name". Applies to every AI-backed action.
 	EnableProviderMentions bool `json:"enable_provider_mentions"`
+
+	// Paste only matters on Linux: macOS always pastes with Cmd+V.
+	Paste PasteShortcut `json:"paste_shortcut"`
 }
 
 type ProviderSettings struct {
@@ -103,6 +106,7 @@ func Default() *Config {
 		Appearance:             defaultAppearance(),
 		Meta:                   MetaConfig{FirstRun: true},
 		EnableProviderMentions: true,
+		Paste:                  PasteStandard,
 	}
 }
 
@@ -505,5 +509,8 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Speech.Engine == "" {
 		c.Speech.Engine = defaultSpeech().Engine
+	}
+	if c.Paste == "" {
+		c.Paste = PasteStandard
 	}
 }

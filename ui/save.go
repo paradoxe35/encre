@@ -39,6 +39,9 @@ func (w *MainWindow) saveSettings() {
 		StartOnLogin:   startOnLogin,
 	})
 
+	pasteShortcut, _ := w.pasteShortcutBinding.Get()
+	w.config.SetPasteShortcut(config.PasteShortcut(pasteShortcut))
+
 	w.applyTheme(themeSetting)
 	w.applyAutoStartSetting(startOnLogin)
 
