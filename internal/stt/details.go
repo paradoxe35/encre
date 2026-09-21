@@ -89,8 +89,8 @@ func ModelDetails(model Model, host Machine, downloaded bool) string {
 	if model.License != "" {
 		lines = append(lines, "License: "+model.License)
 	}
-	if model.WordErrorRate > 0 {
-		lines = append(lines, fmt.Sprintf("Word error rate: %.1f%%", model.WordErrorRate))
+	if model.WordErrorRate != nil && *model.WordErrorRate > 0 {
+		lines = append(lines, fmt.Sprintf("Word error rate: %.1f%%", *model.WordErrorRate))
 	}
 
 	state := "Not downloaded"

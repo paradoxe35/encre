@@ -101,6 +101,15 @@ func (m *ModelList) apply() {
 	m.list.Refresh()
 }
 
+// Reload rebuilds the rows and the active label from the current catalogue,
+// for when it was replaced underneath the list.
+func (m *ModelList) Reload() {
+	m.apply()
+	if m.onActiveChanged != nil {
+		m.onActiveChanged(activeModelText(m.selected, stt.Catalogue(), m.store.Downloaded))
+	}
+}
+
 func matches(model stt.Model, query, mode string, store *stt.Store) bool {
 	switch mode {
 	case "Downloaded":

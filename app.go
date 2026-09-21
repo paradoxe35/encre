@@ -81,7 +81,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 
 	application.setupHotkeys()
 
-	stt.RefreshInBackground()
+	stt.StartRefreshing()
 	application.dictation.Prepare()
 
 	config.RegisterListener(func(newCfg *config.Config) {
@@ -341,6 +341,7 @@ func (a *Application) Stop() {
 	if a.permissionMonitorCancel != nil {
 		a.permissionMonitorCancel()
 	}
+	stt.StopRefreshing()
 
 	a.hotkeyManager.Stop()
 	a.hotkeyManager.Close()

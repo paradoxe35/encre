@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,17 +17,21 @@ import (
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
-// Shipped so the list renders offline and on first run; regenerate with scripts/gen_catalog.py.
+// Shipped so the list renders offline and on first run; regenerate with
+// `go run ./cmd/gen-catalog`.
 //
 //go:embed models.json
 var embeddedCatalog []byte
 
-// Where a newer list is fetched from, so models can be added between releases.
-const CatalogURL = "https://raw.githubusercontent.com/paradoxe35/encre/main/internal/stt/models.json"
-
 const (
 	catalogMaxAge = 24 * time.Hour
 	catalogMaxLen = 8 << 20
+
+	// RefreshTimeout bounds one whole rebuild: ~150 hub requests at six in
+	// flight normally finish in well under a minute.
+	RefreshTimeout = 3 * time.Minute
+	// How often the scheduler re-checks the cache's age while the app runs.
+	refreshCheckInterval = 3 * time.Hour
 )
 
 type Catalog struct {
@@ -46,7 +48,8 @@ var (
 	active    *Catalog
 )
 
-func cachePath() string { return utils.AppHomeDir("catalog.json") }
+// A variable so tests can cache into a scratch directory.
+var cachePath = func() string { return utils.AppHomeDir("catalog.json") }
 
 // A cached download wins over the shipped copy.
 func Models() *Catalog {
@@ -158,31 +161,33 @@ func stale() bool {
 	return catalog.origin == "embedded" || time.Since(catalog.fetched) > catalogMaxAge
 }
 
-// Parsed before writing, so a truncated download never displaces a working list.
+var refreshMu sync.Mutex
+
+// Refresh rebuilds the list from Hugging Face regardless of the cache's age.
+// The result goes through the same parser as the shipped file before it is
+// written, so a broken build never displaces a working list. Calls are
+// serialised: the scheduler and the settings button may overlap.
 func Refresh(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, CatalogURL, nil)
+	refreshMu.Lock()
+	defer refreshMu.Unlock()
+
+	catalog, err := FetchCatalog(ctx)
 	if err != nil {
 		return err
 	}
-
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	data, err := EncodeCatalog(catalog)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	return adopt(data)
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("catalog fetch returned %s", resp.Status)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, catalogMaxLen))
-	if err != nil {
-		return err
-	}
-
+// adopt makes a fetched list current, caches it for the next launch and
+// tells the listeners.
+func adopt(data []byte) error {
 	fetched, err := parseCatalog(data)
 	if err != nil {
-		return fmt.Errorf("published catalog is unusable: %w", err)
+		return fmt.Errorf("fetched catalog is unusable: %w", err)
 	}
 
 	if err := os.WriteFile(cachePath(), data, 0o644); err != nil {
@@ -197,21 +202,115 @@ func Refresh(ctx context.Context) error {
 	catalogMu.Unlock()
 
 	logger.Info("Model catalog refreshed", "models", len(fetched.Models), "version", fetched.Version)
+	notifyCatalogChanged()
 	return nil
 }
 
-// Failures are not surfaced: the shipped list still works.
-func RefreshInBackground() {
+var (
+	listenersMu  sync.Mutex
+	listeners    = map[int]func(){}
+	nextListener int
+)
+
+// OnCatalogChanged registers fn to run after every successful refresh, on the
+// goroutine that refreshed. UI callers hand the work to their own thread.
+func OnCatalogChanged(fn func()) (unsubscribe func()) {
+	listenersMu.Lock()
+	id := nextListener
+	nextListener++
+	listeners[id] = fn
+	listenersMu.Unlock()
+
+	return func() {
+		listenersMu.Lock()
+		delete(listeners, id)
+		listenersMu.Unlock()
+	}
+}
+
+// Snapshotted so a listener that unsubscribes while being called does not
+// deadlock on the map.
+func notifyCatalogChanged() {
+	listenersMu.Lock()
+	current := make([]func(), 0, len(listeners))
+	for _, fn := range listeners {
+		current = append(current, fn)
+	}
+	listenersMu.Unlock()
+
+	for _, fn := range current {
+		fn()
+	}
+}
+
+var (
+	schedulerMu   sync.Mutex
+	schedulerStop chan struct{}
+	schedulerDone chan struct{}
+)
+
+// StartRefreshing refreshes at launch when the cache is stale and keeps
+// checking while the app runs, so a machine left open for days still learns
+// about new models. Never blocks startup; failures are not surfaced since the
+// current list still works.
+func StartRefreshing() {
+	startRefreshing(refreshCheckInterval)
+}
+
+func startRefreshing(every time.Duration) {
+	schedulerMu.Lock()
+	defer schedulerMu.Unlock()
+	if schedulerStop != nil {
+		return
+	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	schedulerStop, schedulerDone = stop, done
+
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+		for {
+			refreshIfStale(stop)
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+// StopRefreshing halts the scheduler and waits for any refresh it started to
+// abort, so shutdown does not race a cache write.
+func StopRefreshing() {
+	schedulerMu.Lock()
+	stop, done := schedulerStop, schedulerDone
+	schedulerStop, schedulerDone = nil, nil
+	schedulerMu.Unlock()
+	if stop == nil {
+		return
+	}
+	close(stop)
+	<-done
+}
+
+func refreshIfStale(stop <-chan struct{}) {
 	if !stale() {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), RefreshTimeout)
+	defer cancel()
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := Refresh(ctx); err != nil {
-			logger.Info("Keeping the shipped model catalog", "reason", err)
+		select {
+		case <-stop:
+			cancel()
+		case <-ctx.Done():
 		}
 	}()
+	if err := Refresh(ctx); err != nil {
+		logger.Info("Keeping the current model catalog", "reason", err)
+	}
 }
 
 // Copies rather than appends in place: the parsed slice has spare capacity, and appending

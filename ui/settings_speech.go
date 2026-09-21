@@ -6,7 +6,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -161,6 +160,15 @@ func (w *MainWindow) localSpeechPane() *fyne.Container {
 	summary := widget.NewLabel(fmt.Sprintf("%d models", len(catalog.Models)))
 	summary.TextStyle.Italic = true
 
+	// The daily refresh and the button both land here; the widgets are only
+	// touched on Fyne's thread.
+	stt.OnCatalogChanged(func() {
+		fyne.Do(func() {
+			w.speechModels.Reload()
+			summary.SetText(fmt.Sprintf("%d models", len(stt.Models().Models)))
+		})
+	})
+
 	refresh := widget.NewButton("Check for new", w.refreshCatalog)
 
 	return container.NewBorder(
@@ -171,21 +179,22 @@ func (w *MainWindow) localSpeechPane() *fyne.Container {
 	)
 }
 
+// Forces a rebuild from Hugging Face whatever the cache's age; the list
+// itself updates through the catalogue subscription.
 func (w *MainWindow) refreshCatalog() {
 	w.statusBinding.Set("Checking for new models…")
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), stt.RefreshTimeout)
 		defer cancel()
 
 		err := stt.Refresh(ctx)
 		fyne.Do(func() {
 			if err != nil {
-				w.statusBinding.Set("Could not reach the model list")
+				w.statusBinding.Set("Could not update the model list")
 				return
 			}
 			w.statusBinding.Set("Model list updated")
-			w.speechModels.apply()
 		})
 	}()
 }
