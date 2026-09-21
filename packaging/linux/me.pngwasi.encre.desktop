@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Encre
+GenericName=Text Revision Tool
+Comment=AI-powered text revision tool
+Exec=/usr/bin/encre
+Icon=encre
+Terminal=false
+Type=Application
+Categories=Utility;Office;
+Keywords=text;revision;ai;
+StartupNotify=true
+StartupWMClass=Encre

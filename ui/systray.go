@@ -25,5 +25,6 @@ func SetupSystemTray(desk desktop.App, mainWindow *MainWindow, onQuit func() err
 		}),
 	)
 
+	mainWindow.tray = menu
 	desk.SetSystemTrayMenu(menu)
 }

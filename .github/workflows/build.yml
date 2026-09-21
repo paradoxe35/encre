@@ -218,79 +218,20 @@ jobs:
             exit 1
           fi
 
-      - name: Create .deb package
+      # One nfpm config yields the deb, rpm and arch packages; the updater
+      # hands each to its package manager through polkit.
+      - name: Create Linux packages
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
-          mkdir -p dist/deb/DEBIAN
-          mkdir -p dist/deb/usr/local/bin
-          mkdir -p dist/deb/usr/share/applications
-          mkdir -p dist/deb/usr/share/icons/hicolor/256x256/apps
-
-          cp encre-linux-${{ matrix.arch }} dist/deb/usr/local/bin/encre
-          chmod +x dist/deb/usr/local/bin/encre
-
-          # A Debian version must start with a digit.
-          RAW_VERSION="${GITHUB_REF_NAME#v}"
-          if ! echo "$RAW_VERSION" | grep -q '^[0-9]'; then
-            DEB_VERSION="0.0.0-${RAW_VERSION}"
-          else
-            DEB_VERSION="$RAW_VERSION"
-          fi
-          DEB_VERSION=$(echo "$DEB_VERSION" | sed 's/[^0-9a-zA-Z.]/-/g' | sed 's/^-//' | sed 's/-$//')
-          [ -z "$DEB_VERSION" ] && DEB_VERSION="0.0.0-dev"
-          echo "Debian version: $DEB_VERSION"
-
-          cat > dist/deb/DEBIAN/control <<EOF
-          Package: encre
-          Version: $DEB_VERSION
-          Section: text
-          Priority: optional
-          Architecture: ${{ matrix.arch }}
-          Maintainer: Paradoxe Ng <contact@pngwasi.me>
-          Homepage: https://github.com/paradoxe35/encre
-          Depends: libc6, libgl1, libx11-6, libxext6, libxcb1, libxinerama1, libxtst6, libxdo3, libxkbcommon0, libxi6, libxcursor1, libxrandr2, libxrender1, libxfixes3, libxxf86vm1, libasound2 | libasound2t64
-          Description: AI-powered text revision tool with Rust FFI
-           Encre is a system tray application that provides global hotkeys
-           for instant text enhancement using AI providers (OpenAI, Claude, Gemini).
-           .
-           Features:
-            - Global hotkeys for instant text revision (Ctrl+Alt+Space)
-            - Multiple AI provider support (OpenAI, Claude, Gemini)
-            - System tray integration for quick access
-            - Configurable system prompts and character limits
-            - Non-destructive clipboard management
-           .
-           Built with Go and Rust FFI for optimal cross-platform performance.
-           .
-           License: MIT
-          EOF
-
-          if [ -f assets/icon.png ]; then
-            mkdir -p dist/deb/usr/share/icons/hicolor/256x256/apps
-            cp assets/icon.png dist/deb/usr/share/icons/hicolor/256x256/apps/encre.png
-
-            # pixmaps as a fallback
-            mkdir -p dist/deb/usr/share/pixmaps
-            cp assets/icon.png dist/deb/usr/share/pixmaps/encre.png
-          fi
-
-          # Named after the Wayland app id so the dock finds the running window's
-          # icon there; StartupWMClass covers X11, where GLFW uses the window title.
-          cat > dist/deb/usr/share/applications/me.pngwasi.encre.desktop <<EOF
-          [Desktop Entry]
-          Name=Encre
-          GenericName=Text Revision Tool
-          Comment=AI-powered text revision tool
-          Exec=/usr/local/bin/encre
-          Icon=encre
-          Terminal=false
-          Type=Application
-          Categories=Utility;Office;
-          Keywords=text;revision;ai;
-          StartupNotify=true
-          StartupWMClass=Encre
-          EOF
-
-          dpkg-deb --build dist/deb encre-linux-${{ matrix.arch }}.deb
+          for packager in deb rpm archlinux; do
+            docker run --rm -v "$PWD:/src" -w /src -e VERSION goreleaser/nfpm package \
+              --config nfpm.yaml --target . --packager "$packager"
+          done
+          mv encre_*.deb encre-linux-${{ matrix.arch }}.deb
+          mv encre-*.rpm encre-linux-${{ matrix.arch }}.rpm
+          mv encre-*.pkg.tar.zst encre-linux-${{ matrix.arch }}.pkg.tar.zst
+          ls -la encre-linux-${{ matrix.arch }}.*
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
@@ -305,11 +246,14 @@ jobs:
           name: encre-linux-${{ matrix.arch }}-appimage
           path: encre-linux-${{ matrix.arch }}.AppImage
 
-      - name: Upload deb artifact
+      - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: encre-linux-${{ matrix.arch }}-deb
-          path: encre-linux-${{ matrix.arch }}.deb
+          name: encre-linux-${{ matrix.arch }}-packages
+          path: |
+            encre-linux-${{ matrix.arch }}.deb
+            encre-linux-${{ matrix.arch }}.rpm
+            encre-linux-${{ matrix.arch }}.pkg.tar.zst
 
   build-windows:
     strategy:
@@ -716,55 +660,12 @@ jobs:
           # Without this the first launch reports a damaged app.
           xattr -cr Encre.app || true
 
-      - name: Create installation README
-        run: |
-          cat > INSTALL_MACOS.txt <<'EOF'
-          Encre for macOS - Installation Instructions
-
-          BEFORE THE FIRST LAUNCH:
-
-          Drag Encre.app into your Applications folder. macOS only attributes
-          notifications to an app it has registered: launched from the
-          download folder or the disk image, they carry the technical name
-          "me.pngwasi.encre" and no icon.
-
-          FIRST LAUNCH:
-
-          When you first open Encre, you'll see a security warning:
-          "Encre cannot be opened because it is from an unidentified developer"
-
-          METHOD 1 (Recommended):
-          1. Right-click (or Control+click) Encre.app
-          2. Select "Open" from the menu
-          3. Click "Open" in the security dialog
-          4. Encre will launch and appear in your menu bar (tray icon)
-
-          METHOD 2 (System Settings):
-          1. Try to open Encre normally (it will be blocked)
-          2. Go to System Settings > Privacy & Security
-          3. Look for "Encre was blocked" message
-          4. Click "Open Anyway"
-          5. Click "Open" in the confirmation dialog
-
-          METHOD 3 (Terminal - if above methods don't work):
-          1. Open Terminal (Applications > Utilities > Terminal)
-          2. Type: xattr -cr
-          3. Drag Encre.app into Terminal window
-          4. Press Enter
-          5. Open Encre normally
-
-          IMPORTANT:
-          - Encre runs in the menu bar (no Dock icon)
-          - Grant Accessibility permissions when prompted for global hotkeys
-          - After first launch, it will open normally
-
-          Support: https://github.com/paradoxe35/encre
-          EOF
-
       - name: Create ZIP archive
         run: |
-          # -X drops extended attributes, which Gatekeeper trips over.
-          zip -r -X encre-darwin-${{ matrix.arch }}.zip Encre.app INSTALL_MACOS.txt
+          # The in-app updater installs from this zip. ditto keeps the symlinks and
+          # attributes the signature covers, which zip drops; --keepParent puts
+          # Encre.app at the root, where the updater looks for it.
+          ditto -c -k --sequesterRsrc --keepParent Encre.app encre-darwin-${{ matrix.arch }}.zip
 
       - name: Create DMG
         run: |
@@ -821,7 +722,25 @@ jobs:
         run: |
           mkdir -p release
 
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" \) -exec cp {} release/ \;
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.rpm" -o -name "*.pkg.tar.zst" -o -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" \) -exec cp {} release/ \;
+
+          # The in-app updater picks one of these by install kind and refuses a
+          # release that lacks it or its checksum, so a missing one fails here.
+          for asset in \
+            encre-linux-amd64.tar.gz \
+            encre-linux-amd64.AppImage \
+            encre-linux-amd64.deb \
+            encre-linux-amd64.rpm \
+            encre-linux-amd64.pkg.tar.zst \
+            encre-windows-amd64-installer.exe \
+            encre-darwin-arm64.zip \
+            encre-darwin-amd64.zip; do
+            if [ ! -f "release/$asset" ]; then
+              echo "Error: updater asset $asset is missing"
+              ls -la release
+              exit 1
+            fi
+          done
 
           cd release
           sha256sum * > checksums.txt
@@ -836,10 +755,11 @@ jobs:
             ## Downloads
 
             - **Windows**: `encre-windows-amd64-installer.exe`, or `encre-windows-amd64-portable.zip`
-            - **macOS**: `encre-darwin-arm64.dmg` (Apple Silicon), `encre-darwin-amd64.dmg` (Intel)
-            - **Linux**: `encre-linux-amd64.deb`, `encre-linux-amd64.AppImage`, or `encre-linux-amd64.tar.gz`
+            - **macOS**: `encre-darwin-arm64.dmg` (Apple Silicon), `encre-darwin-amd64.dmg` (Intel); the matching `.zip` holds the same app
+            - **Linux**: `encre-linux-amd64.deb`, `.rpm`, `.pkg.tar.zst`, `encre-linux-amd64.AppImage`, or `encre-linux-amd64.tar.gz`
 
-            Verify what you downloaded against `checksums.txt`.
+            Verify what you downloaded against `checksums.txt`. Installed copies
+            update themselves from the System tab.
 
             ## Setup
 
@@ -847,8 +767,8 @@ jobs:
             [README](https://github.com/paradoxe35/encre#installation). Two things
             that catch people out:
 
-            - **macOS**: the first launch is blocked. Right-click the app > Open.
-              The ZIP ships `INSTALL_MACOS.txt` with the alternatives.
+            - **macOS**: the first launch is blocked. Right-click the app > Open;
+              the README lists the alternatives.
             - **Linux on Wayland**: hotkeys need you in the `input` group.
               `sudo usermod -aG input $USER`, then log out and back in.
           draft: false

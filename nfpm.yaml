@@ -1,0 +1,87 @@
+name: "encre"
+version: "${VERSION}"
+arch: "amd64"
+platform: "linux"
+maintainer: "Paradoxe Ng <contact@pngwasi.me>"
+description: "AI-powered text revision, translation and dictation with global hotkeys."
+license: "MIT"
+homepage: "https://github.com/paradoxe35/encre"
+vendor: "Paradoxe Ngwasi"
+section: "text"
+contents:
+  - src: encre-linux-amd64
+    dst: /usr/bin/encre
+    file_info:
+      mode: 0755
+  # Named after the Wayland app id so the dock finds the running window's
+  # icon there; StartupWMClass covers X11, where GLFW uses the window title.
+  - src: packaging/linux/me.pngwasi.encre.desktop
+    dst: /usr/share/applications/me.pngwasi.encre.desktop
+    file_info:
+      mode: 0644
+  - src: assets/icon.png
+    dst: /usr/share/icons/hicolor/256x256/apps/encre.png
+    file_info:
+      mode: 0644
+  - src: assets/icon.png
+    dst: /usr/share/pixmaps/encre.png
+    file_info:
+      mode: 0644
+
+# Fyne draws through GL and X11; rdev grabs input through xdo and evdev; cpal
+# captures through ALSA. The names differ per distribution.
+depends:
+  - libc6
+  - libgl1
+  - libx11-6
+  - libxext6
+  - libxcb1
+  - libxinerama1
+  - libxtst6
+  - libxdo3
+  - libxkbcommon0
+  - libxi6
+  - libxcursor1
+  - libxrandr2
+  - libxrender1
+  - libxfixes3
+  - libxxf86vm1
+  - libasound2 | libasound2t64
+
+overrides:
+  rpm:
+    depends:
+      - glibc
+      - mesa-libGL
+      - libX11
+      - libXext
+      - libxcb
+      - libXinerama
+      - libXtst
+      - xdotool
+      - libxkbcommon
+      - libXi
+      - libXcursor
+      - libXrandr
+      - libXrender
+      - libXfixes
+      - libXxf86vm
+      - alsa-lib
+  archlinux:
+    depends:
+      - glibc
+      - libgl
+      - libx11
+      - libxext
+      - libxcb
+      - libxinerama
+      - libxtst
+      - xdotool
+      - libxkbcommon
+      - libxi
+      - libxcursor
+      - libxrandr
+      - libxrender
+      - libxfixes
+      - libxxf86vm
+      - alsa-lib

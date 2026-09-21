@@ -15,6 +15,7 @@ import (
 	"github.com/paradoxe35/encre/internal/permissions"
 	"github.com/paradoxe35/encre/internal/platform"
 	"github.com/paradoxe35/encre/internal/stt"
+	updater "github.com/paradoxe35/go-updater"
 )
 
 const (
@@ -79,11 +80,16 @@ type MainWindow struct {
 	providerSelect       *widget.Select
 	deleteProviderButton *widget.Button
 
+	// updates is nil in builds that cannot update themselves.
+	updates *updatePanel
+	tabs    *container.AppTabs
+	tray    *fyne.Menu
+
 	onShowCallback func()
 	onHideCallback func()
 }
 
-func NewMainWindow(app fyne.App, cfg *config.Config, hotkeyManager *input.FFIHotkeyManager) *MainWindow {
+func NewMainWindow(app fyne.App, cfg *config.Config, hotkeyManager *input.FFIHotkeyManager, appUpdater Updater) *MainWindow {
 	window := app.NewWindow("Encre")
 	window.Resize(fyne.NewSize(windowWidth, windowHeight))
 	window.SetFixedSize(true)
@@ -98,6 +104,9 @@ func NewMainWindow(app fyne.App, cfg *config.Config, hotkeyManager *input.FFIHot
 		config:           cfg,
 		hotkeyManager:    hotkeyManager,
 		permissionPrompt: prompt,
+	}
+	if appUpdater != nil {
+		mw.updates = newUpdatePanel(appUpdater)
 	}
 	mw.initializing = true
 
@@ -196,6 +205,7 @@ func (w *MainWindow) createContent() fyne.CanvasObject {
 		container.NewTabItemWithIcon("System", theme.SettingsIcon(), w.createSystemSection()),
 	)
 
+	w.tabs = tabs
 	tabs.OnSelected = func(tab *container.TabItem) {
 		// History shows other tabs' activity, so it re-reads on every visit.
 		if tab.Text == "History" {
@@ -257,6 +267,54 @@ func (w *MainWindow) historyStoreRef() *history.Store {
 func (w *MainWindow) SetHistoryStore(store *history.Store) {
 	w.historyStore = store
 	store.OnChange(func() { fyne.Do(w.refreshHistory) })
+}
+
+// SetAvailableUpdate surfaces a release the startup check found; it must run on Fyne's thread.
+func (w *MainWindow) SetAvailableUpdate(rel *updater.Release) {
+	w.statusBinding.Set("Encre " + rel.Tag + " is available")
+	if w.updates != nil {
+		w.updates.announce(rel)
+	}
+	w.addTrayUpdateItem(rel)
+}
+
+// The tray gains an "Update to vX" entry above Settings, the way most tray apps announce one.
+func (w *MainWindow) addTrayUpdateItem(rel *updater.Release) {
+	if w.tray == nil || w.updates == nil {
+		return
+	}
+	for _, item := range w.tray.Items {
+		if item.Label == trayUpdateLabel(rel) {
+			return
+		}
+	}
+
+	item := fyne.NewMenuItem(trayUpdateLabel(rel), func() {
+		fyne.Do(func() {
+			w.ShowUpdates()
+			w.updates.runUpdate()
+		})
+	})
+	w.tray.Items = append([]*fyne.MenuItem{item, fyne.NewMenuItemSeparator()}, w.tray.Items...)
+	w.tray.Refresh()
+}
+
+func trayUpdateLabel(rel *updater.Release) string {
+	return "Update to " + rel.Tag + "…"
+}
+
+// ShowUpdates opens the window on the System tab, where update progress is shown.
+func (w *MainWindow) ShowUpdates() {
+	w.ShowWindow()
+	if w.tabs == nil {
+		return
+	}
+	for i, tab := range w.tabs.Items {
+		if tab.Text == "System" {
+			w.tabs.SelectIndex(i)
+			return
+		}
+	}
 }
 
 func (w *MainWindow) ShowWindow() {

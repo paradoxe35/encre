@@ -44,8 +44,8 @@ That's it.
 Download the [latest release](https://github.com/paradoxe35/encre/releases/latest) for your system:
 
 - **Windows**: Run the installer or extract the portable ZIP
-- **macOS**: Open the DMG, drag to Applications. First launch: right-click > Open
-- **Linux**: Use the .deb package, AppImage, or portable archive
+- **macOS**: Open the DMG (or unzip the ZIP), drag to Applications. First launch: right-click > Open. If macOS still refuses it, use System Settings > Privacy & Security > Open Anyway, or run `xattr -cr /Applications/Encre.app`
+- **Linux**: Use the .deb, .rpm or Arch package, the AppImage, or the portable archive
 
 On first launch, grant accessibility/input permissions when prompted - this is needed for global hotkeys to work.
 

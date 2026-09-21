@@ -47,6 +47,8 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 		container.NewPadded(container.NewVBox(themeLabel, themeSelect, themeDesc)),
 		widget.NewSeparator(),
 		container.NewPadded(system),
+		widget.NewSeparator(),
+		container.NewPadded(w.createUpdateControls()),
 	)
 
 	if version.IsProduction(w.app) {
@@ -59,6 +61,18 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	}
 
 	return container.NewVScroll(form)
+}
+
+func (w *MainWindow) createUpdateControls() fyne.CanvasObject {
+	label := widget.NewLabel("Updates")
+	label.TextStyle.Bold = true
+
+	if w.updates == nil {
+		hint := widget.NewLabel("Updates are checked in release builds.")
+		hint.Importance = widget.LowImportance
+		return container.NewVBox(label, hint)
+	}
+	return container.NewVBox(label, w.updates.content())
 }
 
 func (w *MainWindow) createPasteShortcutControls() fyne.CanvasObject {

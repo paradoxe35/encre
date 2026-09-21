@@ -32,6 +32,9 @@ type Application struct {
 	processor     *revision.Processor
 	dictation     *revision.Dictation
 	notifications *ui.NotificationManager
+	// updater is nil in development builds.
+	updater      ui.Updater
+	updateChecks chan struct{}
 
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
@@ -53,18 +56,24 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	notifications := ui.NewNotificationManager(app)
 	platform.RegisterNotifier(config.APP_ID, "Encre")
 
-	mainWindow := ui.NewMainWindow(app, cfg, hotkeyManager)
-	mainWindow.SetIcon(resourceIconPng)
-	mainWindow.SetHistoryStore(processor.History())
-
 	application := &Application{
 		app:           app,
-		mainWindow:    mainWindow,
 		config:        cfg,
 		hotkeyManager: hotkeyManager,
 		processor:     processor,
 		notifications: notifications,
 	}
+
+	// Before the window, which builds its Updates controls from it.
+	application.updater, err = newUpdater(app, application.teardown)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create updater: %w", err)
+	}
+
+	mainWindow := ui.NewMainWindow(app, cfg, hotkeyManager, application.updater)
+	mainWindow.SetIcon(resourceIconPng)
+	mainWindow.SetHistoryStore(processor.History())
+	application.mainWindow = mainWindow
 
 	application.dictation = revision.NewDictation(processor,
 		application.currentConfig,
@@ -112,6 +121,9 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	mainWindow.SetCloseIntercept(func() {
 		mainWindow.HideWindow() // HideWindow, not a raw close, so the hide callbacks still fire
 	})
+
+	application.updateChecks = make(chan struct{})
+	application.checkForUpdates(application.updateChecks)
 
 	return application, nil
 }
@@ -338,6 +350,19 @@ func (a *Application) Start() error {
 func (a *Application) Stop() {
 	logger.Info("Stopping application")
 
+	a.teardown()
+
+	// Stop is also called from the tray's Quit handler, off Fyne's thread.
+	fyne.Do(a.app.Quit)
+}
+
+// teardown releases the hotkeys and background work; an updated copy relaunched
+// in our place needs them free before it starts.
+func (a *Application) teardown() {
+	if a.updateChecks != nil {
+		close(a.updateChecks)
+		a.updateChecks = nil
+	}
 	if a.permissionMonitorCancel != nil {
 		a.permissionMonitorCancel()
 	}
@@ -347,7 +372,4 @@ func (a *Application) Stop() {
 	a.hotkeyManager.Close()
 	a.dictation.Close()
 	a.processor.Close()
-
-	// Stop is also called from the tray's Quit handler, off Fyne's thread.
-	fyne.Do(a.app.Quit)
 }
