@@ -206,7 +206,7 @@ func (p *Processor) Run(kind config.ActionKind) error {
 	}
 
 	indicator := p.overlay()
-	indicator.Show(overlay.Working)
+	indicator.Show(overlay.Thinking)
 	defer indicator.Hide()
 
 	result, err := p.transform(text, kind)

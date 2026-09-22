@@ -91,10 +91,10 @@ func TestLouderSpeechMeansTallerBars(t *testing.T) {
 	}
 }
 
-func TestWorkingKeepsMovingWithoutAnyLevel(t *testing.T) {
+func TestTranscribingKeepsMovingWithoutAnyLevel(t *testing.T) {
 	a, b := frame(1), frame(1)
-	Paint(a, Frame{Phase: Working, T: 0, Alpha: 1}, 1)
-	Paint(b, Frame{Phase: Working, T: 0.3, Alpha: 1}, 1)
+	Paint(a, Frame{Phase: Transcribing, T: 0, Alpha: 1}, 1)
+	Paint(b, Frame{Phase: Transcribing, T: 0.3, Alpha: 1}, 1)
 	if bytes.Equal(a.Pix, b.Pix) {
 		t.Fatal("the transcribing animation did not change between frames")
 	}
@@ -142,5 +142,26 @@ func TestTheNewestLevelSitsInTheMiddleAndOlderOnesAtTheEdges(t *testing.T) {
 	}
 	if l, r := barPixels(img, 0), barPixels(img, bars-1); l != r {
 		t.Fatalf("left %d px and right %d px: the shape should be symmetric", l, r)
+	}
+}
+
+func TestThinkingShowsItsOwnMovingPicture(t *testing.T) {
+	thinking, transcribing := frame(1), frame(1)
+	Paint(thinking, Frame{Phase: Thinking, T: 0.2, Alpha: 1}, 1)
+	Paint(transcribing, Frame{Phase: Transcribing, T: 0.2, Alpha: 1}, 1)
+	if bytes.Equal(thinking.Pix, transcribing.Pix) {
+		t.Fatal("thinking looks the same as transcribing")
+	}
+	if brightPixels(thinking) == 0 {
+		t.Fatal("no dots drawn while thinking")
+	}
+
+	later := frame(1)
+	Paint(later, Frame{Phase: Thinking, T: 0.5, Alpha: 1}, 1)
+	if bytes.Equal(thinking.Pix, later.Pix) {
+		t.Fatal("the thinking animation did not change between frames")
+	}
+	if a := alphaAt(later, 0, 0); a != 0 {
+		t.Fatalf("thinking corner has alpha %d, want transparent", a)
 	}
 }

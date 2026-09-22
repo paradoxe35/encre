@@ -146,7 +146,7 @@ func (d *Dictation) stop() {
 	d.pending++
 	d.mu.Unlock()
 
-	d.overlay().Show(overlay.Working)
+	d.overlay().Show(overlay.Transcribing)
 	ahead, typed := d.order.claim()
 
 	go func() {

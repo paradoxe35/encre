@@ -151,7 +151,7 @@ func TestShowDuringTheFadeOutBringsItBack(t *testing.T) {
 		alphas, _ := s.state()
 		return alphas[len(alphas)-1] < 200
 	})
-	b.indicator.Show(Working)
+	b.indicator.Show(Transcribing)
 
 	b.waitUntil(t, "the fade back in", func() bool {
 		alphas, closed := s.state()
@@ -182,7 +182,7 @@ func TestAnUnavailableSurfaceGoesQuiet(t *testing.T) {
 	b.indicator.Show(Listening)
 	b.waitUntil(t, "the attempt to end", func() bool { return !b.running() })
 
-	b.indicator.Show(Working)
+	b.indicator.Show(Transcribing)
 	b.indicator.Level(0.5)
 	b.indicator.Hide()
 	time.Sleep(5 * time.Millisecond)

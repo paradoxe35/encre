@@ -5,9 +5,11 @@ package overlay
 type Phase int
 
 const (
-	// Listening shows the voice; Working shows that a model or provider is busy.
+	// Listening shows the voice, Transcribing that speech is being turned into
+	// text, Thinking that a provider is rewriting text.
 	Listening Phase = iota
-	Working
+	Transcribing
+	Thinking
 )
 
 type Overlay interface {

@@ -15,7 +15,11 @@ const (
 )
 
 const (
-	bars = 7
+	dots    = 3
+	dotSize = 8.0
+	dotGap  = 8.0
+	dotRise = 7.0
+	bars    = 7
 	// Bars fan out from the centre: the newest level in the middle, older ones towards the edges.
 	traceLen  = (bars + 1) / 2
 	barWidth  = 4.0
@@ -54,6 +58,11 @@ func Paint(dst *image.RGBA, f Frame, scale float64) {
 	roundedRect(z, inset, inset, w-2*inset, h-2*inset, (h-2*inset)/2)
 	z.Draw(dst, bounds, image.NewUniform(shade(22, 22, 26, 0.88*f.Alpha)), image.Point{})
 
+	if f.Phase == Thinking {
+		paintDots(dst, z, f, scale)
+		return
+	}
+
 	span := (bars*barWidth + (bars-1)*barGap) * scale
 	left := (w - span) / 2
 	ink := image.NewUniform(shade(245, 245, 250, 0.92*f.Alpha))
@@ -67,11 +76,31 @@ func Paint(dst *image.RGBA, f Frame, scale float64) {
 	}
 }
 
+// Three dots rising and brightening one after another: the familiar sign that
+// something is being written for you.
+func paintDots(dst *image.RGBA, z *vector.Rasterizer, f Frame, scale float64) {
+	bounds := dst.Bounds()
+	w := float64(bounds.Dx())
+	h := float64(bounds.Dy())
+
+	span := (dots*dotSize + (dots-1)*dotGap) * scale
+	left := (w - span) / 2
+	for i := range dots {
+		beat := math.Max(0, math.Sin(f.T*5-float64(i)*0.9))
+		x := left + float64(i)*(dotSize+dotGap)*scale
+		y := (h-dotSize*scale)/2 - beat*dotRise*scale
+		ink := image.NewUniform(shade(245, 245, 250, (0.45+0.5*beat)*f.Alpha))
+		z.Reset(bounds.Dx(), bounds.Dy())
+		roundedRect(z, x, y, dotSize*scale, dotSize*scale, dotSize*scale/2)
+		z.Draw(dst, bounds, ink, image.Point{})
+	}
+}
+
 // Listening bars replay the last few levels outward from the centre, so the
-// shape waves with the voice; working bars ripple so a wait reads as progress.
+// shape waves with the voice; transcribing bars ripple so a wait reads as progress.
 func barHeight(f Frame, i int) float64 {
 	switch f.Phase {
-	case Working:
+	case Transcribing:
 		return barMin + (barMax-barMin)*0.5*(1+math.Sin(f.T*4-float64(i)*0.9))
 	default:
 		age := i - bars/2

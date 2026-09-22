@@ -110,8 +110,8 @@ func (f *fakeOverlay) Show(phase overlay.Phase) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	name := "listening"
-	if phase == overlay.Working {
-		name = "working"
+	if phase == overlay.Transcribing {
+		name = "transcribing"
 	}
 	f.calls = append(f.calls, name)
 }
@@ -396,7 +396,7 @@ func TestTheIndicatorFollowsATake(t *testing.T) {
 	h.take()
 	h.waitTyped(t, 1)
 
-	if got := h.waitOverlay(t, "hide"); !slices.Equal(got, []string{"listening", "working", "hide"}) {
+	if got := h.waitOverlay(t, "hide"); !slices.Equal(got, []string{"listening", "transcribing", "hide"}) {
 		t.Fatalf("indicator saw %v", got)
 	}
 }
@@ -408,7 +408,7 @@ func TestTheIndicatorHidesAfterAFailedTake(t *testing.T) {
 	h.take()
 	h.expectReport(t, boom)
 
-	if got := h.waitOverlay(t, "hide"); !slices.Equal(got, []string{"listening", "working", "hide"}) {
+	if got := h.waitOverlay(t, "hide"); !slices.Equal(got, []string{"listening", "transcribing", "hide"}) {
 		t.Fatalf("indicator saw %v", got)
 	}
 }
