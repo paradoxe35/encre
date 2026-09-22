@@ -16,6 +16,8 @@ const (
 	// The level meter rises at once and settles slowly, so speech reads as movement, not flicker.
 	levelAttack  = 0.6
 	levelRelease = 0.12
+	// A platform that refused a window is asked again after a while, not on every take.
+	retryAfter = 30 * time.Second
 )
 
 // surface is the window the frames land in. Every call runs on the UI thread.
@@ -26,8 +28,9 @@ type surface interface {
 	Close()
 }
 
-// Indicator animates the pill on its own goroutine while it is visible, and holds no
-// window at all while it is not.
+// Indicator is the shared window. Each feature drives it through its own Owner, so
+// one feature ending never hides what another is still showing. It animates on its
+// own goroutine while visible and holds no window at all while it is not.
 type Indicator struct {
 	runOnMain func(func())
 	open      func() (surface, error)
@@ -35,11 +38,14 @@ type Indicator struct {
 	interval  time.Duration
 
 	mu      sync.Mutex
-	wanted  bool
+	owners  map[*Owner]Phase
 	phase   Phase
 	level   float32
 	running bool
-	failed  bool
+	done    chan struct{}
+	closing bool
+	// failedAt is when the platform last refused a window; zero when it never has.
+	failedAt time.Time
 }
 
 // New returns an indicator drawing on the platform surface. runOnMain must run its
@@ -49,20 +55,49 @@ func New(runOnMain func(func())) *Indicator {
 }
 
 func newIndicator(runOnMain func(func()), open func() (surface, error), now func() time.Time, interval time.Duration) *Indicator {
-	return &Indicator{runOnMain: runOnMain, open: open, now: now, interval: interval}
+	return &Indicator{
+		runOnMain: runOnMain,
+		open:      open,
+		now:       now,
+		interval:  interval,
+		owners:    map[*Owner]Phase{},
+	}
 }
 
-func (i *Indicator) Show(phase Phase) {
+// Owner is one feature's handle on the indicator.
+type Owner struct {
+	indicator *Indicator
+}
+
+func (i *Indicator) Owner() *Owner {
+	return &Owner{indicator: i}
+}
+
+func (o *Owner) Show(phase Phase)  { o.indicator.claim(o, phase) }
+func (o *Owner) Level(rms float32) { o.indicator.Level(rms) }
+func (o *Owner) Hide()             { o.indicator.release(o) }
+
+func (i *Indicator) claim(owner *Owner, phase Phase) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	i.wanted = true
-	i.phase = phase
-	if i.running || i.failed {
+	if i.closing {
 		return
 	}
-	i.running = true
-	go i.animate()
+	i.owners[owner] = phase
+	i.phase = phase
+	i.startLocked()
+}
+
+// release forgets the owner; one of the others, if any, sets the phase.
+func (i *Indicator) release(owner *Owner) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	delete(i.owners, owner)
+	for _, phase := range i.owners {
+		i.phase = phase
+	}
 }
 
 func (i *Indicator) Level(rms float32) {
@@ -71,33 +106,52 @@ func (i *Indicator) Level(rms float32) {
 	i.level = loudness(rms)
 }
 
-func (i *Indicator) Hide() {
+// Close takes the window down at once and waits for it to be gone; nothing is
+// shown again afterwards. Called before the window system goes away.
+func (i *Indicator) Close() {
 	i.mu.Lock()
-	defer i.mu.Unlock()
-	i.wanted = false
+	i.closing = true
+	clear(i.owners)
+	done := i.done
+	i.mu.Unlock()
+
+	if done != nil {
+		<-done
+	}
 }
 
-func (i *Indicator) snapshot() (wanted bool, phase Phase, level float32) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	return i.wanted, i.phase, i.level
+func (i *Indicator) startLocked() {
+	if i.running || len(i.owners) == 0 {
+		return
+	}
+	if !i.failedAt.IsZero() && i.now().Sub(i.failedAt) < retryAfter {
+		return
+	}
+	i.failedAt = time.Time{}
+	i.running = true
+	i.done = make(chan struct{})
+	go i.animate(i.done)
 }
 
-func (i *Indicator) stopped(failed bool) {
+func (i *Indicator) snapshot() (wanted, closing bool, phase Phase, level float32) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	i.running = false
-	i.failed = i.failed || failed
+	return len(i.owners) > 0, i.closing, i.phase, i.level
 }
 
 // animate owns the surface from the first frame to the end of the fade-out.
-func (i *Indicator) animate() {
+func (i *Indicator) animate(done chan struct{}) {
+	defer close(done)
+
 	var target surface
 	var openErr error
 	i.runOnMain(func() { target, openErr = i.open() })
 	if openErr != nil {
-		logger.Warn("Dictation indicator unavailable", "error", openErr)
-		i.stopped(true)
+		logger.Warn("Indicator unavailable", "error", openErr)
+		i.mu.Lock()
+		i.running = false
+		i.failedAt = i.now()
+		i.mu.Unlock()
 		return
 	}
 
@@ -111,7 +165,10 @@ func (i *Indicator) animate() {
 	alpha := 0.0
 	var trace [traceLen]float32
 	for range ticker.C {
-		wanted, phase, level := i.snapshot()
+		wanted, closing, phase, level := i.snapshot()
+		if closing {
+			break
+		}
 		now := i.now()
 		dt := now.Sub(last)
 		last = now
@@ -127,12 +184,12 @@ func (i *Indicator) animate() {
 	}
 
 	i.runOnMain(target.Close)
-	i.stopped(false)
 
-	// A show that arrived during the fade-out starts over with a fresh surface.
-	if wanted, phase, _ := i.snapshot(); wanted {
-		i.Show(phase)
-	}
+	// An owner that arrived during the fade-out gets a fresh surface.
+	i.mu.Lock()
+	i.running = false
+	i.startLocked()
+	i.mu.Unlock()
 }
 
 func fade(alpha float64, in bool, dt time.Duration) float64 {

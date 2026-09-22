@@ -23,8 +23,8 @@ func focusPoint() (image.Point, bool) {
 	return image.Pt(int(x), int(y)), true
 }
 
-// A floating panel that ignores the mouse can never become key, so the app the
-// user was typing in keeps the keyboard.
+// A window that refuses to become key, at status level and on every space, so the
+// app the user was typing in keeps the keyboard.
 func noFocus(window *glfw.Window) {
 	C.encre_overlay_no_focus(window.GetCocoaWindow())
 }

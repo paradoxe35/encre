@@ -132,7 +132,13 @@ func (d *Dictation) start() {
 		d.fail(err)
 		return
 	}
-	d.overlay().Show(overlay.Listening)
+
+	// A release that beat us here has already moved the indicator on.
+	d.mu.Lock()
+	if d.running {
+		d.indicator.Show(overlay.Listening)
+	}
+	d.mu.Unlock()
 	logger.Info("Dictation started")
 }
 

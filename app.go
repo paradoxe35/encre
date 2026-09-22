@@ -39,7 +39,10 @@ type Application struct {
 
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
-	indicators                 *indicatorChoice
+	// overlayMu guards the indicator swap: config listeners run concurrently.
+	overlayMu  sync.Mutex
+	indicators *indicatorChoice
+	indicator  *overlay.Indicator
 
 	reloadMutex sync.Mutex
 }
@@ -231,6 +234,9 @@ type indicatorChoice struct {
 // applyOverlay swaps the indicators only when a choice changed, so a save of
 // unrelated settings never interrupts one that is showing.
 func (a *Application) applyOverlay(cfg *config.Config) {
+	a.overlayMu.Lock()
+	defer a.overlayMu.Unlock()
+
 	appearance := cfg.AppearanceSettings()
 	choice := indicatorChoice{
 		dictation: appearance.DictationIndicator,
@@ -241,19 +247,32 @@ func (a *Application) applyOverlay(cfg *config.Config) {
 	}
 	a.indicators = &choice
 
-	var shared overlay.Overlay = overlay.Disabled{}
-	if choice.dictation || choice.actions {
-		shared = overlay.New(fyne.DoAndWait)
+	if a.indicator != nil {
+		a.indicator.Close()
+		a.indicator = nil
 	}
-	a.dictation.SetOverlay(pick(choice.dictation, shared))
-	a.processor.SetOverlay(pick(choice.actions, shared))
+	if choice.dictation || choice.actions {
+		a.indicator = overlay.New(fyne.DoAndWait)
+	}
+	a.dictation.SetOverlay(a.owner(choice.dictation))
+	a.processor.SetOverlay(a.owner(choice.actions))
 }
 
-func pick(on bool, indicator overlay.Overlay) overlay.Overlay {
-	if on {
-		return indicator
+func (a *Application) owner(on bool) overlay.Overlay {
+	if on && a.indicator != nil {
+		return a.indicator.Owner()
 	}
 	return overlay.Disabled{}
+}
+
+// closeOverlay takes the window down while the window system is still there.
+func (a *Application) closeOverlay() {
+	a.overlayMu.Lock()
+	defer a.overlayMu.Unlock()
+	if a.indicator != nil {
+		a.indicator.Close()
+		a.indicator = nil
+	}
 }
 
 func (a *Application) currentConfig() *config.Config {
@@ -407,6 +426,7 @@ func (a *Application) teardown() {
 		a.permissionMonitorCancel()
 	}
 	stt.StopRefreshing()
+	a.closeOverlay()
 
 	a.hotkeyManager.Stop()
 	a.hotkeyManager.Close()

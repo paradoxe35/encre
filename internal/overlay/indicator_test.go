@@ -41,6 +41,7 @@ func (f *fakeSurface) state() (alphas []uint8, closed bool) {
 
 type bench struct {
 	indicator *Indicator
+	owner     *Owner
 	surfaces  []*fakeSurface
 	clock     time.Time
 	mu        sync.Mutex
@@ -68,6 +69,7 @@ func newBench(t *testing.T) *bench {
 		return s, nil
 	}
 	b.indicator = newIndicator(runOnMain, open, func() time.Time { return b.clock }, time.Millisecond)
+	b.owner = b.indicator.Owner()
 	return b
 }
 
@@ -102,7 +104,7 @@ func (b *bench) running() bool {
 
 func TestShowFadesInToFullStrength(t *testing.T) {
 	b := newBench(t)
-	b.indicator.Show(Listening)
+	b.owner.Show(Listening)
 	s := b.surface(t, 0)
 
 	b.waitUntil(t, "the fade-in", func() bool {
@@ -120,14 +122,14 @@ func TestShowFadesInToFullStrength(t *testing.T) {
 
 func TestHideFadesOutThenClosesAndStops(t *testing.T) {
 	b := newBench(t)
-	b.indicator.Show(Listening)
+	b.owner.Show(Listening)
 	s := b.surface(t, 0)
 	b.waitUntil(t, "the fade-in", func() bool {
 		alphas, _ := s.state()
 		return len(alphas) > 0 && alphas[len(alphas)-1] >= 220
 	})
 
-	b.indicator.Hide()
+	b.owner.Hide()
 	b.waitUntil(t, "the close", func() bool { _, closed := s.state(); return closed })
 	b.waitUntil(t, "the goroutine to end", func() bool { return !b.running() })
 
@@ -139,19 +141,19 @@ func TestHideFadesOutThenClosesAndStops(t *testing.T) {
 
 func TestShowDuringTheFadeOutBringsItBack(t *testing.T) {
 	b := newBench(t)
-	b.indicator.Show(Listening)
+	b.owner.Show(Listening)
 	s := b.surface(t, 0)
 	b.waitUntil(t, "the fade-in", func() bool {
 		alphas, _ := s.state()
 		return len(alphas) > 0 && alphas[len(alphas)-1] >= 220
 	})
 
-	b.indicator.Hide()
+	b.owner.Hide()
 	b.waitUntil(t, "the fade-out to begin", func() bool {
 		alphas, _ := s.state()
 		return alphas[len(alphas)-1] < 200
 	})
-	b.indicator.Show(Transcribing)
+	b.owner.Show(Transcribing)
 
 	b.waitUntil(t, "the fade back in", func() bool {
 		alphas, closed := s.state()
@@ -161,41 +163,47 @@ func TestShowDuringTheFadeOutBringsItBack(t *testing.T) {
 
 func TestAShowAfterAFinishedHideOpensAFreshSurface(t *testing.T) {
 	b := newBench(t)
-	b.indicator.Show(Listening)
+	b.owner.Show(Listening)
 	first := b.surface(t, 0)
-	b.indicator.Hide()
+	b.owner.Hide()
 	b.waitUntil(t, "the first close", func() bool { _, closed := first.state(); return closed })
 	b.waitUntil(t, "idle", func() bool { return !b.running() })
 
-	b.indicator.Show(Listening)
+	b.owner.Show(Listening)
 	second := b.surface(t, 1)
 	if second == first {
 		t.Fatal("the closed surface was reused")
 	}
-	b.indicator.Hide()
+	b.owner.Hide()
 	b.waitUntil(t, "the second close", func() bool { _, closed := second.state(); return closed })
 }
 
 func TestAnUnavailableSurfaceGoesQuiet(t *testing.T) {
 	b := newBench(t)
 	b.openErr = errors.New("no floating windows here")
-	b.indicator.Show(Listening)
+	b.owner.Show(Listening)
 	b.waitUntil(t, "the attempt to end", func() bool { return !b.running() })
 
-	b.indicator.Show(Transcribing)
+	b.owner.Show(Transcribing)
 	b.indicator.Level(0.5)
-	b.indicator.Hide()
+	b.owner.Hide()
 	time.Sleep(5 * time.Millisecond)
 	if b.running() || len(b.surfaces) != 0 {
 		t.Fatal("the indicator kept trying after the platform refused")
 	}
+
+	b.openErr = nil
+	b.clock = b.clock.Add(retryAfter)
+	b.owner.Show(Listening)
+	b.surface(t, 0)
+	b.owner.Hide()
 }
 
 func TestEverySurfaceCallRunsOnTheMainThread(t *testing.T) {
 	b := newBench(t)
-	b.indicator.Show(Listening)
+	b.owner.Show(Listening)
 	s := b.surface(t, 0)
-	b.indicator.Hide()
+	b.owner.Hide()
 	b.waitUntil(t, "the close", func() bool { _, closed := s.state(); return closed })
 	b.waitUntil(t, "idle", func() bool { return !b.running() })
 
@@ -210,7 +218,7 @@ func TestEverySurfaceCallRunsOnTheMainThread(t *testing.T) {
 func TestLevelIsClampedAndHarmlessWhenHidden(t *testing.T) {
 	b := newBench(t)
 	b.indicator.Level(-3)
-	b.indicator.Hide()
+	b.owner.Hide()
 
 	b.indicator.mu.Lock()
 	level := b.indicator.level
@@ -288,5 +296,103 @@ func TestFadeIsBoundedAndTimed(t *testing.T) {
 	}
 	if a := fade(0, false, time.Second); a != 0 {
 		t.Fatalf("fade-out undershot to %v", a)
+	}
+}
+
+func TestOneOwnerEndingDoesNotHideAnother(t *testing.T) {
+	b := newBench(t)
+	dictation := b.indicator.Owner()
+	actions := b.indicator.Owner()
+
+	dictation.Show(Listening)
+	s := b.surface(t, 0)
+	actions.Show(Thinking)
+	actions.Hide()
+
+	time.Sleep(20 * time.Millisecond)
+	if _, closed := s.state(); closed {
+		t.Fatal("the actions owner hiding closed the dictation owner's window")
+	}
+	b.indicator.mu.Lock()
+	phase := b.indicator.phase
+	b.indicator.mu.Unlock()
+	if phase != Listening {
+		t.Fatalf("phase %v after the other owner left, want the dictation phase back", phase)
+	}
+
+	dictation.Hide()
+	b.waitUntil(t, "the close", func() bool { _, closed := s.state(); return closed })
+}
+
+func TestTheLastShowSetsThePhase(t *testing.T) {
+	b := newBench(t)
+	first := b.indicator.Owner()
+	second := b.indicator.Owner()
+	first.Show(Listening)
+	second.Show(Thinking)
+
+	b.indicator.mu.Lock()
+	phase := b.indicator.phase
+	b.indicator.mu.Unlock()
+	if phase != Thinking {
+		t.Fatalf("phase %v, want the newest show", phase)
+	}
+	first.Hide()
+	second.Hide()
+}
+
+func TestCloseTakesTheWindowDownAtOnceAndForGood(t *testing.T) {
+	b := newBench(t)
+	b.owner.Show(Listening)
+	s := b.surface(t, 0)
+	b.waitUntil(t, "the fade-in", func() bool {
+		alphas, _ := s.state()
+		return len(alphas) > 0 && alphas[len(alphas)-1] >= 220
+	})
+
+	b.indicator.Close()
+	if _, closed := s.state(); !closed {
+		t.Fatal("Close returned before the window was gone")
+	}
+	if b.running() {
+		t.Fatal("the animation outlived Close")
+	}
+
+	b.owner.Show(Listening)
+	time.Sleep(5 * time.Millisecond)
+	if len(b.surfaces) != 1 {
+		t.Fatal("a show after Close opened a window")
+	}
+}
+
+func TestCloseWithoutAWindowReturnsAtOnce(t *testing.T) {
+	b := newBench(t)
+	b.indicator.Close()
+}
+
+func TestAShowDuringTheFadeOutIsHonouredWithoutForcingIt(t *testing.T) {
+	b := newBench(t)
+	b.owner.Show(Listening)
+	s := b.surface(t, 0)
+	b.owner.Hide()
+	b.waitUntil(t, "a frame", func() bool {
+		alphas, _ := s.state()
+		return len(alphas) >= 1
+	})
+
+	// Show then Hide in quick succession must not leave any window up.
+	b.owner.Show(Listening)
+	b.owner.Hide()
+	b.waitUntil(t, "idle", func() bool { return !b.running() })
+	time.Sleep(10 * time.Millisecond)
+	if b.running() {
+		t.Fatal("still running after a show and hide during the fade-out")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for n, surface := range b.surfaces {
+		if _, closed := surface.state(); !closed {
+			t.Fatalf("surface %d was left open", n)
+		}
 	}
 }

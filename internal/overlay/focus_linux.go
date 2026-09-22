@@ -9,16 +9,13 @@ package overlay
 #include <X11/Xatom.h>
 
 // The window manager, not GLFW, decides who gets focus when a window appears. A
-// window that declares the "no input" model, offers no WM_TAKE_FOCUS, and calls
-// itself a notification is one every manager leaves alone.
+// window that declares the "no input" model and calls itself a notification is
+// one every manager leaves alone.
 static void encre_overlay_no_focus(Display* display, Window window) {
     XWMHints hints;
     hints.flags = InputHint;
     hints.input = False;
     XSetWMHints(display, window, &hints);
-
-    Atom del = XInternAtom(display, "WM_DELETE_WINDOW", False);
-    XSetWMProtocols(display, window, &del, 1);
 
     Atom type = XInternAtom(display, "_NET_WM_WINDOW_TYPE", False);
     Atom notification = XInternAtom(display, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
@@ -64,13 +61,13 @@ static int encre_overlay_locate(Display* display, int* x, int* y) {
         unsigned char* data = NULL;
         if (XGetWindowProperty(display, root, active, 0, 1, False, XA_WINDOW, &type, &format,
                                &count, &rest, &data) == Success && data != NULL) {
-            Window focused = *(Window*)data;
+            Window focused = (type == XA_WINDOW && format == 32 && count >= 1) ? *(Window*)data : None;
             XFree(data);
             XWindowAttributes attributes;
-            if (focused != None && XGetWindowAttributes(display, focused, &attributes)) {
-                int rx, ry;
-                Window child;
-                XTranslateCoordinates(display, focused, root, 0, 0, &rx, &ry, &child);
+            int rx, ry;
+            Window child;
+            if (focused != None && XGetWindowAttributes(display, focused, &attributes)
+                && XTranslateCoordinates(display, focused, root, 0, 0, &rx, &ry, &child)) {
                 *x = rx + attributes.width / 2;
                 *y = ry + attributes.height / 2;
                 return 1;

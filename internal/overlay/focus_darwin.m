@@ -1,11 +1,28 @@
 #import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
+
+static BOOL encre_overlay_never_key(id self, SEL _cmd) {
+    return NO;
+}
+
+// GLFW's window class answers YES to becoming key so borderless windows can take
+// input; this one must never, or an activation of the app could hand it the
+// keyboard. A runtime subclass answering NO is swapped in before the window shows.
+static void encre_overlay_refuse_key(NSWindow* window) {
+    static Class refusing = Nil;
+    if (refusing == Nil) {
+        refusing = objc_allocateClassPair(object_getClass(window), "EncreIndicatorWindow", 0);
+        class_addMethod(refusing, @selector(canBecomeKeyWindow), (IMP)encre_overlay_never_key, "c@:");
+        class_addMethod(refusing, @selector(canBecomeMainWindow), (IMP)encre_overlay_never_key, "c@:");
+        objc_registerClassPair(refusing);
+    }
+    object_setClass(window, refusing);
+}
 
 void encre_overlay_no_focus(void* window) {
     NSWindow* w = (__bridge NSWindow*)window;
+    encre_overlay_refuse_key(w);
     [w setLevel:NSStatusWindowLevel];
-    [w setIgnoresMouseEvents:YES];
-    [w setHidesOnDeactivate:NO];
-    [w setHasShadow:NO];
     [w setCollectionBehavior:NSWindowCollectionBehaviorCanJoinAllSpaces
         | NSWindowCollectionBehaviorStationary
         | NSWindowCollectionBehaviorIgnoresCycle
