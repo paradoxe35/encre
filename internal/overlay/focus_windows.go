@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"image"
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.4/glfw"
@@ -16,10 +17,32 @@ const (
 )
 
 var (
-	user32            = windows.NewLazySystemDLL("user32.dll")
-	getWindowLongPtrW = user32.NewProc("GetWindowLongPtrW")
-	setWindowLongPtrW = user32.NewProc("SetWindowLongPtrW")
+	user32              = windows.NewLazySystemDLL("user32.dll")
+	getWindowLongPtrW   = user32.NewProc("GetWindowLongPtrW")
+	setWindowLongPtrW   = user32.NewProc("SetWindowLongPtrW")
+	getForegroundWindow = user32.NewProc("GetForegroundWindow")
+	getWindowRect       = user32.NewProc("GetWindowRect")
+	getCursorPos        = user32.NewProc("GetCursorPos")
 )
+
+type winRect struct{ left, top, right, bottom int32 }
+
+type winPoint struct{ x, y int32 }
+
+// Centre of the foreground window, else the cursor.
+func focusPoint() (image.Point, bool) {
+	if hwnd, _, _ := getForegroundWindow.Call(); hwnd != 0 {
+		var r winRect
+		if ok, _, _ := getWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r))); ok != 0 {
+			return image.Pt(int(r.left+r.right)/2, int(r.top+r.bottom)/2), true
+		}
+	}
+	var p winPoint
+	if ok, _, _ := getCursorPos.Call(uintptr(unsafe.Pointer(&p))); ok != 0 {
+		return image.Pt(int(p.x), int(p.y)), true
+	}
+	return image.Point{}, false
+}
 
 // A no-activate tool window is never brought to the foreground and never
 // appears in the taskbar; the user's app keeps the keyboard.

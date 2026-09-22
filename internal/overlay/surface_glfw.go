@@ -43,8 +43,8 @@ func openSurface() (surface, error) {
 		return nil, errors.New("floating windows are not available on Wayland")
 	}
 
-	monitor := glfw.GetPrimaryMonitor()
-	if monitor == nil {
+	screens := attachedScreens()
+	if len(screens) == 0 {
 		return nil, errors.New("no monitor")
 	}
 
@@ -60,9 +60,10 @@ func openSurface() (surface, error) {
 	// about new windows, so each platform tells it not to.
 	noFocus(window)
 
-	x, y, w, h := monitor.GetWorkarea()
+	focus, known := focusPoint()
 	ww, wh := window.GetSize()
-	window.SetPos(x+(w-ww)/2, y+h-wh-bottomMargin)
+	origin := pillOrigin(workareaFor(screens, focus, known), ww, wh)
+	window.SetPos(origin.X, origin.Y)
 
 	window.MakeContextCurrent()
 	if err := gl.Init(); err != nil {
@@ -77,6 +78,24 @@ func openSurface() (surface, error) {
 
 	fw, fh := window.GetFramebufferSize()
 	return &glfwSurface{window: window, width: fw, height: fh}, nil
+}
+
+// attachedScreens lists the monitors in GLFW's virtual coordinates, primary first.
+func attachedScreens() []screen {
+	var screens []screen
+	for _, monitor := range glfw.GetMonitors() {
+		mode := monitor.GetVideoMode()
+		if mode == nil {
+			continue
+		}
+		x, y := monitor.GetPos()
+		wx, wy, ww, wh := monitor.GetWorkarea()
+		screens = append(screens, screen{
+			bounds:   image.Rect(x, y, x+mode.Width, y+mode.Height),
+			workarea: image.Rect(wx, wy, wx+ww, wy+wh),
+		})
+	}
+	return screens
 }
 
 func setHints() {
