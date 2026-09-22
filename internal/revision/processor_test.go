@@ -1,6 +1,7 @@
 package revision
 
 import (
+	"github.com/paradoxe35/encre/internal/overlay"
 	"strings"
 	"testing"
 
@@ -200,5 +201,24 @@ func TestLeadingAndTrailingWhitespace(t *testing.T) {
 				t.Errorf("leading+middle+trailing does not reconstruct %q", tc.text)
 			}
 		})
+	}
+}
+
+func TestSetOverlayHidesThePreviousIndicator(t *testing.T) {
+	p := &Processor{}
+	if _, ok := p.overlay().(overlay.Disabled); !ok {
+		t.Fatalf("a bare processor has %T, want the disabled indicator", p.overlay())
+	}
+
+	first := &fakeOverlay{}
+	p.SetOverlay(first)
+	second := &fakeOverlay{}
+	p.SetOverlay(second)
+
+	if got := first.seen(); len(got) != 1 || got[0] != "hide" {
+		t.Fatalf("first indicator saw %v, want to be hidden when replaced", got)
+	}
+	if p.overlay() != second {
+		t.Fatal("the replacement is not the current indicator")
 	}
 }

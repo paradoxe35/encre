@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/overlay"
 )
 
 // stopResult is what one StopRecording call returns; a gate holds the call open until closed.
@@ -99,10 +100,45 @@ func (f *fakeTypist) remembered() [][2]string {
 	return slices.Clone(f.history)
 }
 
+type fakeOverlay struct {
+	mu     sync.Mutex
+	calls  []string
+	levels []float32
+}
+
+func (f *fakeOverlay) Show(phase overlay.Phase) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	name := "listening"
+	if phase == overlay.Working {
+		name = "working"
+	}
+	f.calls = append(f.calls, name)
+}
+
+func (f *fakeOverlay) Level(level float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.levels = append(f.levels, level)
+}
+
+func (f *fakeOverlay) Hide() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "hide")
+}
+
+func (f *fakeOverlay) seen() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
+}
+
 type harness struct {
 	dictation *Dictation
 	speech    *fakeSpeech
 	typist    *fakeTypist
+	overlay   *fakeOverlay
 	reported  chan error
 }
 
@@ -116,12 +152,23 @@ func newHarness(t *testing.T, cleanUp bool) *harness {
 	h := &harness{
 		speech:   &fakeSpeech{stops: []stopResult{{text: "hello world"}}},
 		typist:   &fakeTypist{cleaned: "Hello, world."},
+		overlay:  &fakeOverlay{},
 		reported: make(chan error, 8),
 	}
 	h.dictation = newDictation(h.speech, h.typist, func() *config.Config { return cfg }, func(err error) {
 		h.reported <- err
 	})
+	h.dictation.SetOverlay(h.overlay)
 	return h
+}
+
+func (h *harness) waitOverlay(t *testing.T, last string) []string {
+	t.Helper()
+	h.waitUntil(t, "the indicator to "+last, func() bool {
+		seen := h.overlay.seen()
+		return len(seen) > 0 && seen[len(seen)-1] == last
+	})
+	return h.overlay.seen()
 }
 
 // A take is a press followed by a release.
@@ -341,5 +388,80 @@ func TestCloseReachesTheRecorder(t *testing.T) {
 	h.dictation.Close()
 	if got := h.speech.recorded(); !slices.Equal(got, []string{"close"}) {
 		t.Fatalf("recorder saw %v", got)
+	}
+}
+
+func TestTheIndicatorFollowsATake(t *testing.T) {
+	h := newHarness(t, false)
+	h.take()
+	h.waitTyped(t, 1)
+
+	if got := h.waitOverlay(t, "hide"); !slices.Equal(got, []string{"listening", "working", "hide"}) {
+		t.Fatalf("indicator saw %v", got)
+	}
+}
+
+func TestTheIndicatorHidesAfterAFailedTake(t *testing.T) {
+	h := newHarness(t, false)
+	boom := errors.New("model missing")
+	h.speech.stops = []stopResult{{err: boom}}
+	h.take()
+	h.expectReport(t, boom)
+
+	if got := h.waitOverlay(t, "hide"); !slices.Equal(got, []string{"listening", "working", "hide"}) {
+		t.Fatalf("indicator saw %v", got)
+	}
+}
+
+func TestAStartFailureNeverShowsTheIndicator(t *testing.T) {
+	h := newHarness(t, false)
+	h.speech.startErr = errors.New("microphone busy")
+	h.take()
+	h.expectReport(t, h.speech.startErr)
+
+	if got := h.overlay.seen(); len(got) != 0 {
+		t.Fatalf("indicator saw %v for a take that never started", got)
+	}
+}
+
+func TestTheIndicatorStaysUpWhileAnotherTakeIsRunning(t *testing.T) {
+	h := newHarness(t, false)
+	first := make(chan struct{})
+	h.speech.stops = []stopResult{{text: "first", gate: first}, {text: "second"}}
+
+	h.take()
+	h.waitStops(t, 1)
+	h.dictation.Toggle(true)
+	if got := h.overlay.seen(); slices.Contains(got, "hide") {
+		t.Fatalf("indicator hid while a new take was recording: %v", got)
+	}
+
+	h.dictation.Toggle(false)
+	h.waitStops(t, 2)
+	close(first)
+	h.waitTyped(t, 2)
+
+	got := h.waitOverlay(t, "hide")
+	if countOf(got, "hide") != 1 || got[len(got)-1] != "hide" {
+		t.Fatalf("indicator saw %v, want exactly one hide at the end", got)
+	}
+}
+
+func TestLevelsReachTheCurrentIndicatorAndTheOldOneIsHidden(t *testing.T) {
+	h := newHarness(t, false)
+	h.dictation.Level(0.5)
+
+	replacement := &fakeOverlay{}
+	h.dictation.SetOverlay(replacement)
+	h.dictation.Level(0.7)
+
+	if got := h.overlay.levels; !slices.Equal(got, []float32{0.5}) {
+		t.Fatalf("old indicator levels %v", got)
+	}
+	if got := h.overlay.seen(); !slices.Equal(got, []string{"hide"}) {
+		t.Fatalf("old indicator saw %v, want to be hidden when replaced", got)
+	}
+	if got := replacement.levels; !slices.Equal(got, []float32{0.7}) {
+		t.Fatalf("replacement levels %v", got)
 	}
 }

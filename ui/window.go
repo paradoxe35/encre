@@ -39,6 +39,7 @@ type MainWindow struct {
 	statusBinding         binding.String
 	startMinimizedBinding binding.Bool
 	startOnLoginBinding   binding.Bool
+	indicatorBinding      binding.Bool
 	themeBinding          binding.String
 	pasteShortcutBinding  binding.String
 	unsavedLabel          *widget.Label
@@ -135,6 +136,7 @@ func (w *MainWindow) initBindings() {
 	w.statusBinding = binding.NewString()
 	w.startMinimizedBinding = binding.NewBool()
 	w.startOnLoginBinding = binding.NewBool()
+	w.indicatorBinding = binding.NewBool()
 	w.themeBinding = binding.NewString()
 	w.pasteShortcutBinding = binding.NewString()
 	w.pasteShortcutBinding.Set(string(w.config.PasteShortcut()))
@@ -153,6 +155,7 @@ func (w *MainWindow) initBindings() {
 
 	w.statusBinding.Set("Ready")
 	w.startMinimizedBinding.Set(w.config.Appearance.StartMinimized)
+	w.indicatorBinding.Set(w.config.Appearance.Indicator)
 
 	// Re-check actual system state: the user may have removed the login item outside the app.
 	autoStart := platform.GetAutoStart()
@@ -161,6 +164,7 @@ func (w *MainWindow) initBindings() {
 
 	// One listener per binding covers both directions without Bind overwriting it.
 	w.startMinimizedBinding.AddListener(binding.NewDataListener(w.markDirty))
+	w.indicatorBinding.AddListener(binding.NewDataListener(w.markDirty))
 	w.startOnLoginBinding.AddListener(binding.NewDataListener(w.markDirty))
 
 	if w.config.Appearance.StartOnLogin != actualStartOnLogin {

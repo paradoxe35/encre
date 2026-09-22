@@ -12,6 +12,7 @@ import (
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
+	"github.com/paradoxe35/encre/internal/overlay"
 	"github.com/paradoxe35/encre/internal/permissions"
 	"github.com/paradoxe35/encre/internal/platform"
 	"github.com/paradoxe35/encre/internal/revision"
@@ -38,6 +39,8 @@ type Application struct {
 
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
+	overlayOn                  bool
+	overlaySet                 bool
 
 	reloadMutex sync.Mutex
 }
@@ -85,6 +88,9 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 			})
 		})
 
+	application.applyOverlay(cfg)
+	input.OnLevel(application.dictation.Level)
+
 	// Before hotkeys, so the UI reflects permission state early.
 	application.setupPermissions()
 
@@ -97,6 +103,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 		logger.Info("Config changed, reloading hotkeys")
 		application.setConfig(newCfg)
 		application.reloadHotkeysFromConfig()
+		application.applyOverlay(newCfg)
 	})
 
 	mainWindow.SetShowHideCallbacks(func() {
@@ -214,6 +221,23 @@ func (a *Application) reloadHotkeysFromConfig() {
 
 	a.setupHotkeys()
 	logger.Info("Hotkeys reloaded successfully")
+}
+
+// applyOverlay swaps the indicator only when the setting changed, so a save of
+// unrelated settings never interrupts one that is showing.
+func (a *Application) applyOverlay(cfg *config.Config) {
+	on := cfg.AppearanceSettings().Indicator
+	if a.overlaySet && on == a.overlayOn {
+		return
+	}
+	a.overlaySet, a.overlayOn = true, on
+
+	var indicator overlay.Overlay = overlay.Disabled{}
+	if on {
+		indicator = overlay.New(fyne.DoAndWait)
+	}
+	a.dictation.SetOverlay(indicator)
+	a.processor.SetOverlay(indicator)
 }
 
 func (a *Application) currentConfig() *config.Config {

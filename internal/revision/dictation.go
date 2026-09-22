@@ -7,6 +7,7 @@ import (
 
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/logger"
+	"github.com/paradoxe35/encre/internal/overlay"
 	"github.com/paradoxe35/encre/internal/stt"
 )
 
@@ -33,8 +34,11 @@ type Dictation struct {
 	config  func() *config.Config
 	report  func(error)
 
-	mu      sync.Mutex
-	running bool
+	mu        sync.Mutex
+	running   bool
+	indicator overlay.Overlay
+	// pending counts takes still transcribing; the indicator stays until they are typed.
+	pending int
 	order   sequence
 }
 
@@ -63,11 +67,31 @@ func NewDictation(processor *Processor, current func() *config.Config, report fu
 
 func newDictation(service speechService, typist typist, current func() *config.Config, report func(error)) *Dictation {
 	return &Dictation{
-		service: service,
-		typist:  typist,
-		config:  current,
-		report:  report,
+		service:   service,
+		typist:    typist,
+		config:    current,
+		report:    report,
+		indicator: overlay.Disabled{},
 	}
+}
+
+// SetOverlay swaps the indicator; the old one is hidden in case it was showing.
+func (d *Dictation) SetOverlay(indicator overlay.Overlay) {
+	d.mu.Lock()
+	previous := d.indicator
+	d.indicator = indicator
+	d.mu.Unlock()
+	previous.Hide()
+}
+
+func (d *Dictation) Level(level float32) {
+	d.overlay().Level(level)
+}
+
+func (d *Dictation) overlay() overlay.Overlay {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.indicator
 }
 
 // Loads the model without opening the microphone; audio opens only when recording starts.
@@ -108,6 +132,7 @@ func (d *Dictation) start() {
 		d.fail(err)
 		return
 	}
+	d.overlay().Show(overlay.Listening)
 	logger.Info("Dictation started")
 }
 
@@ -118,12 +143,15 @@ func (d *Dictation) stop() {
 		return
 	}
 	d.running = false
+	d.pending++
 	d.mu.Unlock()
 
+	d.overlay().Show(overlay.Working)
 	ahead, typed := d.order.claim()
 
 	go func() {
 		defer typed()
+		defer d.settle()
 
 		// Ends the capture straight away: the recorder cannot take the next
 		// press until this one is stopped.
@@ -158,6 +186,19 @@ func (d *Dictation) stop() {
 		}
 		d.typist.RecordSpeech(raw, text)
 	}()
+}
+
+// settle hides the indicator once nothing is recording or transcribing any more.
+func (d *Dictation) settle() {
+	d.mu.Lock()
+	d.pending--
+	idle := d.pending == 0 && !d.running
+	indicator := d.indicator
+	d.mu.Unlock()
+
+	if idle {
+		indicator.Hide()
+	}
 }
 
 func (d *Dictation) Close() { d.service.Close() }
