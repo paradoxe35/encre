@@ -39,8 +39,7 @@ type Application struct {
 
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
-	overlayOn                  bool
-	overlaySet                 bool
+	indicators                 *indicatorChoice
 
 	reloadMutex sync.Mutex
 }
@@ -223,21 +222,38 @@ func (a *Application) reloadHotkeysFromConfig() {
 	logger.Info("Hotkeys reloaded successfully")
 }
 
-// applyOverlay swaps the indicator only when the setting changed, so a save of
+// indicatorChoice is which features show the indicator; one window serves both.
+type indicatorChoice struct {
+	dictation bool
+	actions   bool
+}
+
+// applyOverlay swaps the indicators only when a choice changed, so a save of
 // unrelated settings never interrupts one that is showing.
 func (a *Application) applyOverlay(cfg *config.Config) {
-	on := cfg.AppearanceSettings().Indicator
-	if a.overlaySet && on == a.overlayOn {
+	appearance := cfg.AppearanceSettings()
+	choice := indicatorChoice{
+		dictation: appearance.DictationIndicator,
+		actions:   appearance.ActionIndicator,
+	}
+	if a.indicators != nil && *a.indicators == choice {
 		return
 	}
-	a.overlaySet, a.overlayOn = true, on
+	a.indicators = &choice
 
-	var indicator overlay.Overlay = overlay.Disabled{}
-	if on {
-		indicator = overlay.New(fyne.DoAndWait)
+	var shared overlay.Overlay = overlay.Disabled{}
+	if choice.dictation || choice.actions {
+		shared = overlay.New(fyne.DoAndWait)
 	}
-	a.dictation.SetOverlay(indicator)
-	a.processor.SetOverlay(indicator)
+	a.dictation.SetOverlay(pick(choice.dictation, shared))
+	a.processor.SetOverlay(pick(choice.actions, shared))
+}
+
+func pick(on bool, indicator overlay.Overlay) overlay.Overlay {
+	if on {
+		return indicator
+	}
+	return overlay.Disabled{}
 }
 
 func (a *Application) currentConfig() *config.Config {

@@ -67,16 +67,19 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 // The indicator needs a window that floats without taking focus, which Wayland has no
 // way to offer; the switch stays visible but off, with the reason.
 func (w *MainWindow) createIndicatorControls() fyne.CanvasObject {
-	indicator := widget.NewCheck("Show a floating indicator while an action runs", nil)
-	indicator.Bind(w.indicatorBinding)
+	dictation := widget.NewCheck("Show a floating indicator while dictating", nil)
+	dictation.Bind(w.dictationIndicator)
+	actions := widget.NewCheck("Show a floating indicator while revising or translating", nil)
+	actions.Bind(w.actionIndicator)
 	if overlay.Supported() {
-		return indicator
+		return container.NewVBox(dictation, actions)
 	}
 
-	indicator.Disable()
+	dictation.Disable()
+	actions.Disable()
 	hint := widget.NewLabel("Not available on Wayland.")
 	hint.Importance = widget.LowImportance
-	return container.NewVBox(indicator, hint)
+	return container.NewVBox(dictation, actions, hint)
 }
 
 func (w *MainWindow) createUpdateControls() fyne.CanvasObject {

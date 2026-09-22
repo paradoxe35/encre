@@ -76,8 +76,9 @@ type AppearanceConfig struct {
 	Theme          string `json:"theme"` // "auto" | "light" | "dark"
 	StartMinimized bool   `json:"start_minimized"`
 	StartOnLogin   bool   `json:"start_on_login"`
-	// Floating indicator while an action runs; off until asked for.
-	Indicator bool `json:"indicator,omitempty"`
+	// Floating indicator while dictating, and while revising or translating; both off until asked for.
+	DictationIndicator bool `json:"dictation_indicator,omitempty"`
+	ActionIndicator    bool `json:"action_indicator,omitempty"`
 }
 
 type MetaConfig struct {
