@@ -392,18 +392,24 @@ fn preferred_config(device: &Device) -> Result<SelectedConfig> {
     let default = device.default_input_config()?;
     let rate = default.sample_rate();
 
-    match choose_config(device.supported_input_configs()?, rate) {
-        Some(range) => Ok(SelectedConfig {
+    // Only ALSA offers a choice of channel counts worth making. Windows answers the
+    // question by trying dozens of formats against the audio engine, ten milliseconds
+    // each, and then fixes the channel count anyway; macOS has no such problem.
+    #[cfg(target_os = "linux")]
+    if let Some(range) = choose_config(device.supported_input_configs()?, rate) {
+        return Ok(SelectedConfig {
             format: range.sample_format(),
             config: range.with_sample_rate(rate).config(),
-        }),
-        None => Ok(SelectedConfig {
-            format: default.sample_format(),
-            config: default.config(),
-        }),
+        });
     }
+
+    Ok(SelectedConfig {
+        format: default.sample_format(),
+        config: default.config(),
+    })
 }
 
+#[cfg(target_os = "linux")]
 /// Fewest channels first, then the format that costs least to convert. The
 /// pipeline mixes down to mono anyway, and ALSA plugin devices (PipeWire,
 /// PulseAudio) advertise every channel count up to 64: opening the widest one
@@ -421,6 +427,7 @@ fn choose_config(
         .map(|(range, _)| range)
 }
 
+#[cfg(target_os = "linux")]
 /// Formats `build_stream` can open, cheapest first; `None` is unsupported.
 fn format_cost(format: SampleFormat) -> Option<u8> {
     match format {
@@ -437,7 +444,7 @@ fn build_stream(
     samples: Sender<Vec<f32>>,
     levels: Sender<f32>,
 ) -> Result<cpal::Stream> {
-    let error = |e| eprintln!("audio stream error: {e}");
+    let error = |e| tracing::warn!("audio stream error: {e}");
 
     let stream = match selected.format {
         SampleFormat::F32 => device.build_input_stream(
@@ -479,8 +486,8 @@ fn forward(data: Vec<f32>, samples: &Sender<Vec<f32>>, levels: &Sender<f32>) {
     let _ = samples.send(data);
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(all(test, target_os = "linux"))]
+mod channel_tests {
     use super::*;
     use cpal::SupportedBufferSize;
 
@@ -555,6 +562,12 @@ mod tests {
         );
         assert!(choose_config(vec![range(1, SampleFormat::U8)], 48_000).is_none());
     }
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     /// The error names the reason, not a bare "no model loaded".
     #[test]
