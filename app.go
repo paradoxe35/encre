@@ -237,10 +237,10 @@ func (a *Application) applyOverlay(cfg *config.Config) {
 	a.overlayMu.Lock()
 	defer a.overlayMu.Unlock()
 
-	appearance := cfg.AppearanceSettings()
+	indicators := cfg.IndicatorSettings()
 	choice := indicatorChoice{
-		dictation: appearance.DictationIndicator,
-		actions:   appearance.ActionIndicator,
+		dictation: indicators.Dictation,
+		actions:   indicators.Actions,
 	}
 	if a.indicators != nil && *a.indicators == choice {
 		return

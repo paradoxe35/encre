@@ -36,11 +36,10 @@ func (w *MainWindow) saveSettings() {
 	themeSetting, _ := w.themeBinding.Get()
 
 	w.config.SetAppearanceSettings(config.AppearanceConfig{
-		Theme:              themeSetting,
-		StartMinimized:     startMinimized,
-		StartOnLogin:       startOnLogin,
-		DictationIndicator: dictationIndicator,
-		ActionIndicator:    actionIndicator,
+		Theme:          themeSetting,
+		StartMinimized: startMinimized,
+		StartOnLogin:   startOnLogin,
+		Indicators:     &config.IndicatorsConfig{Dictation: dictationIndicator, Actions: actionIndicator},
 	})
 
 	pasteShortcut, _ := w.pasteShortcutBinding.Get()

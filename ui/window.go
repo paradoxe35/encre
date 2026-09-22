@@ -158,8 +158,9 @@ func (w *MainWindow) initBindings() {
 
 	w.statusBinding.Set("Ready")
 	w.startMinimizedBinding.Set(w.config.Appearance.StartMinimized)
-	w.dictationIndicator.Set(w.config.Appearance.DictationIndicator)
-	w.actionIndicator.Set(w.config.Appearance.ActionIndicator)
+	indicators := w.config.IndicatorSettings()
+	w.dictationIndicator.Set(indicators.Dictation)
+	w.actionIndicator.Set(indicators.Actions)
 
 	// Re-check actual system state: the user may have removed the login item outside the app.
 	autoStart := platform.GetAutoStart()

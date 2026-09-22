@@ -6,22 +6,50 @@ import (
 	"testing"
 )
 
-func TestTheIndicatorsAreOffUntilAskedFor(t *testing.T) {
-	appearance := Default().AppearanceSettings()
-	if appearance.DictationIndicator || appearance.ActionIndicator {
-		t.Fatal("the indicators must start switched off")
+func TestTheIndicatorsAreOnUntilSwitchedOff(t *testing.T) {
+	indicators := Default().IndicatorSettings()
+	if !indicators.Dictation || !indicators.Actions {
+		t.Fatal("the indicators must start switched on")
 	}
 
-	off, _ := json.Marshal(appearance)
-	if strings.Contains(string(off), "indicator") {
-		t.Fatalf("an unset indicator is written out: %s", off)
+	out, _ := json.Marshal(Default().AppearanceSettings())
+	if !strings.Contains(string(out), `"indicators":{"dictation":true,"actions":true}`) {
+		t.Fatalf("the defaults are not written whole: %s", out)
 	}
+}
 
-	on, _ := json.Marshal(AppearanceConfig{DictationIndicator: true, ActionIndicator: true})
-	for _, key := range []string{`"dictation_indicator":true`, `"action_indicator":true`} {
-		if !strings.Contains(string(on), key) {
-			t.Fatalf("%s missing from %s", key, on)
-		}
+func TestAConfigWrittenBeforeTheIndicatorsReadsAsOn(t *testing.T) {
+	cfg := &Config{}
+	if err := json.Unmarshal([]byte(`{"appearance":{"theme":"dark"}}`), cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.applyDefaults()
+
+	indicators := cfg.IndicatorSettings()
+	if !indicators.Dictation || !indicators.Actions {
+		t.Fatalf("an old config reads as %+v, want both on", indicators)
+	}
+	if cfg.AppearanceSettings().Theme != "dark" {
+		t.Fatal("applying the defaults touched an unrelated setting")
+	}
+}
+
+func TestSwitchedOffIndicatorsStayOff(t *testing.T) {
+	cfg := &Config{}
+	if err := json.Unmarshal([]byte(`{"appearance":{"indicators":{"dictation":false,"actions":false}}}`), cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.applyDefaults()
+
+	if indicators := cfg.IndicatorSettings(); indicators.Dictation || indicators.Actions {
+		t.Fatalf("switched-off indicators came back as %+v", indicators)
+	}
+}
+
+func TestIndicatorSettingsNeverComeBackMissing(t *testing.T) {
+	cfg := &Config{}
+	if indicators := cfg.IndicatorSettings(); !indicators.Dictation || !indicators.Actions {
+		t.Fatalf("a bare config reads as %+v, want the defaults", indicators)
 	}
 }
 

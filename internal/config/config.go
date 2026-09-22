@@ -76,9 +76,19 @@ type AppearanceConfig struct {
 	Theme          string `json:"theme"` // "auto" | "light" | "dark"
 	StartMinimized bool   `json:"start_minimized"`
 	StartOnLogin   bool   `json:"start_on_login"`
-	// Floating indicator while dictating, and while revising or translating; both off until asked for.
-	DictationIndicator bool `json:"dictation_indicator,omitempty"`
-	ActionIndicator    bool `json:"action_indicator,omitempty"`
+	// Indicators is absent from files written before it existed; absent means both on.
+	Indicators *IndicatorsConfig `json:"indicators,omitempty"`
+}
+
+// IndicatorsConfig is the floating indicator, per feature. It is written whole, so
+// a switch turned off stays off.
+type IndicatorsConfig struct {
+	Dictation bool `json:"dictation"`
+	Actions   bool `json:"actions"`
+}
+
+func defaultIndicators() *IndicatorsConfig {
+	return &IndicatorsConfig{Dictation: true, Actions: true}
 }
 
 type MetaConfig struct {
@@ -140,6 +150,7 @@ func defaultAppearance() AppearanceConfig {
 		Theme:          "auto",
 		StartMinimized: false,
 		StartOnLogin:   false,
+		Indicators:     defaultIndicators(),
 	}
 }
 
@@ -292,6 +303,16 @@ func (c *Config) SetAppearanceSettings(appearance AppearanceConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Appearance = appearance
+}
+
+// IndicatorSettings is never missing: a config without them gets the defaults.
+func (c *Config) IndicatorSettings() IndicatorsConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.Appearance.Indicators == nil {
+		return *defaultIndicators()
+	}
+	return *c.Appearance.Indicators
 }
 
 func (c *Config) FirstRun() bool {
@@ -520,6 +541,9 @@ func (c *Config) applyDefaults() {
 
 	if c.Translate.PrimaryLanguage == "" || c.Translate.SecondaryLanguage == "" {
 		c.Translate = defaultTranslate()
+	}
+	if c.Appearance.Indicators == nil {
+		c.Appearance.Indicators = defaultIndicators()
 	}
 	if c.Appearance.Theme == "" {
 		c.Appearance.Theme = defaultAppearance().Theme
