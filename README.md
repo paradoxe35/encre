@@ -87,12 +87,12 @@ Change them in Settings > Hotkeys. Translate and dictate ship switched off - tur
 
 ## Supported AI Providers
 
-| Provider   | Example Models                                   |
-| ---------- | ------------------------------------------------ |
-| OpenAI     | gpt-4o, gpt-4o-mini                              |
-| Claude     | claude-3-5-haiku, claude-3-5-sonnet              |
-| Gemini     | gemini-2.5-flash, gemini-2.5-flash-lite          |
-| OpenRouter | google/gemini-2.5-flash, any model it serves     |
+| Provider   | Default Model         | Other Examples                          |
+| ---------- | --------------------- | --------------------------------------- |
+| OpenAI     | gpt-6-luna            | gpt-6-sol, gpt-5-nano                   |
+| Claude     | claude-haiku-4-5      | claude-sonnet-5                         |
+| Gemini     | gemini-3.1-flash-lite | gemini-3.5-flash, gemini-2.5-flash-lite |
+| OpenRouter | openai/gpt-6-luna     | any model it serves                     |
 
 You can also add custom OpenAI-compatible providers (local LLMs, Together AI) with their own base URL, and mark them as needing no API key.
 
