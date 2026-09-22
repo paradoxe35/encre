@@ -1,6 +1,7 @@
 package revision
 
 import (
+	"errors"
 	"strings"
 	"sync"
 
@@ -9,11 +10,28 @@ import (
 	"github.com/paradoxe35/encre/internal/stt"
 )
 
+var ErrNoSpeech = errors.New("no speech was recognised - check the microphone under Settings > Speech")
+
+// speechService is what dictation needs from the recorder, so it can be tested without a microphone.
+type speechService interface {
+	Prepare(cfg config.SpeechConfig) error
+	StartRecording(cfg config.SpeechConfig) error
+	StopRecording() (string, error)
+	Close()
+}
+
+// typist is what dictation needs from the processor, so it can be tested without a clipboard.
+type typist interface {
+	CleanTranscript(text string) (string, error)
+	InsertText(text string) error
+	RecordSpeech(raw, final string)
+}
+
 type Dictation struct {
-	service   *stt.Service
-	processor *Processor
-	config    func() *config.Config
-	report    func(error)
+	service speechService
+	typist  typist
+	config  func() *config.Config
+	report  func(error)
 
 	mu      sync.Mutex
 	running bool
@@ -40,11 +58,15 @@ func (s *sequence) claim() (<-chan struct{}, func()) {
 }
 
 func NewDictation(processor *Processor, current func() *config.Config, report func(error)) *Dictation {
+	return newDictation(stt.NewService(), processor, current, report)
+}
+
+func newDictation(service speechService, typist typist, current func() *config.Config, report func(error)) *Dictation {
 	return &Dictation{
-		service:   stt.NewService(),
-		processor: processor,
-		config:    current,
-		report:    report,
+		service: service,
+		typist:  typist,
+		config:  current,
+		report:  report,
 	}
 }
 
@@ -117,23 +139,24 @@ func (d *Dictation) stop() {
 
 		logger.Info("Dictation finished", "characters", len(raw))
 		if strings.TrimSpace(raw) == "" {
+			d.fail(ErrNoSpeech)
 			return
 		}
 
 		text := raw
 		if d.config().SpeechSettings().CleanUp {
-			if cleaned, err := d.processor.CleanTranscript(raw); err == nil {
+			if cleaned, err := d.typist.CleanTranscript(raw); err == nil {
 				text = cleaned
 			} else {
 				d.fail(err)
 				return
 			}
 		}
-		if err := d.processor.InsertText(text); err != nil {
+		if err := d.typist.InsertText(text); err != nil {
 			d.fail(err)
 			return
 		}
-		d.processor.RecordSpeech(raw, text)
+		d.typist.RecordSpeech(raw, text)
 	}()
 }
 

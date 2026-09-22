@@ -36,6 +36,11 @@ typedef void (*encre_HotkeyCallback)(const char*);
  */
 typedef void (*encre_PttCallback)(const char*, int);
 
+/**
+ * Receives one message at a time, from any thread. The string is only valid during the call.
+ */
+typedef void (*encre_LogCallback)(int level, const char *message);
+
 typedef void *encre_SimulatorHandle;
 
 typedef void *encre_SttHandle;
@@ -102,6 +107,8 @@ int encre_hotkey_stop(encre_HotkeyManagerHandle handle);
 char *encre_hotkey_listen_error(encre_HotkeyManagerHandle handle);
 
 void encre_hotkey_manager_free(encre_HotkeyManagerHandle handle);
+
+void encre_log_set_callback(encre_LogCallback callback);
 
 encre_SimulatorHandle encre_simulator_new(void);
 

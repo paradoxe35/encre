@@ -9,6 +9,7 @@ use parking_lot::{Mutex, MutexGuard};
 
 use super::audio::{Command, SAMPLE_RATE, Stopped};
 use super::pipeline::Pipeline;
+use super::speech::Speech;
 
 const DRAIN_INTERVAL: Duration = Duration::from_millis(20);
 
@@ -55,7 +56,7 @@ pub struct Take<S: Source> {
     /// an empty transcript.
     source: Result<S, String>,
     pipeline: Pipeline,
-    spoken: Vec<f32>,
+    spoken: Speech,
     language: Option<String>,
 }
 
@@ -76,7 +77,7 @@ impl<S: Source> Take<S> {
         Self {
             source,
             pipeline: Pipeline::new(rate),
-            spoken: Vec::new(),
+            spoken: Speech::default(),
             language,
         }
     }
@@ -102,7 +103,7 @@ impl<S: Source> Take<S> {
             };
 
             tracing::info!(
-                backlog_ms = self.spoken.len() * 1000 / SAMPLE_RATE as usize,
+                backlog_ms = self.spoken.samples.len() * 1000 / SAMPLE_RATE as usize,
                 "streaming"
             );
             match self.stream(commands, live) {
@@ -123,7 +124,7 @@ impl<S: Source> Take<S> {
                 Err(RecvTimeoutError::Timeout) => {}
                 Ok(Command::Stop(reply)) => {
                     self.drain();
-                    let _ = reply.send(self.stopped_with_samples());
+                    let _ = reply.send(self.stopped_with_speech());
                     return Captured::Ended(true);
                 }
                 Ok(Command::Cancel) => {
@@ -150,9 +151,9 @@ impl<S: Source> Take<S> {
         let mut live = Streaming::new(live);
 
         let mut fed = 0;
-        while fed < self.spoken.len() && !live.degraded {
-            let end = (fed + BACKLOG_SLICE).min(self.spoken.len());
-            live.feed(&self.spoken[fed..end]);
+        while fed < self.spoken.samples.len() && !live.degraded {
+            let end = (fed + BACKLOG_SLICE).min(self.spoken.samples.len());
+            live.feed(&self.spoken.samples[fed..end]);
             fed = end;
             self.pull();
         }
@@ -167,7 +168,7 @@ impl<S: Source> Take<S> {
                 Err(RecvTimeoutError::Timeout) => {}
                 Ok(Command::Stop(reply)) => {
                     let tail = self.drain();
-                    live.feed(&tail);
+                    live.feed(tail);
                     let _ = reply.send(self.finish(live));
                     return Streamed::Ended(true);
                 }
@@ -180,7 +181,7 @@ impl<S: Source> Take<S> {
             }
 
             let speech = self.pull();
-            live.feed(&speech);
+            live.feed(speech);
             if live.degraded {
                 live.abort();
                 return Streamed::Degraded;
@@ -188,52 +189,61 @@ impl<S: Source> Take<S> {
         }
     }
 
-    /// Any failure hands back the audio: a partial transcript is worse than none,
-    /// since the host cannot tell what is missing.
+    /// Anything short of a transcript hands back the audio for a batch pass: a partial
+    /// or empty result is worse than none, since the host cannot tell what is missing.
     fn finish<L: Live>(&mut self, mut live: Streaming<L>) -> Stopped {
         if live.degraded || self.source.is_err() {
             live.abort();
-            return self.stopped_with_samples();
+            return self.stopped_with_speech();
         }
         match live.inner.finalize() {
-            Ok(text) => Stopped {
-                samples: Vec::new(),
-                text: Ok(text),
+            Ok(Some(text)) => Stopped {
+                speech: Speech::default(),
+                text: Ok(Some(text)),
                 language: self.language.clone(),
             },
+            Ok(None) => {
+                tracing::info!("stream produced no text, falling back to batch");
+                live.abort();
+                self.stopped_with_speech()
+            }
             Err(e) => {
                 tracing::warn!("stream finalize failed, falling back to batch: {e}");
                 live.abort();
-                self.stopped_with_samples()
+                self.stopped_with_speech()
             }
         }
     }
 
-    fn pull(&mut self) -> Vec<f32> {
+    fn pull(&mut self) -> &[f32] {
         if let Ok(source) = &self.source {
             self.pipeline.feed(&source.take());
         }
-        let speech = self.pipeline.take();
-        self.spoken.extend_from_slice(&speech);
-        speech
+        let burst = self.pipeline.take();
+        self.keep(burst)
     }
 
-    fn drain(&mut self) -> Vec<f32> {
+    fn drain(&mut self) -> &[f32] {
         if let Ok(source) = &self.source {
             self.pipeline.feed(&source.take());
         }
         let tail = self.pipeline.finish();
-        self.spoken.extend_from_slice(&tail);
-        tail
+        self.keep(tail)
     }
 
-    fn stopped_with_samples(&mut self) -> Stopped {
+    fn keep(&mut self, burst: Speech) -> &[f32] {
+        let from = self.spoken.samples.len();
+        self.spoken.append(burst);
+        &self.spoken.samples[from..]
+    }
+
+    fn stopped_with_speech(&mut self) -> Stopped {
         let text = match &self.source {
             Ok(_) => Ok(None),
             Err(reason) => Err(reason.clone()),
         };
         Stopped {
-            samples: std::mem::take(&mut self.spoken),
+            speech: self.spoken.take(),
             text,
             language: self.language.clone(),
         }
@@ -457,7 +467,7 @@ mod tests {
         let (stopped, running) = take.stop();
         assert!(running, "a stop keeps the recorder running");
         assert!(matches!(stopped.text, Ok(None)));
-        assert_eq!(stopped.samples.len(), tone(2.0).len());
+        assert_eq!(stopped.speech.samples.len(), tone(2.0).len());
         assert_eq!(stopped.language.as_deref(), Some("fr"));
     }
 
@@ -477,7 +487,7 @@ mod tests {
 
         assert!(handle.join().unwrap(), "a stop keeps the recorder running");
         assert_eq!(stopped.text, Err("no input device available".to_owned()));
-        assert!(stopped.samples.is_empty());
+        assert!(stopped.speech.samples.is_empty());
     }
 
     #[test]
@@ -543,7 +553,7 @@ mod tests {
         assert!(running);
         assert_eq!(stopped.text, Ok(Some("bonjour".to_owned())));
         assert!(
-            stopped.samples.is_empty(),
+            stopped.speech.samples.is_empty(),
             "a streamed take hands back text, not audio"
         );
         assert_eq!(
@@ -566,7 +576,7 @@ mod tests {
         let begins = take.begins();
         let (stopped, _) = take.stop();
         assert!(matches!(stopped.text, Ok(None)));
-        assert_eq!(stopped.samples.len(), tone(1.0).len());
+        assert_eq!(stopped.speech.samples.len(), tone(1.0).len());
         assert_eq!(begins, 1, "streaming is not retried within a take");
     }
 
@@ -589,7 +599,7 @@ mod tests {
         let (stopped, _) = take.stop();
         assert!(matches!(stopped.text, Ok(None)));
         assert_eq!(
-            stopped.samples.len(),
+            stopped.speech.samples.len(),
             tone(2.0).len(),
             "audio before and after the break is kept"
         );
@@ -608,8 +618,39 @@ mod tests {
         let state = take.state.clone();
         let (stopped, _) = take.stop();
         assert!(matches!(stopped.text, Ok(None)));
-        assert_eq!(stopped.samples.len(), tone(1.0).len());
+        assert_eq!(stopped.speech.samples.len(), tone(1.0).len());
         assert!(state.lock().aborted);
+    }
+
+    #[test]
+    fn an_empty_streamed_result_hands_back_the_audio() {
+        let state = FakeState {
+            text: None,
+            ..FakeState::default()
+        };
+        let take = start(state, Some(MODEL), Some(MODEL));
+        take.wait_until("streaming", |s| s.begins == 1);
+        take.speak(1.0);
+
+        let state = take.state.clone();
+        let (stopped, _) = take.stop();
+        assert!(matches!(stopped.text, Ok(None)));
+        assert_eq!(stopped.speech.samples.len(), tone(1.0).len());
+        assert!(state.lock().aborted, "the finished stream is released");
+    }
+
+    #[test]
+    fn pauses_survive_the_take() {
+        let take = start(FakeState::default(), None, None);
+        take.speak(1.0);
+        take.audio.send(vec![0.0; SAMPLE_RATE as usize * 2]).unwrap();
+        thread::sleep(DRAIN_INTERVAL * 3);
+        take.speak(1.0);
+
+        let (stopped, _) = take.stop();
+        assert_eq!(stopped.speech.pauses.len(), 1);
+        let pause = stopped.speech.pauses[0];
+        assert!(pause > tone(1.0).len() && pause < stopped.speech.samples.len(), "pause at {pause}");
     }
 
     #[test]

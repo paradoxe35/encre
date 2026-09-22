@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -67,6 +68,12 @@ func Debug(msg string, args ...any) {
 func Warn(msg string, args ...any) {
 	if defaultLogger != nil {
 		defaultLogger.Warn(msg, args...)
+	}
+}
+
+func Log(level slog.Level, msg string, args ...any) {
+	if defaultLogger != nil {
+		defaultLogger.Log(context.Background(), level, msg, args...)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	singleinstance "github.com/allan-simon/go-singleinstance"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/platform"
 	"github.com/paradoxe35/encre/internal/utils"
@@ -21,6 +22,7 @@ func main() {
 	if err := logger.Init(); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
+	input.ForwardNativeLogs()
 
 	utils.EnsureAppHomeDir()
 

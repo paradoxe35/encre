@@ -7,7 +7,7 @@ use std::thread;
 use parking_lot::Mutex;
 
 use crate::ffi::ffi_types::{
-    FFIErrorCode, SttHandle, c_str_to_string, set_last_error, string_to_c_str,
+    FFIErrorCode, SttHandle, c_str_to_string, init_logging, set_last_error, string_to_c_str,
 };
 use crate::stt::audio::{self, Recorder};
 
@@ -47,6 +47,7 @@ fn recogniser<'a>(handle: SttHandle) -> Option<&'a SpeechRecogniser> {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn encre_stt_new(level: LevelCallback) -> SttHandle {
+    init_logging();
     Box::into_raw(Box::new(SpeechRecogniser::new(level))) as SttHandle
 }
 
@@ -126,14 +127,14 @@ pub unsafe extern "C" fn encre_stt_stop(handle: SttHandle) -> *mut c_char {
     match stopped.text {
         Ok(Some(text)) => string_to_c_str(text),
 
-        // Either silence, or streaming gave up and handed back the audio for a batch pass.
+        // Either nothing was heard, or streaming handed the audio back for a batch pass.
         Ok(None) => {
-            if stopped.samples.is_empty() {
+            if stopped.speech.is_empty() {
                 return string_to_c_str(String::new());
             }
             match recogniser
                 .recorder
-                .transcribe_samples(stopped.samples, stopped.language)
+                .transcribe(stopped.speech, stopped.language)
             {
                 Ok(text) => string_to_c_str(text),
                 Err(e) => {
@@ -254,7 +255,7 @@ pub unsafe extern "C" fn encre_stt_stop_pcm(handle: SttHandle, out_len: *mut usi
         }
     };
 
-    let mut bytes = pcm16_bytes(&stopped.samples);
+    let mut bytes = pcm16_bytes(&stopped.speech.samples);
     bytes.shrink_to_fit();
     let len = bytes.len();
     let ptr = bytes.as_mut_ptr();

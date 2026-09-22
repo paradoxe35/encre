@@ -69,12 +69,7 @@ pub fn result_to_error_code<T>(result: Result<T, anyhow::Error>) -> c_int {
 static INIT_LOGGING: Once = Once::new();
 
 pub fn init_logging() {
-    INIT_LOGGING.call_once(|| {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .with_target(false)
-            .init();
-    });
+    INIT_LOGGING.call_once(crate::ffi::ffi_log::install);
 }
 
 #[cfg(test)]

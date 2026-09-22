@@ -5,12 +5,23 @@ package input
 
 import (
 	"fmt"
+	"os"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 )
 
+// The clipboard and key simulator open a display connection, which a headless box cannot offer.
+func requireDisplay(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "linux" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+		t.Skip("no display server")
+	}
+}
+
 func TestFFIClipboard(t *testing.T) {
+	requireDisplay(t)
 	clipboard, err := NewFFIClipboardManager()
 	if err != nil {
 		t.Fatalf("Failed to create clipboard: %v", err)
@@ -38,6 +49,7 @@ func TestFFIClipboard(t *testing.T) {
 }
 
 func TestFFISimulator(t *testing.T) {
+	requireDisplay(t)
 	simulator, err := NewFFIKeySimulator()
 	if err != nil {
 		t.Fatalf("Failed to create simulator: %v", err)

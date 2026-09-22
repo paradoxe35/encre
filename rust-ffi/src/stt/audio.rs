@@ -11,6 +11,7 @@ use cpal::{Device, SampleFormat, StreamConfig, SupportedStreamConfigRange};
 use parking_lot::{Mutex, MutexGuard};
 
 use super::engine::Engine;
+use super::speech::Speech;
 use super::take::{Source, Take, Wanted};
 
 pub const SAMPLE_RATE: u32 = 16_000;
@@ -41,14 +42,14 @@ pub enum EngineCommand {
     /// A failure is kept by the engine and reported by the transcription that needed it.
     Load(PathBuf),
     Unload,
-    TranscribeSamples(Vec<f32>, Option<String>, Sender<Result<String>>),
+    Transcribe(Speech, Option<String>, Sender<Result<String>>),
     Shutdown,
 }
 
-/// `samples` is empty when `text` carries a transcript; otherwise it holds the
-/// speech for the host to batch-transcribe.
+/// `speech` is empty when `text` carries a transcript; otherwise it holds what
+/// was heard, for the host to batch-transcribe.
 pub struct Stopped {
-    pub samples: Vec<f32>,
+    pub speech: Speech,
     pub text: Result<Option<String>, String>,
     /// The language in force when the take was recorded, for the batch pass.
     pub language: Option<String>,
@@ -131,13 +132,9 @@ impl Recorder {
 
     /// Queued behind any load in progress, so a take captured during a load is
     /// transcribed once the model is there.
-    pub fn transcribe_samples(
-        &self,
-        samples: Vec<f32>,
-        language: Option<String>,
-    ) -> Result<String> {
+    pub fn transcribe(&self, speech: Speech, language: Option<String>) -> Result<String> {
         let (tx, rx) = channel();
-        self.queue(EngineCommand::TranscribeSamples(samples, language, tx))?;
+        self.queue(EngineCommand::Transcribe(speech, language, tx))?;
         rx.recv().map_err(|_| anyhow!("engine dropped the reply"))?
     }
 
@@ -205,8 +202,8 @@ fn run_engine(
                 }
             }
             Ok(EngineCommand::Unload) => engine.lock().unload(),
-            Ok(EngineCommand::TranscribeSamples(samples, language, reply)) => {
-                let _ = reply.send(engine.lock().transcribe(&samples, language.as_deref()));
+            Ok(EngineCommand::Transcribe(speech, language, reply)) => {
+                let _ = reply.send(engine.lock().transcribe(&speech, language.as_deref()));
             }
             Ok(EngineCommand::Shutdown) | Err(_) => return,
         }
@@ -534,7 +531,7 @@ mod tests {
 
         let missing = std::env::temp_dir().join("encre-nonexistent-model.gguf");
         recorder.use_model(missing.clone());
-        let result = recorder.transcribe_samples(vec![0.0; 1600], None);
+        let result = recorder.transcribe(Speech::from(vec![0.0; 1600]), None);
 
         recorder.shutdown();
         let message = result
@@ -584,13 +581,13 @@ mod degraded_tests {
     #[test]
     fn degraded_stream_returns_samples_for_batch() {
         let stopped = Stopped {
-            samples: vec![0.1, 0.2, 0.3],
+            speech: Speech::from(vec![0.1, 0.2, 0.3]),
             text: Ok(None),
             language: None,
         };
 
         assert!(
-            !stopped.samples.is_empty(),
+            !stopped.speech.is_empty(),
             "the host needs the audio to transcribe"
         );
         assert!(
@@ -603,10 +600,10 @@ mod degraded_tests {
     #[test]
     fn silence_carries_no_samples() {
         let stopped = Stopped {
-            samples: Vec::new(),
+            speech: Speech::default(),
             text: Ok(None),
             language: None,
         };
-        assert!(stopped.samples.is_empty());
+        assert!(stopped.speech.is_empty());
     }
 }
