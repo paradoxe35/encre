@@ -108,6 +108,8 @@ type updatePanel struct {
 	status       *widget.Label
 	checkButton  *widget.Button
 	updateButton *widget.Button
+	// onFound hears about a release a manual check turned up, so the tray can announce it too.
+	onFound func(*updater.Release)
 }
 
 func newUpdatePanel(u Updater) *updatePanel {
@@ -170,6 +172,9 @@ func (p *updatePanel) check() {
 			p.state.checkFailed(err)
 		case found:
 			p.state.found(rel)
+			if p.onFound != nil {
+				p.onFound(rel)
+			}
 		default:
 			p.state.upToDate()
 		}

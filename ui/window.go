@@ -111,6 +111,7 @@ func NewMainWindow(app fyne.App, cfg *config.Config, hotkeyManager *input.FFIHot
 	}
 	if appUpdater != nil {
 		mw.updates = newUpdatePanel(appUpdater)
+		mw.updates.onFound = mw.addTrayUpdateItem
 	}
 	mw.initializing = true
 
