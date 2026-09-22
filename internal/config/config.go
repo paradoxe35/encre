@@ -83,6 +83,8 @@ type AppearanceConfig struct {
 
 type MetaConfig struct {
 	FirstRun bool `json:"first_run"`
+	// AnnouncedUpdate is the last release the user was told about; a restart must not repeat it.
+	AnnouncedUpdate string `json:"announced_update,omitempty"`
 }
 
 var (
@@ -302,6 +304,18 @@ func (c *Config) SetFirstRun(first bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Meta.FirstRun = first
+}
+
+func (c *Config) AnnouncedUpdate() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Meta.AnnouncedUpdate
+}
+
+func (c *Config) SetAnnouncedUpdate(tag string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Meta.AnnouncedUpdate = tag
 }
 
 func (c *Config) ProviderMentionsEnabled() bool {

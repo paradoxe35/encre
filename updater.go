@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/version"
 	"github.com/paradoxe35/encre/ui"
@@ -38,14 +39,15 @@ func newUpdater(app fyne.App, beforeRelaunch func()) (ui.Updater, error) {
 }
 
 // A tray app runs for days, so the check repeats. A found release reaches the
-// status bar, the tray and one notification; failures stay in the log.
+// status bar and the tray every time, and a notification once per release, which
+// is remembered so a skipped version does not nag at every launch. Failures stay
+// in the log.
 func (a *Application) checkForUpdates(stop <-chan struct{}) {
 	if a.updater == nil {
 		return
 	}
 
 	go func() {
-		announced := ""
 		wait := time.NewTimer(updateCheckDelay)
 		defer wait.Stop()
 		for {
@@ -55,16 +57,38 @@ func (a *Application) checkForUpdates(stop <-chan struct{}) {
 			case <-wait.C:
 			}
 
-			if rel := a.latestRelease(); rel != nil && rel.Tag != announced {
-				announced = rel.Tag
+			if rel := a.latestRelease(); rel != nil {
+				fresh := a.noteAnnounced(rel.Tag)
 				fyne.Do(func() {
 					a.mainWindow.SetAvailableUpdate(rel)
-					a.notifications.ShowInfo("Update available", "Encre "+rel.Tag+" is available")
+					if fresh {
+						a.notifications.ShowInfo("Update available", "Encre "+rel.Tag+" is available")
+					}
 				})
 			}
 			wait.Reset(updateCheckInterval)
 		}
 	}()
+}
+
+// noteAnnounced records the release and reports whether it is new to the user.
+func (a *Application) noteAnnounced(tag string) bool {
+	cfg := a.currentConfig()
+	if !firstAnnouncement(cfg, tag) {
+		return false
+	}
+	if err := cfg.Save(); err != nil {
+		logger.Error("Failed to remember the announced update", "error", err)
+	}
+	return true
+}
+
+func firstAnnouncement(cfg *config.Config, tag string) bool {
+	if cfg.AnnouncedUpdate() == tag {
+		return false
+	}
+	cfg.SetAnnouncedUpdate(tag)
+	return true
 }
 
 func (a *Application) latestRelease() *updater.Release {

@@ -24,3 +24,21 @@ func TestTheIndicatorsAreOffUntilAskedFor(t *testing.T) {
 		}
 	}
 }
+
+func TestTheAnnouncedUpdateIsRemembered(t *testing.T) {
+	cfg := Default()
+	if cfg.AnnouncedUpdate() != "" {
+		t.Fatal("a fresh config already remembers an announcement")
+	}
+	if out, _ := json.Marshal(cfg.Meta); strings.Contains(string(out), "announced") {
+		t.Fatalf("an empty announcement is written out: %s", out)
+	}
+
+	cfg.SetAnnouncedUpdate("v1.6.0")
+	if cfg.AnnouncedUpdate() != "v1.6.0" {
+		t.Fatal("the announcement was not kept")
+	}
+	if out, _ := json.Marshal(cfg.Meta); !strings.Contains(string(out), `"announced_update":"v1.6.0"`) {
+		t.Fatalf("the announcement is not written out: %s", out)
+	}
+}
