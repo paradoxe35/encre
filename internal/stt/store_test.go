@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func payload(size int) []byte {
@@ -266,5 +268,35 @@ func TestDownloadedRequiresFullSize(t *testing.T) {
 	os.WriteFile(store.Path(model), payload(100), 0o644)
 	if !store.Downloaded(model) {
 		t.Error("a full-size file should count as downloaded")
+	}
+}
+
+func TestADeadConnectionIsCutByTheWatchdog(t *testing.T) {
+	body := payload(4096)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+		w.WriteHeader(http.StatusOK)
+		w.Write(body[:1024])
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	t.Cleanup(func() { close(release); server.Close() })
+
+	store := testStore(t)
+	store.stall = 100 * time.Millisecond
+	store.urlFor = func(Model) string { return server.URL }
+	model := testModel(server, body)
+
+	done := make(chan error, 1)
+	go func() { done <- store.Download(context.Background(), model, func(Progress) {}) }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, errStalled) {
+			t.Fatalf("download ended with %v, want the stall error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stalled download never returned")
 	}
 }

@@ -84,6 +84,8 @@ type MainWindow struct {
 	updates *updatePanel
 	tabs    *container.AppTabs
 	tray    *fyne.Menu
+	// trayUpdate is the single "Update to vX" entry; a newer tag relabels it.
+	trayUpdate *fyne.MenuItem
 
 	onShowCallback func()
 	onHideCallback func()
@@ -283,19 +285,21 @@ func (w *MainWindow) addTrayUpdateItem(rel *updater.Release) {
 	if w.tray == nil || w.updates == nil {
 		return
 	}
-	for _, item := range w.tray.Items {
-		if item.Label == trayUpdateLabel(rel) {
-			return
-		}
-	}
-
-	item := fyne.NewMenuItem(trayUpdateLabel(rel), func() {
+	action := func() {
 		fyne.Do(func() {
 			w.ShowUpdates()
 			w.updates.runUpdate()
 		})
-	})
-	w.tray.Items = append([]*fyne.MenuItem{item, fyne.NewMenuItemSeparator()}, w.tray.Items...)
+	}
+	if w.trayUpdate != nil {
+		w.trayUpdate.Label = trayUpdateLabel(rel)
+		w.trayUpdate.Action = action
+		w.tray.Refresh()
+		return
+	}
+
+	w.trayUpdate = fyne.NewMenuItem(trayUpdateLabel(rel), action)
+	w.tray.Items = append([]*fyne.MenuItem{w.trayUpdate, fyne.NewMenuItemSeparator()}, w.tray.Items...)
 	w.tray.Refresh()
 }
 

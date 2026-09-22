@@ -327,17 +327,24 @@ func (s *Service) Cancel() {
 	}
 }
 
+// A take still transcribing holds the engine; closing would wait for it, and the
+// process is leaving anyway.
 func (s *Service) Close() {
 	s.mu.Lock()
-	speech := s.speech
+	speech, inFlight := s.speech, s.takes > 0
 	s.speech = nil
 	s.recording = false
 	s.takes = 0
 	s.mu.Unlock()
 
-	if speech != nil {
-		speech.Close()
+	if speech == nil {
+		return
 	}
+	if inFlight {
+		logger.Info("Speech engine left running: a take is still transcribing")
+		return
+	}
+	speech.Close()
 }
 
 func SystemLanguage() string {

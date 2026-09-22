@@ -37,7 +37,7 @@ func (w *MainWindow) createHistorySection() fyne.CanvasObject {
 	status := widget.NewLabel("")
 	status.TextStyle.Italic = true
 
-	rows := newHistoryRows(w.historyStoreRef())
+	rows := newHistoryRows(w.historyStoreRef)
 
 	list := widget.NewList(
 		func() int { return rows.len() },
@@ -114,17 +114,17 @@ func filterKind(label string) history.Kind {
 }
 
 type historyRows struct {
-	store *history.Store
+	store func() *history.Store
 	mu    sync.Mutex
 	rows  []historyRow
 }
 
-func newHistoryRows(store *history.Store) *historyRows {
+func newHistoryRows(store func() *history.Store) *historyRows {
 	return &historyRows{store: store}
 }
 
 func (h *historyRows) load(filter string) {
-	entries := h.store.Recent(filterKind(filter))
+	entries := h.store().Recent(filterKind(filter))
 
 	rows := make([]historyRow, len(entries))
 	for i, entry := range entries {

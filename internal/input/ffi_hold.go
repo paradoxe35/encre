@@ -41,9 +41,7 @@ func (m *FFIHotkeyManager) RegisterHoldHotkey(binding, action string, handler Ho
 		return fmt.Errorf("hotkey manager not initialized")
 	}
 
-	holdMu.Lock()
-	holdBindings[action] = &holdBinding{handler: handler}
-	holdMu.Unlock()
+	rememberHold(action, handler)
 
 	cBinding := C.CString(binding)
 	defer C.free(unsafe.Pointer(cBinding))
@@ -53,9 +51,7 @@ func (m *FFIHotkeyManager) RegisterHoldHotkey(binding, action string, handler Ho
 	m.ffiMu.Lock()
 	if m.handle == nil {
 		m.ffiMu.Unlock()
-		holdMu.Lock()
-		delete(holdBindings, action)
-		holdMu.Unlock()
+		forgetHold(action)
 		return fmt.Errorf("hotkey manager not initialized")
 	}
 	result := C.encre_hotkey_register_hold(
@@ -65,14 +61,42 @@ func (m *FFIHotkeyManager) RegisterHoldHotkey(binding, action string, handler Ho
 	m.ffiMu.Unlock()
 
 	if result != 0 {
-		holdMu.Lock()
-		delete(holdBindings, action)
-		holdMu.Unlock()
+		forgetHold(action)
 		return fmt.Errorf("failed to register %s: %s", binding, getLastError())
 	}
 
 	logger.Info("Registered push-to-talk hotkey", "binding", binding, "action", action)
 	return nil
+}
+
+// rememberHold keeps a hold already in progress, so a config reload mid-press still gets its release.
+func rememberHold(action string, handler HoldHandler) {
+	holdMu.Lock()
+	defer holdMu.Unlock()
+
+	if binding, ok := holdBindings[action]; ok {
+		binding.handler = handler
+		return
+	}
+	holdBindings[action] = &holdBinding{handler: handler}
+}
+
+// forgetHold drops the binding. A hold still in progress is released first: no up edge will come for it.
+func forgetHold(action string) {
+	holdMu.Lock()
+	binding, ok := holdBindings[action]
+	delete(holdBindings, action)
+	holdMu.Unlock()
+
+	if !ok {
+		return
+	}
+	if binding.release != nil {
+		binding.release.Stop()
+	}
+	if binding.down {
+		go safely(action, func() { binding.handler(false) })
+	}
 }
 
 // ClearHoldBindings drops the Go-side handlers; the Rust bindings are cleared by ClearBindings.

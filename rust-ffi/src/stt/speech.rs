@@ -22,6 +22,20 @@ impl Speech {
         std::mem::take(self)
     }
 
+    /// Drops the oldest samples so at most `max` remain; returns how many went.
+    pub fn trim_to(&mut self, max: usize) -> usize {
+        let dropped = self.samples.len().saturating_sub(max);
+        if dropped == 0 {
+            return 0;
+        }
+        self.samples.drain(..dropped);
+        self.pauses.retain(|&p| p > dropped);
+        for pause in &mut self.pauses {
+            *pause -= dropped;
+        }
+        dropped
+    }
+
     /// Appends a later burst, re-basing its pauses onto this one.
     pub fn append(&mut self, burst: Speech) {
         let offset = self.samples.len();
@@ -281,6 +295,21 @@ mod tests {
         s.append(speech(3, &[0, 1]));
         assert_eq!(s.samples.len(), 7);
         assert_eq!(s.pauses, vec![2, 4, 5]);
+    }
+
+    #[test]
+    fn trim_keeps_the_newest_samples_and_rebases_pauses() {
+        let mut s = speech(10, &[2, 5, 8]);
+        assert_eq!(s.trim_to(6), 4);
+        assert_eq!(s.samples, vec![4.0, 5.0, 6.0, 7.0, 8.0, 9.0]);
+        assert_eq!(s.pauses, vec![1, 4]);
+    }
+
+    #[test]
+    fn trim_within_the_limit_changes_nothing() {
+        let mut s = speech(4, &[2]);
+        assert_eq!(s.trim_to(4), 0);
+        assert_eq!(s, speech(4, &[2]));
     }
 
     #[test]

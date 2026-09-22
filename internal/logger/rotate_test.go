@@ -115,8 +115,8 @@ func TestAQuietDayLeavesNoFile(t *testing.T) {
 
 func TestAFullFileRollsToANumberedOne(t *testing.T) {
 	r, _, dir := newTestFile(t)
-	big := strings.Repeat("x", maxFileBytes-10)
-	write(t, r, big)
+	r.maxBytes = 32
+	write(t, r, strings.Repeat("x", 25))
 	write(t, r, "spills over")
 	write(t, r, "same file")
 
@@ -131,7 +131,8 @@ func TestAFullFileRollsToANumberedOne(t *testing.T) {
 
 func TestARestartAppendsToTheDaysLatestFile(t *testing.T) {
 	r, _, dir := newTestFile(t)
-	touch(t, dir, "encre-2026-09-20.log", maxFileBytes)
+	r.maxBytes = 32
+	touch(t, dir, "encre-2026-09-20.log", 32)
 	touch(t, dir, "encre-2026-09-20.1.log", 5)
 	touch(t, dir, "encre-2026-09-20.2.log", 5)
 
@@ -143,7 +144,8 @@ func TestARestartAppendsToTheDaysLatestFile(t *testing.T) {
 
 func TestARestartSkipsADaysFileAlreadyAtTheCap(t *testing.T) {
 	r, _, dir := newTestFile(t)
-	touch(t, dir, "encre-2026-09-20.log", maxFileBytes)
+	r.maxBytes = 32
+	touch(t, dir, "encre-2026-09-20.log", 32)
 
 	write(t, r, "back")
 	if got := content(t, dir, "encre-2026-09-20.1.log"); got != "back\n" {
@@ -203,6 +205,21 @@ func TestTheOldestFilesGoWhenThereAreTooMany(t *testing.T) {
 	}
 	if slices.Contains(got, "encre-2026-09-20.1.log") || !slices.Contains(got, "encre-2026-09-21.log") {
 		t.Fatalf("wrong files survived: %v", got)
+	}
+}
+
+func TestTooManyFilesWithinADayArePrunedOnRollover(t *testing.T) {
+	r, _, dir := newTestFile(t)
+	r.maxBytes = 16
+	r.maxFiles = 3
+	for i := range 4 {
+		write(t, r, fmt.Sprintf("line-%d-x", i))
+	}
+
+	got := names(t, dir)
+	want := []string{"encre-2026-09-20.1.log", "encre-2026-09-20.2.log", "encre-2026-09-20.3.log"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("files %v, want %v", got, want)
 	}
 }
 

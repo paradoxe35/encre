@@ -104,7 +104,10 @@ pub unsafe extern "C" fn encre_stt_start(handle: SttHandle) -> c_int {
         return FFIErrorCode::OperationFailed as c_int;
     }
 
-    recogniser.recorder.start();
+    if let Err(e) = recogniser.recorder.start() {
+        set_last_error(e.to_string());
+        return FFIErrorCode::OperationFailed as c_int;
+    }
     *recording = true;
     FFIErrorCode::Success as c_int
 }

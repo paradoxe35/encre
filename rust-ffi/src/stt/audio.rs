@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -138,8 +139,10 @@ impl Recorder {
         rx.recv().map_err(|_| anyhow!("engine dropped the reply"))?
     }
 
-    pub fn start(&self) {
-        let _ = self.commands.send(Command::Start);
+    pub fn start(&self) -> Result<()> {
+        self.commands
+            .send(Command::Start)
+            .map_err(|_| anyhow!("recorder thread is gone"))
     }
 
     pub fn cancel(&self) {
@@ -168,6 +171,32 @@ impl Recorder {
     }
 }
 
+enum Flow {
+    Continue,
+    Stop,
+}
+
+/// Runs a worker's command loop through a panic: each worker is the only one of its
+/// kind, and losing it would leave dictation dead until the app restarts.
+fn serve<T>(commands: Receiver<T>, mut handle: impl FnMut(&Receiver<T>, T) -> Flow) {
+    while let Ok(command) = commands.recv() {
+        match catch_unwind(AssertUnwindSafe(|| handle(&commands, command))) {
+            Ok(Flow::Continue) => {}
+            Ok(Flow::Stop) => return,
+            Err(_) => tracing::error!("a speech worker panicked; carrying on"),
+        }
+    }
+}
+
+/// Decrements `queued` when dropped, so a command that panics is still counted as done.
+struct Done<'a>(&'a AtomicUsize);
+
+impl Drop for Done<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 fn run(
     commands: Receiver<Command>,
     levels: Sender<f32>,
@@ -175,18 +204,18 @@ fn run(
     queued: Arc<AtomicUsize>,
     settings: Arc<Mutex<Settings>>,
 ) {
-    loop {
-        match commands.recv() {
-            Ok(Command::Start) => {
-                let snapshot = settings.lock().clone();
-                if !record(&commands, levels.clone(), &engine, &queued, snapshot) {
-                    return;
-                }
+    serve(commands, |commands, command| match command {
+        Command::Start => {
+            let snapshot = settings.lock().clone();
+            if record(commands, levels.clone(), &engine, &queued, snapshot) {
+                Flow::Continue
+            } else {
+                Flow::Stop
             }
-            Ok(Command::Stop(_)) | Ok(Command::Cancel) => {}
-            Ok(Command::Shutdown) | Err(_) => return,
         }
-    }
+        Command::Stop(_) | Command::Cancel => Flow::Continue,
+        Command::Shutdown => Flow::Stop,
+    });
 }
 
 fn run_engine(
@@ -194,21 +223,25 @@ fn run_engine(
     engine: Arc<Mutex<Engine>>,
     queued: Arc<AtomicUsize>,
 ) {
-    loop {
-        match commands.recv() {
-            Ok(EngineCommand::Load(path)) => {
+    serve(commands, |_, command| {
+        if matches!(command, EngineCommand::Shutdown) {
+            return Flow::Stop;
+        }
+        let _done = Done(&queued);
+        match command {
+            EngineCommand::Load(path) => {
                 if let Err(e) = engine.lock().load(&path) {
                     tracing::warn!("model load failed: {e}");
                 }
             }
-            Ok(EngineCommand::Unload) => engine.lock().unload(),
-            Ok(EngineCommand::Transcribe(speech, language, reply)) => {
+            EngineCommand::Unload => engine.lock().unload(),
+            EngineCommand::Transcribe(speech, language, reply) => {
                 let _ = reply.send(engine.lock().transcribe(&speech, language.as_deref()));
             }
-            Ok(EngineCommand::Shutdown) | Err(_) => return,
+            EngineCommand::Shutdown => unreachable!(),
         }
-        queued.fetch_sub(1, Ordering::SeqCst);
-    }
+        Flow::Continue
+    });
 }
 
 /// `false` only on shutdown.
@@ -541,6 +574,66 @@ mod tests {
             message.contains(&missing.display().to_string()),
             "error should name the file that failed to load, got: {message}"
         );
+    }
+}
+
+#[cfg(test)]
+mod worker_tests {
+    use super::*;
+
+    #[test]
+    fn a_panicking_command_does_not_end_the_loop() {
+        let (tx, rx) = channel();
+        let handled = Arc::new(AtomicUsize::new(0));
+        let seen = handled.clone();
+        let worker = thread::spawn(move || {
+            serve(rx, |_, command: u8| {
+                if command == 1 {
+                    panic!("bad command");
+                }
+                if command == 9 {
+                    return Flow::Stop;
+                }
+                seen.fetch_add(1, Ordering::SeqCst);
+                Flow::Continue
+            })
+        });
+
+        for command in [0u8, 1, 2, 3, 9, 4] {
+            tx.send(command).unwrap();
+        }
+        worker.join().unwrap();
+        assert_eq!(handled.load(Ordering::SeqCst), 3, "0, 2 and 3 were handled; 9 stopped");
+    }
+
+    #[test]
+    fn the_loop_ends_when_the_sender_is_gone() {
+        let (tx, rx) = channel::<u8>();
+        drop(tx);
+        serve(rx, |_, _| Flow::Continue);
+    }
+
+    #[test]
+    fn a_command_is_counted_done_even_when_it_panics() {
+        let queued = AtomicUsize::new(1);
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            let _done = Done(&queued);
+            panic!("mid-command");
+        }));
+        assert!(outcome.is_err());
+        assert_eq!(queued.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn start_reports_a_recorder_that_is_gone() {
+        let (levels, _level_rx) = channel();
+        let recorder = Recorder::spawn(levels);
+        recorder.shutdown();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while recorder.start().is_ok() {
+            assert!(std::time::Instant::now() < deadline, "start never noticed the shutdown");
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 }
 

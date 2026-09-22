@@ -48,11 +48,21 @@ func (f *fakeEngine) SetCaptureOnly(enabled bool) error {
 }
 func (f *fakeEngine) Start() error { f.record("start"); return nil }
 func (f *fakeEngine) Stop() (string, error) {
-	f.record("stop")
-	if f.stopGate != nil {
-		<-f.stopGate
+	f.mu.Lock()
+	f.log = append(f.log, "stop")
+	gate, err := f.stopGate, f.stopErr
+	f.mu.Unlock()
+
+	if gate != nil {
+		<-gate
 	}
-	return "text", f.stopErr
+	return "text", err
+}
+
+func (f *fakeEngine) gateStop(gate chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stopGate = gate
 }
 func (f *fakeEngine) StopPCM() ([]byte, error) { f.record("stop-pcm"); return nil, nil }
 func (f *fakeEngine) Cancel()                  { f.record("cancel") }
@@ -132,7 +142,8 @@ func TestModelIsReleasedAndReaskedWhenNotKept(t *testing.T) {
 
 func TestUnloadWaitsForTheTakeStillInFlight(t *testing.T) {
 	service, fake, cfg := newTestService(t, false)
-	fake.stopGate = make(chan struct{})
+	gate := make(chan struct{})
+	fake.gateStop(gate)
 
 	if err := service.StartRecording(cfg); err != nil {
 		t.Fatal(err)
@@ -150,8 +161,8 @@ func TestUnloadWaitsForTheTakeStillInFlight(t *testing.T) {
 	if err := service.StartRecording(cfg); err != nil {
 		t.Fatal(err)
 	}
-	close(fake.stopGate)
-	fake.stopGate = nil
+	close(gate)
+	fake.gateStop(nil)
 	if err := <-firstDone; err != nil {
 		t.Fatal(err)
 	}
@@ -252,4 +263,39 @@ func TestPrepareLoadsOnlyWhenTheModelIsKept(t *testing.T) {
 	if got := commands(fake.entries(), "use"); len(got) != 1 {
 		t.Errorf("use commands = %v, want the model preloaded when kept", got)
 	}
+}
+
+func TestCloseDoesNotWaitForATakeStillTranscribing(t *testing.T) {
+	service, fake, cfg := newTestService(t, true)
+	gate := make(chan struct{})
+	fake.gateStop(gate)
+	if err := service.StartRecording(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		service.StopRecording()
+	}()
+	for !slices.Contains(fake.entries(), "stop") {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		service.Close()
+	}()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close waited for the transcription")
+	}
+	if slices.Contains(fake.entries(), "close") {
+		t.Fatal("the engine was closed under a take still transcribing")
+	}
+
+	close(gate)
+	<-stopped
 }

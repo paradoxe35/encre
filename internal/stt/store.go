@@ -53,6 +53,7 @@ type Store struct {
 	client *http.Client
 	// urlFor is a seam for tests; production always uses the pinned HF URL.
 	urlFor func(Model) string
+	stall  time.Duration
 
 	mu       sync.Mutex
 	inflight map[string]context.CancelFunc
@@ -64,9 +65,12 @@ func NewStore() *Store {
 		// No overall timeout: a large model on a slow line is not an error; the stall watchdog catches dead transfers.
 		client:   &http.Client{},
 		urlFor:   Model.DownloadURL,
+		stall:    stallTimeout,
 		inflight: make(map[string]context.CancelFunc),
 	}
 }
+
+var errStalled = errors.New("download stalled")
 
 func (s *Store) Path(model Model) string {
 	return filepath.Join(s.dir, filepath.Base(model.Filename))
@@ -165,6 +169,12 @@ func (s *Store) fetch(ctx context.Context, model Model, partial string, report f
 		os.Remove(partial)
 	}
 
+	// A dead connection blocks in Read forever; only a cancel can end it.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	watchdog := time.AfterFunc(s.stall, func() { cancel(errStalled) })
+	defer watchdog.Stop()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.urlFor(model), nil)
 	if err != nil {
 		return err
@@ -175,6 +185,9 @@ func (s *Store) fetch(ctx context.Context, model Model, partial string, report f
 
 	resp, err := s.client.Do(req)
 	if err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
 		return fmt.Errorf("failed to reach %s: %w", model.Repo, err)
 	}
 	defer resp.Body.Close()
@@ -203,21 +216,20 @@ func (s *Store) fetch(ctx context.Context, model Model, partial string, report f
 	}
 	defer file.Close()
 
-	return s.copy(ctx, file, resp.Body, model, resumeFrom, report)
+	return s.copy(ctx, file, resp.Body, model, resumeFrom, watchdog, report)
 }
 
 func (s *Store) copy(ctx context.Context, dst io.Writer, src io.Reader,
-	model Model, resumeFrom int64, report func(Progress)) error {
+	model Model, resumeFrom int64, watchdog *time.Timer, report func(Progress)) error {
 
 	buf := make([]byte, 256*1024)
 	written := resumeFrom
 	started := time.Now()
 	lastReport := time.Now()
-	lastData := time.Now()
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return context.Cause(ctx)
 		}
 
 		n, readErr := src.Read(buf)
@@ -231,7 +243,7 @@ func (s *Store) copy(ctx context.Context, dst io.Writer, src io.Reader,
 					return err
 				}
 				written += int64(n)
-				lastData = time.Now()
+				watchdog.Reset(s.stall)
 			}
 		}
 
@@ -257,11 +269,10 @@ func (s *Store) copy(ctx context.Context, dst io.Writer, src io.Reader,
 			return nil
 		}
 		if readErr != nil {
+			if cause := context.Cause(ctx); cause != nil {
+				return cause
+			}
 			return readErr
-		}
-
-		if time.Since(lastData) > stallTimeout {
-			return errors.New("download stalled")
 		}
 	}
 }

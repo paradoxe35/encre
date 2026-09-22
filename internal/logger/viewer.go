@@ -34,24 +34,18 @@ func OpenLogFile() error {
 
 	Info("Opening log file", "file", logFile)
 
-	var cmd *exec.Cmd
 	var openErr error
-
 	switch runtime.GOOS {
 	case "windows":
 		// notepad.exe is the only editor guaranteed present; fall back to explorer if it's missing.
-		cmd = exec.Command("notepad.exe", logFile)
-		openErr = cmd.Start()
+		openErr = launch(exec.Command("notepad.exe", logFile))
 		if openErr != nil {
-			cmd = exec.Command("explorer.exe", logFile)
-			openErr = cmd.Start()
+			openErr = launch(exec.Command("explorer.exe", logFile))
 		}
 	case "darwin":
-		cmd = exec.Command("open", logFile)
-		openErr = cmd.Start()
+		openErr = launch(exec.Command("open", logFile))
 	case "linux":
-		cmd = exec.Command("xdg-open", logFile)
-		openErr = cmd.Start()
+		openErr = launch(exec.Command("xdg-open", logFile))
 	default:
 		return OpenLogDirectory()
 	}
@@ -85,11 +79,19 @@ func OpenLogDirectory() error {
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
 
-	err := cmd.Start()
-	if err != nil {
+	if err := launch(cmd); err != nil {
 		Error("Failed to open log directory", "error", err, "directory", logDir)
 		return fmt.Errorf("failed to open directory: %w", err)
 	}
 
+	return nil
+}
+
+// launch starts a viewer and reaps it in the background, so no zombie outlives the click.
+func launch(cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
 	return nil
 }

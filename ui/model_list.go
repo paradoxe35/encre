@@ -28,7 +28,6 @@ type ModelList struct {
 	mu       sync.Mutex
 	filtered []stt.Model
 	progress map[string]stt.Progress
-	rows     map[fyne.CanvasObject]*modelRow
 
 	list   *widget.List
 	search *widget.Entry
@@ -43,7 +42,6 @@ func NewModelList(store *stt.Store, window fyne.Window, selected string, onSelec
 		selected: selected,
 		onSelect: onSelect,
 		progress: make(map[string]stt.Progress),
-		rows:     make(map[fyne.CanvasObject]*modelRow),
 	}
 	m.ExtendBaseWidget(m)
 	m.build()
@@ -146,6 +144,17 @@ type modelRow struct {
 	info   *widget.Button
 }
 
+// modelRowItem is what List recycles; carrying the row avoids walking the container tree.
+type modelRowItem struct {
+	widget.BaseWidget
+	row     *modelRow
+	content fyne.CanvasObject
+}
+
+func (i *modelRowItem) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(i.content)
+}
+
 func (m *ModelList) template() fyne.CanvasObject {
 	row := &modelRow{
 		title:  widget.NewLabel(""),
@@ -161,27 +170,24 @@ func (m *ModelList) template() fyne.CanvasObject {
 	row.remove.Importance = widget.LowImportance
 	row.info.Importance = widget.LowImportance
 
-	content := container.NewVBox(
-		container.NewBorder(nil, nil, nil,
-			container.NewHBox(row.action, row.remove, row.info), row.title),
-		row.meta,
-	)
-
-	// Rows are recycled: look up widgets by the object List hands back rather than walking the container tree.
-	m.mu.Lock()
-	m.rows[content] = row
-	m.mu.Unlock()
-
-	return content
+	item := &modelRowItem{
+		row: row,
+		content: container.NewVBox(
+			container.NewBorder(nil, nil, nil,
+				container.NewHBox(row.action, row.remove, row.info), row.title),
+			row.meta,
+		),
+	}
+	item.ExtendBaseWidget(item)
+	return item
 }
 
 func (m *ModelList) update(i widget.ListItemID, item fyne.CanvasObject) {
-	m.mu.Lock()
-	row, known := m.rows[item]
-	m.mu.Unlock()
-	if !known {
+	entry, ok := item.(*modelRowItem)
+	if !ok {
 		return
 	}
+	row := entry.row
 
 	model, ok := m.at(i)
 	if !ok {

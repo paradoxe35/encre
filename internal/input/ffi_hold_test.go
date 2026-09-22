@@ -131,3 +131,49 @@ func TestClearHoldBindingsStopsPendingRelease(t *testing.T) {
 		t.Fatalf("clearing should cancel the deferred release, got %v", edges)
 	}
 }
+
+func TestReRegisteringWhileHeldKeepsTheHold(t *testing.T) {
+	old := bind(t, "dictate")
+	dispatchHoldDown("dictate")
+	time.Sleep(20 * time.Millisecond)
+
+	replacement := &edgeLog{}
+	rememberHold("dictate", replacement.record)
+	dispatchHoldUp("dictate")
+	settle()
+
+	if edges := old.seen(); len(edges) != 1 || !edges[0] {
+		t.Fatalf("old handler saw %v, want only the down edge", edges)
+	}
+	if edges := replacement.seen(); len(edges) != 1 || edges[0] {
+		t.Fatalf("replacement saw %v, want only the up edge", edges)
+	}
+}
+
+func TestForgettingAHeldBindingReleasesIt(t *testing.T) {
+	log := bind(t, "dictate")
+	dispatchHoldDown("dictate")
+	time.Sleep(20 * time.Millisecond)
+
+	forgetHold("dictate")
+	settle()
+
+	if edges := log.seen(); len(edges) != 2 || !edges[0] || edges[1] {
+		t.Fatalf("saw %v, want a down then the synthesised up", edges)
+	}
+	holdMu.Lock()
+	_, still := holdBindings["dictate"]
+	holdMu.Unlock()
+	if still {
+		t.Fatal("the binding was not removed")
+	}
+}
+
+func TestForgettingAnIdleBindingIsSilent(t *testing.T) {
+	log := bind(t, "dictate")
+	forgetHold("dictate")
+	settle()
+	if edges := log.seen(); len(edges) != 0 {
+		t.Fatalf("saw %v for a binding that was never pressed", edges)
+	}
+}

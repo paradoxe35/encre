@@ -25,8 +25,11 @@ var logName = regexp.MustCompile(`^encre-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.log$`)
 // reaches the cap, and prunes old files each time a new day starts. The file is opened
 // on the first write, so a quiet day leaves nothing behind.
 type rotatingFile struct {
-	dir string
-	now func() time.Time
+	dir      string
+	now      func() time.Time
+	maxBytes int64
+	keepDays int
+	maxFiles int
 
 	mu    sync.Mutex
 	day   string
@@ -36,7 +39,13 @@ type rotatingFile struct {
 }
 
 func newRotatingFile(dir string, now func() time.Time) *rotatingFile {
-	return &rotatingFile{dir: dir, now: now}
+	return &rotatingFile{
+		dir:      dir,
+		now:      now,
+		maxBytes: maxFileBytes,
+		keepDays: keepDays,
+		maxFiles: maxFiles,
+	}
 }
 
 func (r *rotatingFile) Write(p []byte) (int, error) {
@@ -44,7 +53,7 @@ func (r *rotatingFile) Write(p []byte) (int, error) {
 	defer r.mu.Unlock()
 
 	day := r.now().Format(dayLayout)
-	if r.file == nil || day != r.day || r.size+int64(len(p)) > maxFileBytes {
+	if r.file == nil || day != r.day || r.size+int64(len(p)) > r.maxBytes {
 		if err := r.open(day); err != nil {
 			return 0, err
 		}
@@ -71,10 +80,10 @@ func (r *rotatingFile) open(day string) error {
 	if day != r.day {
 		r.day = day
 		r.index = highestIndex(r.dir, day)
-		prune(r.dir, r.now())
 	} else {
 		r.index++
 	}
+	prune(r.dir, r.now(), r.keepDays, r.maxFiles)
 
 	for {
 		file, err := os.OpenFile(r.path(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -86,7 +95,7 @@ func (r *rotatingFile) open(day string) error {
 			file.Close()
 			return fmt.Errorf("failed to stat log file: %w", err)
 		}
-		if info.Size() < maxFileBytes {
+		if info.Size() < r.maxBytes {
 			r.file = file
 			r.size = info.Size()
 			return nil
@@ -160,7 +169,7 @@ func highestIndex(dir, day string) int {
 
 // prune removes files older than the retention window, then the oldest until the file
 // about to be opened fits under the count cap. It never logs: it runs under the writer's lock.
-func prune(dir string, now time.Time) {
+func prune(dir string, now time.Time, keepDays, maxFiles int) {
 	logs := listLogs(dir)
 	oldest := now.AddDate(0, 0, -keepDays).Format(dayLayout)
 

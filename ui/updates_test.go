@@ -232,6 +232,12 @@ func TestTrayGainsAnUpdateItemOnce(t *testing.T) {
 	if w.tray.Items[0].Label != "Update to v1.4.0…" || !w.tray.Items[1].IsSeparator {
 		t.Fatalf("unexpected tray head: %q, separator=%v", w.tray.Items[0].Label, w.tray.Items[1].IsSeparator)
 	}
+
+	// A newer release while the user has not updated relabels the entry instead of adding one.
+	w.SetAvailableUpdate(&updater.Release{Tag: "v1.5.0"})
+	if len(w.tray.Items) != 4 || w.tray.Items[0].Label != "Update to v1.5.0…" {
+		t.Fatalf("tray after a newer tag: %d items, head %q", len(w.tray.Items), w.tray.Items[0].Label)
+	}
 }
 
 func TestRunUpdateIgnoresARepeatedClick(t *testing.T) {

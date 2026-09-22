@@ -52,6 +52,8 @@ func (h *Handover) Serve(onShow func()) {
 			if err != nil {
 				return
 			}
+			// A client that never finishes its line must not block every later launch.
+			conn.SetReadDeadline(time.Now().Add(connectTimeout))
 			request, _ := bufio.NewReader(conn).ReadString('\n')
 			conn.Close()
 			if strings.TrimSpace(request) == showRequest {

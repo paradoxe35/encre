@@ -212,6 +212,7 @@ func (h *FFIHotkeyManager) Close() {
 	h.mu.Lock()
 	h.handlers = make(map[string]func())
 	h.mu.Unlock()
+	ClearHoldBindings()
 
 	globalFFIMu.Lock()
 	if globalFFIHotkeyManager == h {

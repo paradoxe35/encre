@@ -17,6 +17,10 @@ const DRAIN_INTERVAL: Duration = Duration::from_millis(20);
 /// queue stays bounded.
 const BACKLOG_SLICE: usize = SAMPLE_RATE as usize;
 
+/// A toggle left running must not grow without bound; the batch fallback then covers
+/// the most recent half hour of speech.
+const KEEP_AT_MOST: usize = 30 * 60 * SAMPLE_RATE as usize;
+
 /// Audio arriving from the microphone, so a take can run without a device in tests.
 pub trait Source {
     fn rate(&self) -> u32;
@@ -57,6 +61,9 @@ pub struct Take<S: Source> {
     source: Result<S, String>,
     pipeline: Pipeline,
     spoken: Speech,
+    keep_at_most: usize,
+    /// Samples dropped from the front of `spoken` so far; positions into it are relative to this.
+    dropped: usize,
     language: Option<String>,
 }
 
@@ -78,8 +85,16 @@ impl<S: Source> Take<S> {
             source,
             pipeline: Pipeline::new(rate),
             spoken: Speech::default(),
+            keep_at_most: KEEP_AT_MOST,
+            dropped: 0,
             language,
         }
+    }
+
+    #[cfg(test)]
+    fn keeping(mut self, samples: usize) -> Self {
+        self.keep_at_most = samples;
+        self
     }
 
     /// `false` only on shutdown.
@@ -150,11 +165,16 @@ impl<S: Source> Take<S> {
     fn stream<L: Live>(&mut self, commands: &Receiver<Command>, live: L) -> Streamed {
         let mut live = Streaming::new(live);
 
-        let mut fed = 0;
-        while fed < self.spoken.samples.len() && !live.degraded {
-            let end = (fed + BACKLOG_SLICE).min(self.spoken.samples.len());
-            live.feed(&self.spoken.samples[fed..end]);
-            fed = end;
+        // Absolute position, since a pull may drop audio from the front of the backlog.
+        let mut fed = self.dropped;
+        loop {
+            let start = fed.saturating_sub(self.dropped);
+            if start >= self.spoken.samples.len() || live.degraded {
+                break;
+            }
+            let end = (start + BACKLOG_SLICE).min(self.spoken.samples.len());
+            live.feed(&self.spoken.samples[start..end]);
+            fed = self.dropped + end;
             self.pull();
         }
         if live.degraded {
@@ -231,7 +251,15 @@ impl<S: Source> Take<S> {
         self.keep(tail)
     }
 
+    /// Older speech makes room for the burst, which is kept whole so the stream hears all of it.
     fn keep(&mut self, burst: Speech) -> &[f32] {
+        let room = self.keep_at_most.saturating_sub(burst.samples.len());
+        let dropped = self.spoken.trim_to(room);
+        if dropped > 0 && self.dropped == 0 {
+            tracing::warn!("take is longer than what is kept; the oldest speech is dropped");
+        }
+        self.dropped += dropped;
+
         let from = self.spoken.samples.len();
         self.spoken.append(burst);
         &self.spoken.samples[from..]
@@ -390,6 +418,15 @@ mod tests {
     }
 
     fn start(state: FakeState, resident: Option<&str>, model: Option<&str>) -> Harness {
+        start_keeping(state, resident, model, usize::MAX)
+    }
+
+    fn start_keeping(
+        state: FakeState,
+        resident: Option<&str>,
+        model: Option<&str>,
+        keep: usize,
+    ) -> Harness {
         let state = Arc::new(Mutex::new(state));
         let engine = Arc::new(Mutex::new(FakeEngine {
             resident: resident.map(PathBuf::from),
@@ -408,7 +445,9 @@ mod tests {
                 queued: &thread_queued,
                 model,
             });
-            Take::new(Ok(Microphone(incoming)), Some("fr".to_owned())).run(&rx, wanted)
+            Take::new(Ok(Microphone(incoming)), Some("fr".to_owned()))
+                .keeping(keep)
+                .run(&rx, wanted)
         });
 
         Harness {
@@ -637,6 +676,42 @@ mod tests {
         assert!(matches!(stopped.text, Ok(None)));
         assert_eq!(stopped.speech.samples.len(), tone(1.0).len());
         assert!(state.lock().aborted, "the finished stream is released");
+    }
+
+    #[test]
+    fn a_take_keeps_only_the_most_recent_speech() {
+        let take = start_keeping(FakeState::default(), None, None, tone(1.0).len());
+        take.speak(1.0);
+        take.speak(1.0);
+
+        let (stopped, _) = take.stop();
+        assert_eq!(stopped.speech.samples.len(), tone(1.0).len());
+    }
+
+    #[test]
+    fn a_burst_is_streamed_whole_even_when_older_speech_is_dropped() {
+        let take = start_keeping(streams("bonjour"), Some(MODEL), Some(MODEL), tone(1.5).len());
+        take.wait_until("streaming", |s| s.begins == 1);
+        take.speak(1.0);
+        take.speak(1.0);
+
+        let state = take.state.clone();
+        take.stop();
+        assert_eq!(state.lock().fed.len(), tone(2.0).len(), "the stream heard everything");
+    }
+
+    #[test]
+    fn the_backlog_starts_from_what_the_cap_kept() {
+        let take = start_keeping(streams("bonjour"), None, Some(MODEL), tone(1.5).len());
+        take.speak(1.0);
+        take.speak(1.0);
+
+        take.engine.lock().resident = Some(PathBuf::from(MODEL));
+        take.wait_until("the switch to streaming", |s| s.begins == 1);
+
+        let state = take.state.clone();
+        take.stop();
+        assert_eq!(state.lock().fed.len(), tone(1.5).len(), "only the kept audio can be fed");
     }
 
     #[test]
