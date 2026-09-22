@@ -6,32 +6,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
-	"strings"
 )
 
 func GetLatestLogFile() (string, error) {
-	logDir := GetLogDirectory()
+	return latestLog(GetLogDirectory())
+}
 
-	entries, err := os.ReadDir(logDir)
-	if err != nil {
-		return "", fmt.Errorf("failed to read log directory: %w", err)
-	}
-
-	var logFiles []string
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "encre-") && strings.HasSuffix(entry.Name(), ".log") {
-			logFiles = append(logFiles, entry.Name())
-		}
-	}
-
-	if len(logFiles) == 0 {
+func latestLog(dir string) (string, error) {
+	logs := listLogs(dir)
+	if len(logs) == 0 {
 		return "", fmt.Errorf("no log files found")
 	}
-
-	sort.Sort(sort.Reverse(sort.StringSlice(logFiles)))
-
-	return filepath.Join(logDir, logFiles[0]), nil
+	return filepath.Join(dir, logs[len(logs)-1].name), nil
 }
 
 func OpenLogFile() error {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/paradoxe35/encre/internal/utils"
@@ -19,31 +18,18 @@ func Init() error {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
-	today := time.Now().Format("2006-01-02")
-	logFile := filepath.Join(logDir, fmt.Sprintf("encre-%s.log", today))
-
-	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open log file: %w", err)
-	}
-
 	logLevel := slog.LevelInfo
 	if os.Getenv("DEBUG") != "" {
 		logLevel = slog.LevelDebug
 	}
 
-	opts := &slog.HandlerOptions{
+	handler := slog.NewTextHandler(newRotatingFile(logDir, time.Now), &slog.HandlerOptions{
 		Level: logLevel,
-	}
-
-	handler := slog.NewTextHandler(file, opts)
+	})
 	defaultLogger = slog.New(handler)
 	slog.SetDefault(defaultLogger)
 
-	defaultLogger.Info("Logger initialized", "log_file", logFile)
-
-	go cleanupOldLogs(logDir, 30)
-
+	defaultLogger.Info("Logger initialized", "log_dir", logDir)
 	return nil
 }
 
@@ -79,35 +65,4 @@ func Log(level slog.Level, msg string, args ...any) {
 
 func GetLogDirectory() string {
 	return utils.AppHomeDir("logs")
-}
-
-func cleanupOldLogs(logDir string, maxAgeDays int) {
-	entries, err := os.ReadDir(logDir)
-	if err != nil {
-		return
-	}
-
-	cutoffDate := time.Now().AddDate(0, 0, -maxAgeDays)
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		if filepath.Ext(entry.Name()) != ".log" {
-			continue
-		}
-
-		logPath := filepath.Join(logDir, entry.Name())
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		if info.ModTime().Before(cutoffDate) {
-			if err := os.Remove(logPath); err == nil {
-				Info("Removed old log file", "file", entry.Name())
-			}
-		}
-	}
 }
