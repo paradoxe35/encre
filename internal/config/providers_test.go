@@ -44,8 +44,8 @@ func TestACustomOpenRouterBecomesTheBuiltInAndKeepsItsKey(t *testing.T) {
 		t.Fatal("the old spelling is still there")
 	}
 	settings := cfg.GetProviderSettings(BuiltInOpenRouter)
-	if settings.IsCustom || settings.ProviderType != "" {
-		t.Fatalf("still flagged custom: %+v", settings)
+	if settings.ProviderType != "" {
+		t.Fatalf("a built-in kept a custom protocol: %+v", settings)
 	}
 	if settings.APIKey != "k" || settings.Model != "openai/gpt-4o-mini" {
 		t.Fatalf("settings were lost: %+v", settings)
@@ -61,6 +61,7 @@ func TestACustomOpenRouterBecomesTheBuiltInAndKeepsItsKey(t *testing.T) {
 	}
 }
 
+// Files from before the flag went away still say is_custom; it is ignored, the name decides.
 func TestABuiltInFlaggedCustomByHandIsCorrected(t *testing.T) {
 	cfg := loaded(t, `{"ai_provider": {"providers": {"claude": {"api_key": "k", "is_custom": true}}}}`)
 	if cfg.IsCustomProvider(BuiltInClaude) {

@@ -97,7 +97,7 @@ func (p *Processor) buildProvider(cfg *config.Config, name string) (ai.Provider,
 
 	var provider ai.Provider
 	switch {
-	case settings.IsCustom:
+	case cfg.IsCustomProvider(name):
 		provider, err = ai.NewCustomProvider(name, settings.ProviderType, apiKey,
 			settings.BaseURL, settings.Model, settings.Temperature)
 		if err != nil {

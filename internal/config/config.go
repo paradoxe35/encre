@@ -47,12 +47,12 @@ type Config struct {
 }
 
 type ProviderSettings struct {
-	APIKey       string  `json:"api_key"`
-	BaseURL      string  `json:"base_url,omitempty"`
-	Model        string  `json:"model,omitempty"`
-	Temperature  float64 `json:"temperature,omitempty"`
-	IsCustom     bool    `json:"is_custom,omitempty"`
-	ProviderType string  `json:"provider_type,omitempty"`
+	APIKey      string  `json:"api_key"`
+	BaseURL     string  `json:"base_url,omitempty"`
+	Model       string  `json:"model,omitempty"`
+	Temperature float64 `json:"temperature,omitempty"`
+	// ProviderType is the protocol of a custom provider; built-ins carry none.
+	ProviderType string `json:"provider_type,omitempty"`
 	// NoAPIKey suits a model running on this machine. Absent means a key is required.
 	NoAPIKey bool `json:"no_api_key,omitempty"`
 	// LowReasoning asks a reasoning model to think less. Off by default: a model that does not
@@ -402,8 +402,8 @@ func (c *Config) GetAllProviderNames() []string {
 	names := BuiltInProviders()
 
 	customNames := make([]string, 0)
-	for name, settings := range c.AIProvider.Providers {
-		if settings.IsCustom {
+	for name := range c.AIProvider.Providers {
+		if canonicalProviderName(name) == "" {
 			customNames = append(customNames, name)
 		}
 	}
@@ -482,7 +482,6 @@ func (c *Config) AddCustomProvider(name string, settings ProviderSettings) error
 		}
 	}
 
-	settings.IsCustom = true
 	c.AIProvider.Providers[name] = settings
 	return nil
 }
@@ -495,12 +494,8 @@ func (c *Config) DeleteCustomProvider(name string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	settings, exists := c.AIProvider.Providers[name]
-	if !exists {
+	if _, exists := c.AIProvider.Providers[name]; !exists {
 		return fmt.Errorf("provider '%s' not found", name)
-	}
-	if !settings.IsCustom {
-		return fmt.Errorf("cannot delete non-custom provider: %s", name)
 	}
 
 	delete(c.AIProvider.Providers, name)
@@ -512,14 +507,13 @@ func (c *Config) DeleteCustomProvider(name string) error {
 	return nil
 }
 
+// A custom provider is any configured one that is not built in; the name decides.
 func (c *Config) IsCustomProvider(name string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if settings, exists := c.AIProvider.Providers[name]; exists {
-		return settings.IsCustom
-	}
-	return false
+	_, exists := c.AIProvider.Providers[name]
+	return exists && canonicalProviderName(name) == ""
 }
 
 func defaultTranslate() TranslateConfig {
@@ -575,21 +569,17 @@ func (c *Config) applyDefaults() {
 	c.normaliseProviders()
 }
 
-// normaliseProviders makes the file agree with what the names already say: a built-in
-// is never custom and anything else always is. A provider added by hand under a
-// built-in's name in another spelling, as OpenRouter was before it became built in,
-// turns into the built-in with its key and settings, and references follow.
+// normaliseProviders folds a built-in stored under another spelling, as OpenRouter was
+// when it could only be added by hand, into the built-in with its key and settings,
+// and makes references follow. Built-ins carry no protocol of their own.
 func (c *Config) normaliseProviders() {
 	renamed := map[string]string{}
 	for name, settings := range c.AIProvider.Providers {
 		canonical := canonicalProviderName(name)
 		if canonical == "" {
-			settings.IsCustom = true
-			c.AIProvider.Providers[name] = settings
 			continue
 		}
 
-		settings.IsCustom = false
 		settings.ProviderType = ""
 		if canonical != name {
 			delete(c.AIProvider.Providers, name)

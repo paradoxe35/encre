@@ -156,8 +156,8 @@ func TestConfiguredProvidersRequireUsableSettings(t *testing.T) {
 			Providers: map[string]ProviderSettings{
 				BuiltInOpenAI:   {BaseURL: "https://api.openai.com/v1", Model: "gpt-4o"},
 				BuiltInClaude:   {BaseURL: "https://api.anthropic.com", Model: "claude"},
-				"local":         {BaseURL: "http://localhost:1234/v1", Model: "llama", IsCustom: true, NoAPIKey: true},
-				"missing-model": {BaseURL: "http://localhost:1234/v1", IsCustom: true, NoAPIKey: true},
+				"local":         {BaseURL: "http://localhost:1234/v1", Model: "llama", NoAPIKey: true},
+				"missing-model": {BaseURL: "http://localhost:1234/v1", NoAPIKey: true},
 			},
 		},
 	}

@@ -307,7 +307,6 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 			BaseURL:      baseURL,
 			Model:        strings.TrimSpace(modelEntry.Text),
 			Temperature:  1.0,
-			IsCustom:     true,
 			ProviderType: config.ProviderTypeOpenAICompatible,
 			NoAPIKey:     !requiresKey.Checked,
 			LowReasoning: lowReasoning.Checked,
