@@ -15,6 +15,7 @@ import (
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/language"
 	"github.com/paradoxe35/encre/internal/logger"
+	"github.com/paradoxe35/encre/internal/overlay"
 	"github.com/paradoxe35/encre/internal/prompt"
 	"github.com/paradoxe35/encre/internal/stt"
 )
@@ -26,6 +27,7 @@ type Processor struct {
 	clipboardManager *input.FFIClipboardManager
 	history          *history.Store
 	processing       bool
+	indicator        overlay.Overlay
 }
 
 func NewProcessor(cfg *config.Config) (*Processor, error) {
@@ -39,6 +41,7 @@ func NewProcessor(cfg *config.Config) (*Processor, error) {
 		providerFactory:  ai.NewProviderFactory(),
 		clipboardManager: clipManager,
 		history:          history.NewStore(),
+		indicator:        overlay.Disabled{},
 	}
 
 	if err := p.initializeProviders(); err != nil {
@@ -130,6 +133,26 @@ func (p *Processor) providerNamed(name string) (ai.Provider, error) {
 	return provider, nil
 }
 
+// SetOverlay swaps the indicator; the old one is hidden in case it was showing.
+func (p *Processor) SetOverlay(indicator overlay.Overlay) {
+	p.mu.Lock()
+	previous := p.indicator
+	p.indicator = indicator
+	p.mu.Unlock()
+	if previous != nil {
+		previous.Hide()
+	}
+}
+
+func (p *Processor) overlay() overlay.Overlay {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.indicator == nil {
+		return overlay.Disabled{}
+	}
+	return p.indicator
+}
+
 // Two overlapping runs would fight over the clipboard, which each saves and restores.
 func (p *Processor) begin() (func(), error) {
 	p.mu.Lock()
@@ -181,6 +204,10 @@ func (p *Processor) Run(kind config.ActionKind) error {
 	if err := outcomeError(outcome); err != nil {
 		return err
 	}
+
+	indicator := p.overlay()
+	indicator.Show(overlay.Thinking)
+	defer indicator.Hide()
 
 	result, err := p.transform(text, kind)
 	if err != nil {

@@ -39,6 +39,8 @@ type MainWindow struct {
 	statusBinding         binding.String
 	startMinimizedBinding binding.Bool
 	startOnLoginBinding   binding.Bool
+	dictationIndicator    binding.Bool
+	actionIndicator       binding.Bool
 	themeBinding          binding.String
 	pasteShortcutBinding  binding.String
 	unsavedLabel          *widget.Label
@@ -109,6 +111,7 @@ func NewMainWindow(app fyne.App, cfg *config.Config, hotkeyManager *input.FFIHot
 	}
 	if appUpdater != nil {
 		mw.updates = newUpdatePanel(appUpdater)
+		mw.updates.onFound = mw.addTrayUpdateItem
 	}
 	mw.initializing = true
 
@@ -135,6 +138,8 @@ func (w *MainWindow) initBindings() {
 	w.statusBinding = binding.NewString()
 	w.startMinimizedBinding = binding.NewBool()
 	w.startOnLoginBinding = binding.NewBool()
+	w.dictationIndicator = binding.NewBool()
+	w.actionIndicator = binding.NewBool()
 	w.themeBinding = binding.NewString()
 	w.pasteShortcutBinding = binding.NewString()
 	w.pasteShortcutBinding.Set(string(w.config.PasteShortcut()))
@@ -153,6 +158,8 @@ func (w *MainWindow) initBindings() {
 
 	w.statusBinding.Set("Ready")
 	w.startMinimizedBinding.Set(w.config.Appearance.StartMinimized)
+	w.dictationIndicator.Set(w.config.Appearance.DictationIndicator)
+	w.actionIndicator.Set(w.config.Appearance.ActionIndicator)
 
 	// Re-check actual system state: the user may have removed the login item outside the app.
 	autoStart := platform.GetAutoStart()
@@ -161,6 +168,8 @@ func (w *MainWindow) initBindings() {
 
 	// One listener per binding covers both directions without Bind overwriting it.
 	w.startMinimizedBinding.AddListener(binding.NewDataListener(w.markDirty))
+	w.dictationIndicator.AddListener(binding.NewDataListener(w.markDirty))
+	w.actionIndicator.AddListener(binding.NewDataListener(w.markDirty))
 	w.startOnLoginBinding.AddListener(binding.NewDataListener(w.markDirty))
 
 	if w.config.Appearance.StartOnLogin != actualStartOnLogin {

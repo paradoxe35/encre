@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -250,5 +251,31 @@ func TestRunUpdateIgnoresARepeatedClick(t *testing.T) {
 
 	if p.state.phase != updateRunning {
 		t.Fatalf("a second runUpdate must not restart an update in flight")
+	}
+}
+
+type foundUpdater struct{ rel *updater.Release }
+
+func (f foundUpdater) Check(context.Context) (*updater.Release, bool, error) { return f.rel, true, nil }
+func (f foundUpdater) Update(context.Context, *updater.Release, ...updater.Option) error {
+	return nil
+}
+
+// A release found by clicking "Check for updates" must reach the tray like one the startup check found.
+func TestAManualCheckAnnouncesInTheTray(t *testing.T) {
+	test.NewApp()
+	w := &MainWindow{config: config.Default()}
+	w.initBindings()
+	w.updates = newUpdatePanel(foundUpdater{rel: &updater.Release{Tag: "v1.6.0"}})
+	w.updates.onFound = w.addTrayUpdateItem
+	w.tray = fyne.NewMenu("Encre", fyne.NewMenuItem("Settings", nil), fyne.NewMenuItem("Quit", nil))
+
+	w.updates.check()
+
+	if len(w.tray.Items) != 4 || w.tray.Items[0].Label != "Update to v1.6.0…" {
+		t.Fatalf("tray after a manual check: %d items, head %q", len(w.tray.Items), w.tray.Items[0].Label)
+	}
+	if w.updates.state.release == nil || w.updates.state.release.Tag != "v1.6.0" {
+		t.Fatal("the panel did not keep the release")
 	}
 }

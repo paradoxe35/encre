@@ -12,6 +12,7 @@ import (
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
+	"github.com/paradoxe35/encre/internal/overlay"
 	"github.com/paradoxe35/encre/internal/permissions"
 	"github.com/paradoxe35/encre/internal/platform"
 	"github.com/paradoxe35/encre/internal/revision"
@@ -38,6 +39,10 @@ type Application struct {
 
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
+	// overlayMu guards the indicator swap: config listeners run concurrently.
+	overlayMu  sync.Mutex
+	indicators *indicatorChoice
+	indicator  *overlay.Indicator
 
 	reloadMutex sync.Mutex
 }
@@ -85,6 +90,9 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 			})
 		})
 
+	application.applyOverlay(cfg)
+	input.OnLevel(application.dictation.Level)
+
 	// Before hotkeys, so the UI reflects permission state early.
 	application.setupPermissions()
 
@@ -97,6 +105,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 		logger.Info("Config changed, reloading hotkeys")
 		application.setConfig(newCfg)
 		application.reloadHotkeysFromConfig()
+		application.applyOverlay(newCfg)
 	})
 
 	mainWindow.SetShowHideCallbacks(func() {
@@ -214,6 +223,56 @@ func (a *Application) reloadHotkeysFromConfig() {
 
 	a.setupHotkeys()
 	logger.Info("Hotkeys reloaded successfully")
+}
+
+// indicatorChoice is which features show the indicator; one window serves both.
+type indicatorChoice struct {
+	dictation bool
+	actions   bool
+}
+
+// applyOverlay swaps the indicators only when a choice changed, so a save of
+// unrelated settings never interrupts one that is showing.
+func (a *Application) applyOverlay(cfg *config.Config) {
+	a.overlayMu.Lock()
+	defer a.overlayMu.Unlock()
+
+	appearance := cfg.AppearanceSettings()
+	choice := indicatorChoice{
+		dictation: appearance.DictationIndicator,
+		actions:   appearance.ActionIndicator,
+	}
+	if a.indicators != nil && *a.indicators == choice {
+		return
+	}
+	a.indicators = &choice
+
+	if a.indicator != nil {
+		a.indicator.Close()
+		a.indicator = nil
+	}
+	if choice.dictation || choice.actions {
+		a.indicator = overlay.New(fyne.DoAndWait)
+	}
+	a.dictation.SetOverlay(a.owner(choice.dictation))
+	a.processor.SetOverlay(a.owner(choice.actions))
+}
+
+func (a *Application) owner(on bool) overlay.Overlay {
+	if on && a.indicator != nil {
+		return a.indicator.Owner()
+	}
+	return overlay.Disabled{}
+}
+
+// closeOverlay takes the window down while the window system is still there.
+func (a *Application) closeOverlay() {
+	a.overlayMu.Lock()
+	defer a.overlayMu.Unlock()
+	if a.indicator != nil {
+		a.indicator.Close()
+		a.indicator = nil
+	}
 }
 
 func (a *Application) currentConfig() *config.Config {
@@ -367,6 +426,7 @@ func (a *Application) teardown() {
 		a.permissionMonitorCancel()
 	}
 	stt.StopRefreshing()
+	a.closeOverlay()
 
 	a.hotkeyManager.Stop()
 	a.hotkeyManager.Close()

@@ -11,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/logger"
+	"github.com/paradoxe35/encre/internal/overlay"
 	"github.com/paradoxe35/encre/internal/platform"
 	"github.com/paradoxe35/encre/internal/version"
 )
@@ -37,7 +38,7 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	startOnLogin := widget.NewCheck("Start on login", nil)
 	startOnLogin.Bind(w.startOnLoginBinding)
 
-	system := container.NewVBox(startMinimized, startOnLogin)
+	system := container.NewVBox(startMinimized, startOnLogin, w.createIndicatorControls())
 	// Only Linux terminals refuse Ctrl+V: macOS always pastes with Cmd+V and Windows Terminal takes both.
 	if runtime.GOOS == "linux" {
 		system.Add(w.createPasteShortcutControls())
@@ -61,6 +62,24 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	}
 
 	return container.NewVScroll(form)
+}
+
+// The indicator needs a window that floats without taking focus, which Wayland has no
+// way to offer; the switch stays visible but off, with the reason.
+func (w *MainWindow) createIndicatorControls() fyne.CanvasObject {
+	dictation := widget.NewCheck("Show a floating indicator while dictating", nil)
+	dictation.Bind(w.dictationIndicator)
+	actions := widget.NewCheck("Show a floating indicator while revising or translating", nil)
+	actions.Bind(w.actionIndicator)
+	if overlay.Supported() {
+		return container.NewVBox(dictation, actions)
+	}
+
+	dictation.Disable()
+	actions.Disable()
+	hint := widget.NewLabel("Not available on Wayland.")
+	hint.Importance = widget.LowImportance
+	return container.NewVBox(dictation, actions, hint)
 }
 
 func (w *MainWindow) createUpdateControls() fyne.CanvasObject {
