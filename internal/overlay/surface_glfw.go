@@ -56,6 +56,10 @@ func openSurface() (surface, error) {
 		return nil, fmt.Errorf("could not create the indicator window: %w", err)
 	}
 
+	// GLFW's hints stop it asking for focus; the window system has its own ideas
+	// about new windows, so each platform tells it not to.
+	noFocus(window)
+
 	x, y, w, h := monitor.GetWorkarea()
 	ww, wh := window.GetSize()
 	window.SetPos(x+(w-ww)/2, y+h-wh-bottomMargin)
