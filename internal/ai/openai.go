@@ -32,7 +32,7 @@ func NewOpenAIProvider(apiKey, baseURL, model string, temperature float64) *Open
 		baseURL = openAIBaseURL
 	}
 	if model == "" {
-		model = "gpt-4o"
+		model = "gpt-6-luna"
 	}
 	if temperature == 0 {
 		temperature = 1.0

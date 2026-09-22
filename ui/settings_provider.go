@@ -86,7 +86,7 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	modelLabel.TextStyle.Bold = true
 	modelEntry := w.dirtyEntry()
 	modelEntry.Bind(w.modelBinding)
-	modelEntry.PlaceHolder = "e.g., gpt-4o"
+	modelEntry.PlaceHolder = "e.g., gpt-6-luna"
 	modelEntry.Validator = nil // no validation icon
 
 	browseModels := widget.NewButtonWithIcon("", theme.ListIcon(), nil)

@@ -30,7 +30,7 @@ func NewGeminiProvider(apiKey, baseURL, model string, temperature float64) *Gemi
 		baseURL = geminiBaseURL
 	}
 	if model == "" {
-		model = "gemini-2.5-flash-lite"
+		model = "gemini-3.1-flash-lite"
 	}
 	if temperature == 0 {
 		temperature = 1.0
