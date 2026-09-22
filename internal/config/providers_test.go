@@ -29,7 +29,7 @@ func TestOpenRouterIsBuiltIn(t *testing.T) {
 	}
 }
 
-func TestTheNameDecidesWhetherAProviderIsCustom(t *testing.T) {
+func TestBuiltInsAreNeverCustomAndOtherNamesAlwaysAre(t *testing.T) {
 	cfg := loaded(t, `{"ai_provider": {"providers": {
 		"claude": {"api_key": "k"},
 		"groq": {"api_key": "k", "base_url": "https://api.groq.com/openai/v1", "model": "m"}

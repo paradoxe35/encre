@@ -70,7 +70,7 @@ sudo apt install libgl1 libx11-6 libxext6 libxcb1 libxinerama1 libxtst6 libxdo3 
 
 1. Launch Encre (it appears in your system tray)
 2. Right-click the tray icon > Settings
-3. Under **AI**, add your API key for OpenAI, Claude, or Gemini
+3. Under **AI**, add your API key for OpenAI, Claude, Gemini, or OpenRouter
 4. For dictation, switch it on under **Hotkeys**, then download a model under **Speech**
 5. Start writing somewhere, select text, press the hotkey
 
@@ -87,13 +87,14 @@ Change them in Settings > Hotkeys. Translate and dictate ship switched off - tur
 
 ## Supported AI Providers
 
-| Provider | Example Models                          |
-| -------- | --------------------------------------- |
-| OpenAI   | gpt-4o, gpt-4o-mini                     |
-| Claude   | claude-3-5-haiku, claude-3-5-sonnet     |
-| Gemini   | gemini-2.5-flash, gemini-2.5-flash-lite |
+| Provider   | Example Models                                   |
+| ---------- | ------------------------------------------------ |
+| OpenAI     | gpt-4o, gpt-4o-mini                              |
+| Claude     | claude-3-5-haiku, claude-3-5-sonnet              |
+| Gemini     | gemini-2.5-flash, gemini-2.5-flash-lite          |
+| OpenRouter | google/gemini-2.5-flash, any model it serves     |
 
-You can also add custom OpenAI-compatible providers (local LLMs, OpenRouter, Together AI) with their own base URL, and mark them as needing no API key.
+You can also add custom OpenAI-compatible providers (local LLMs, Together AI) with their own base URL, and mark them as needing no API key.
 
 A few things worth knowing:
 
