@@ -231,7 +231,12 @@ mod tests {
         let [pause] = second.pauses[..] else {
             panic!("pauses {:?}, want exactly one", second.pauses);
         };
-        within(pause, HANGOVER, HANGOVER + SLACK, "hangover ending inside this burst");
+        within(
+            pause,
+            HANGOVER,
+            HANGOVER + SLACK,
+            "hangover ending inside this burst",
+        );
     }
 
     #[test]

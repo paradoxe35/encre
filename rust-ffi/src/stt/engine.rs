@@ -216,7 +216,11 @@ mod tests {
 
     #[test]
     fn join_fails_on_the_first_failed_piece() {
-        let parts = vec![Ok("Hello".to_owned()), Err(anyhow!("boom")), Ok("late".to_owned())];
+        let parts = vec![
+            Ok("Hello".to_owned()),
+            Err(anyhow!("boom")),
+            Ok("late".to_owned()),
+        ];
         let err = join(parts.into_iter()).unwrap_err();
         assert_eq!(err.to_string(), "boom");
     }
@@ -224,7 +228,9 @@ mod tests {
     #[test]
     fn transcribing_without_a_model_says_so() {
         let mut engine = Engine::new();
-        let err = engine.transcribe(&Speech::from(vec![0.0; 16]), None).unwrap_err();
+        let err = engine
+            .transcribe(&Speech::from(vec![0.0; 16]), None)
+            .unwrap_err();
         assert_eq!(err.to_string(), "no model loaded");
     }
 
@@ -234,7 +240,9 @@ mod tests {
         let missing = std::env::temp_dir().join("encre-missing.gguf");
         assert!(engine.load(&missing).is_err());
 
-        let err = engine.transcribe(&Speech::from(vec![0.0; 16]), None).unwrap_err();
+        let err = engine
+            .transcribe(&Speech::from(vec![0.0; 16]), None)
+            .unwrap_err();
         assert!(err.to_string().contains("encre-missing.gguf"), "{err}");
         assert!(engine.resident().is_none());
     }

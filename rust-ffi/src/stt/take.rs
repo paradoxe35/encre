@@ -690,14 +690,23 @@ mod tests {
 
     #[test]
     fn a_burst_is_streamed_whole_even_when_older_speech_is_dropped() {
-        let take = start_keeping(streams("bonjour"), Some(MODEL), Some(MODEL), tone(1.5).len());
+        let take = start_keeping(
+            streams("bonjour"),
+            Some(MODEL),
+            Some(MODEL),
+            tone(1.5).len(),
+        );
         take.wait_until("streaming", |s| s.begins == 1);
         take.speak(1.0);
         take.speak(1.0);
 
         let state = take.state.clone();
         take.stop();
-        assert_eq!(state.lock().fed.len(), tone(2.0).len(), "the stream heard everything");
+        assert_eq!(
+            state.lock().fed.len(),
+            tone(2.0).len(),
+            "the stream heard everything"
+        );
     }
 
     #[test]
@@ -711,21 +720,30 @@ mod tests {
 
         let state = take.state.clone();
         take.stop();
-        assert_eq!(state.lock().fed.len(), tone(1.5).len(), "only the kept audio can be fed");
+        assert_eq!(
+            state.lock().fed.len(),
+            tone(1.5).len(),
+            "only the kept audio can be fed"
+        );
     }
 
     #[test]
     fn pauses_survive_the_take() {
         let take = start(FakeState::default(), None, None);
         take.speak(1.0);
-        take.audio.send(vec![0.0; SAMPLE_RATE as usize * 2]).unwrap();
+        take.audio
+            .send(vec![0.0; SAMPLE_RATE as usize * 2])
+            .unwrap();
         thread::sleep(DRAIN_INTERVAL * 3);
         take.speak(1.0);
 
         let (stopped, _) = take.stop();
         assert_eq!(stopped.speech.pauses.len(), 1);
         let pause = stopped.speech.pauses[0];
-        assert!(pause > tone(1.0).len() && pause < stopped.speech.samples.len(), "pause at {pause}");
+        assert!(
+            pause > tone(1.0).len() && pause < stopped.speech.samples.len(),
+            "pause at {pause}"
+        );
     }
 
     #[test]

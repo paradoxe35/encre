@@ -562,7 +562,6 @@ mod channel_tests {
         );
         assert!(choose_config(vec![range(1, SampleFormat::U8)], 48_000).is_none());
     }
-
 }
 
 #[cfg(test)]
@@ -616,7 +615,11 @@ mod worker_tests {
             tx.send(command).unwrap();
         }
         worker.join().unwrap();
-        assert_eq!(handled.load(Ordering::SeqCst), 3, "0, 2 and 3 were handled; 9 stopped");
+        assert_eq!(
+            handled.load(Ordering::SeqCst),
+            3,
+            "0, 2 and 3 were handled; 9 stopped"
+        );
     }
 
     #[test]
@@ -644,7 +647,10 @@ mod worker_tests {
         recorder.shutdown();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while recorder.start().is_ok() {
-            assert!(std::time::Instant::now() < deadline, "start never noticed the shutdown");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "start never noticed the shutdown"
+            );
             thread::sleep(std::time::Duration::from_millis(5));
         }
     }

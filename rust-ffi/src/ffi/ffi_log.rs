@@ -139,7 +139,9 @@ mod tests {
     static SERIAL: Mutex<()> = Mutex::new(());
 
     extern "C" fn capture(level: c_int, message: *const c_char) {
-        let text = unsafe { CStr::from_ptr(message) }.to_string_lossy().into_owned();
+        let text = unsafe { CStr::from_ptr(message) }
+            .to_string_lossy()
+            .into_owned();
         RECEIVED.lock().push((level, text));
     }
 

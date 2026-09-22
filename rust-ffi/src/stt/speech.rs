@@ -39,7 +39,8 @@ impl Speech {
     /// Appends a later burst, re-basing its pauses onto this one.
     pub fn append(&mut self, burst: Speech) {
         let offset = self.samples.len();
-        self.pauses.extend(burst.pauses.into_iter().map(|p| p + offset));
+        self.pauses
+            .extend(burst.pauses.into_iter().map(|p| p + offset));
         self.samples.extend(burst.samples);
     }
 
@@ -203,8 +204,15 @@ mod tests {
     }
 
     fn check_cover(speech: &Speech, pieces: &[&[f32]], max: usize) {
-        assert!(pieces.iter().all(|p| p.len() <= max), "a piece exceeds the limit");
-        assert_eq!(pieces.concat(), speech.samples, "pieces must cover the take in order");
+        assert!(
+            pieces.iter().all(|p| p.len() <= max),
+            "a piece exceeds the limit"
+        );
+        assert_eq!(
+            pieces.concat(),
+            speech.samples,
+            "pieces must cover the take in order"
+        );
     }
 
     #[test]
@@ -238,7 +246,10 @@ mod tests {
     fn a_dip_outside_the_search_window_is_ignored() {
         let s = with_dip(tone(40.0), 5.0, 0.1);
         let cut = s.pieces(seconds(30.0))[0].len();
-        assert!(cut >= seconds(17.0), "cut at {cut} reached back to a dip at 5 s");
+        assert!(
+            cut >= seconds(17.0),
+            "cut at {cut} reached back to a dip at 5 s"
+        );
     }
 
     #[test]
@@ -250,8 +261,14 @@ mod tests {
         assert_eq!(pieces.len(), 3);
         let first = pieces[0].len();
         let second = first + pieces[1].len();
-        assert!((seconds(21.0)..=seconds(21.1)).contains(&first), "first cut at {first}");
-        assert!((seconds(45.0)..=seconds(45.1)).contains(&second), "second cut at {second}");
+        assert!(
+            (seconds(21.0)..=seconds(21.1)).contains(&first),
+            "first cut at {first}"
+        );
+        assert!(
+            (seconds(45.0)..=seconds(45.1)).contains(&second),
+            "second cut at {second}"
+        );
     }
 
     #[test]
