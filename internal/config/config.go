@@ -127,26 +127,28 @@ func Default() *Config {
 	}
 }
 
+// The cheapest current model of each provider: a correction is a small job, and a
+// new user should not need to pick a model before the first hotkey works.
 func defaultProviders() map[string]ProviderSettings {
 	return map[string]ProviderSettings{
 		"openai": {
 			BaseURL:     "https://api.openai.com/v1",
-			Model:       "gpt-4o",
+			Model:       "gpt-6-luna",
 			Temperature: 1.0,
 		},
 		"claude": {
 			BaseURL:     "https://api.anthropic.com",
-			Model:       "claude-3-5-haiku-20241022",
+			Model:       "claude-haiku-4-5",
 			Temperature: 1.0,
 		},
 		"gemini": {
 			BaseURL:     "https://generativelanguage.googleapis.com",
-			Model:       "gemini-2.5-flash",
+			Model:       "gemini-3.1-flash-lite",
 			Temperature: 1.0,
 		},
 		"openrouter": {
 			BaseURL:     "https://openrouter.ai/api/v1",
-			Model:       "google/gemini-2.5-flash",
+			Model:       "openai/gpt-6-luna",
 			Temperature: 1.0,
 		},
 	}
