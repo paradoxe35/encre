@@ -206,6 +206,8 @@ func (w *MainWindow) providerUnderTest(provider string, settings config.Provider
 		return ai.NewAnthropicProvider(apiKey, baseURL, model, settings.Temperature), nil
 	case config.BuiltInGemini:
 		return ai.NewGeminiProvider(apiKey, baseURL, model, settings.Temperature), nil
+	case config.BuiltInOpenRouter:
+		return ai.NewOpenRouterProvider(apiKey, baseURL, model, settings.Temperature), nil
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}

@@ -109,6 +109,8 @@ func (p *Processor) buildProvider(cfg *config.Config, name string) (ai.Provider,
 		provider = ai.NewAnthropicProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
 	case name == config.BuiltInGemini:
 		provider = ai.NewGeminiProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
+	case name == config.BuiltInOpenRouter:
+		provider = ai.NewOpenRouterProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}

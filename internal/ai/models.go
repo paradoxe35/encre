@@ -50,18 +50,28 @@ func endpointFor(provider, apiKey, baseURL string) modelsEndpoint {
 			headers: map[string]string{"x-goog-api-key": apiKey},
 		}
 
+	case config.BuiltInOpenRouter:
+		if base == "" {
+			base = openRouterBaseURL
+		}
+		return bearerEndpoint(base, apiKey)
+
 	default:
 		if base == "" {
 			base = openAIBaseURL
 		}
-		endpoint := modelsEndpoint{url: base + "/models", headers: map[string]string{}}
-		// A local OpenAI-compatible server takes no key; an empty Bearer makes
-		// some of them reject the call outright.
-		if apiKey != "" {
-			endpoint.headers["Authorization"] = "Bearer " + apiKey
-		}
-		return endpoint
+		return bearerEndpoint(base, apiKey)
 	}
+}
+
+// A local OpenAI-compatible server takes no key; an empty Bearer makes some of
+// them reject the call outright.
+func bearerEndpoint(base, apiKey string) modelsEndpoint {
+	endpoint := modelsEndpoint{url: base + "/models", headers: map[string]string{}}
+	if apiKey != "" {
+		endpoint.headers["Authorization"] = "Bearer " + apiKey
+	}
+	return endpoint
 }
 
 // Custom providers and anything unrecognised are treated as OpenAI-compatible.

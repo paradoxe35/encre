@@ -18,9 +18,11 @@ import (
 const (
 	ProviderTypeOpenAICompatible = "openai-compatible"
 
-	BuiltInOpenAI = "openai"
-	BuiltInClaude = "claude"
-	BuiltInGemini = "gemini"
+	// Provider names are identifiers: JSON keys and @mention targets. Labels are for screens.
+	BuiltInOpenAI     = "openai"
+	BuiltInClaude     = "claude"
+	BuiltInGemini     = "gemini"
+	BuiltInOpenRouter = "openrouter"
 
 	DefaultCharacterLimit = 1000
 	DefaultTimeoutSeconds = 30
@@ -63,7 +65,7 @@ func (s ProviderSettings) RequiresAPIKey() bool {
 }
 
 type AIProviderConfig struct {
-	Provider  string                      `json:"provider"` // "openai" | "claude" | "gemini"
+	Provider  string                      `json:"provider"` // a built-in or custom provider name
 	Providers map[string]ProviderSettings `json:"providers"`
 }
 
@@ -111,7 +113,7 @@ func ConfigPath() string {
 func Default() *Config {
 	return &Config{
 		AIProvider: AIProviderConfig{
-			Provider:  "openai",
+			Provider:  BuiltInOpenAI,
 			Providers: defaultProviders(),
 		},
 		Actions:                DefaultActions(),
@@ -140,6 +142,11 @@ func defaultProviders() map[string]ProviderSettings {
 		"gemini": {
 			BaseURL:     "https://generativelanguage.googleapis.com",
 			Model:       "gemini-2.5-flash",
+			Temperature: 1.0,
+		},
+		"openrouter": {
+			BaseURL:     "https://openrouter.ai/api/v1",
+			Model:       "google/gemini-2.5-flash",
 			Temperature: 1.0,
 		},
 	}
@@ -202,7 +209,8 @@ func (c *Config) write() error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(ConfigPath(), data, 0644); err != nil {
+	// Owner only: the file carries API keys.
+	if err := os.WriteFile(ConfigPath(), data, 0o600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 	return nil
@@ -364,7 +372,17 @@ func (c *Config) SetCurrentProvider(provider string) {
 }
 
 func BuiltInProviders() []string {
-	return []string{BuiltInOpenAI, BuiltInClaude, BuiltInGemini}
+	return []string{BuiltInOpenAI, BuiltInClaude, BuiltInGemini, BuiltInOpenRouter}
+}
+
+// canonicalProviderName is the built-in a name spells, in any case, or empty.
+func canonicalProviderName(name string) string {
+	for _, p := range BuiltInProviders() {
+		if strings.EqualFold(p, name) {
+			return p
+		}
+	}
+	return ""
 }
 
 func IsBuiltInProvider(name string) bool {
@@ -553,5 +571,43 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Paste == "" {
 		c.Paste = PasteStandard
+	}
+	c.normaliseProviders()
+}
+
+// normaliseProviders makes the file agree with what the names already say: a built-in
+// is never custom and anything else always is. A provider added by hand under a
+// built-in's name in another spelling, as OpenRouter was before it became built in,
+// turns into the built-in with its key and settings, and references follow.
+func (c *Config) normaliseProviders() {
+	renamed := map[string]string{}
+	for name, settings := range c.AIProvider.Providers {
+		canonical := canonicalProviderName(name)
+		if canonical == "" {
+			settings.IsCustom = true
+			c.AIProvider.Providers[name] = settings
+			continue
+		}
+
+		settings.IsCustom = false
+		settings.ProviderType = ""
+		if canonical != name {
+			delete(c.AIProvider.Providers, name)
+			if _, taken := c.AIProvider.Providers[canonical]; taken {
+				continue
+			}
+			renamed[name] = canonical
+		}
+		c.AIProvider.Providers[canonical] = settings
+	}
+
+	if to, ok := renamed[c.AIProvider.Provider]; ok {
+		c.AIProvider.Provider = to
+	}
+	for op, operation := range c.Operations {
+		if to, ok := renamed[operation.ProviderID]; ok {
+			operation.ProviderID = to
+			c.Operations[op] = operation
+		}
 	}
 }

@@ -222,3 +222,24 @@ func TestSetOverlayHidesThePreviousIndicator(t *testing.T) {
 		t.Fatal("the replacement is not the current indicator")
 	}
 }
+
+func TestOpenRouterBuildsAnOpenAIStyleProviderUnderItsOwnName(t *testing.T) {
+	cfg := config.Default()
+	cfg.SetProviderSettings(config.BuiltInOpenRouter, config.ProviderSettings{
+		BaseURL: "https://openrouter.ai/api/v1", Model: "google/gemini-2.5-flash",
+	})
+	if err := cfg.SetAPIKey(config.BuiltInOpenRouter, "k"); err != nil {
+		t.Fatal(err)
+	}
+
+	provider, err := (&Processor{}).buildProvider(cfg, config.BuiltInOpenRouter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.GetName() != config.BuiltInOpenRouter {
+		t.Fatalf("name %q", provider.GetName())
+	}
+	if provider.GetModel() != "google/gemini-2.5-flash" {
+		t.Fatalf("model %q", provider.GetModel())
+	}
+}
