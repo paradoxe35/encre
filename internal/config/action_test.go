@@ -38,6 +38,7 @@ func TestOnlyReviseIsEnabledByDefault(t *testing.T) {
 		ActionTranslate:       false,
 		ActionDictate:         false,
 		ActionAsk:             false,
+		ActionAskTyped:        false,
 	}
 
 	for kind, action := range DefaultActions() {

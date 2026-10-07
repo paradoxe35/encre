@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -46,7 +47,11 @@ type Application struct {
 	indicator  *overlay.Indicator
 
 	reloadMutex sync.Mutex
+	// escapeBound is whether Esc closes the answer card, which outlives a hotkey reload.
+	escapeBound atomic.Bool
 }
+
+const closeAnswerAction = "close_answer"
 
 func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	processor, err := revision.NewProcessor(cfg)
@@ -82,7 +87,16 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	application.mainWindow = mainWindow
 
 	application.answers = ui.NewAnswerCard(app)
-	application.answers.SetShowHideCallbacks(rememberFrontmostApp, restoreFrontmostApp)
+	application.answers.SetShowHideCallbacks(func() {
+		rememberFrontmostApp()
+		application.bindEscape()
+	}, func() {
+		application.unbindEscape()
+		restoreFrontmostApp()
+	})
+	application.answers.SetOnAsk(func(question string) {
+		go processor.AnswerTyped(application.answers, question)
+	})
 
 	application.dictation = revision.NewDictation(processor,
 		application.currentConfig,
@@ -149,13 +163,16 @@ func (a *Application) setupHotkeys() {
 			continue
 		}
 
-		if kind.Listens() {
+		switch {
+		case kind.Listens():
 			a.registerVoice(kind, action)
-			continue
+		case kind == config.ActionAskTyped:
+			err := a.hotkeyManager.RegisterHotkey(action.Hotkey, string(kind), a.answers.Prompt)
+			a.reportBindingFailure(action.Hotkey, err)
+		default:
+			err := a.hotkeyManager.RegisterHotkey(action.Hotkey, string(kind), a.actionHandler(kind))
+			a.reportBindingFailure(action.Hotkey, err)
 		}
-
-		err := a.hotkeyManager.RegisterHotkey(action.Hotkey, string(kind), a.actionHandler(kind))
-		a.reportBindingFailure(action.Hotkey, err)
 	}
 }
 
@@ -196,6 +213,26 @@ func (a *Application) actionHandler(kind config.ActionKind) func() {
 	}
 }
 
+// While the answer card shows, Esc closes it whichever window has the keyboard.
+func (a *Application) bindEscape() {
+	a.escapeBound.Store(true)
+	a.registerEscape()
+}
+
+func (a *Application) registerEscape() {
+	err := a.hotkeyManager.RegisterHotkey("escape", closeAnswerAction, func() { fyne.Do(a.answers.Hide) })
+	if err != nil {
+		logger.Warn("Esc will only close the answer card while it has the keyboard", "error", err)
+	}
+}
+
+func (a *Application) unbindEscape() {
+	a.escapeBound.Store(false)
+	if err := a.hotkeyManager.UnregisterHotkey(closeAnswerAction); err != nil {
+		logger.Warn("Could not release Esc", "error", err)
+	}
+}
+
 // A silent failure would look like a binding the system never delivers.
 func (a *Application) reportBindingFailure(binding string, err error) {
 	if err == nil {
@@ -228,6 +265,9 @@ func (a *Application) reloadHotkeysFromConfig() {
 	}
 
 	a.setupHotkeys()
+	if a.escapeBound.Load() {
+		a.registerEscape()
+	}
 	logger.Info("Hotkeys reloaded successfully")
 }
 

@@ -44,6 +44,7 @@ const (
 	ActionTranslate       ActionKind = "translate"
 	ActionDictate         ActionKind = "dictate"
 	ActionAsk             ActionKind = "ask"
+	ActionAskTyped        ActionKind = "ask_typed"
 )
 
 var ActionOrder = []ActionKind{
@@ -52,6 +53,7 @@ var ActionOrder = []ActionKind{
 	ActionTranslate,
 	ActionDictate,
 	ActionAsk,
+	ActionAskTyped,
 }
 
 var actionLabels = map[ActionKind]string{
@@ -60,6 +62,7 @@ var actionLabels = map[ActionKind]string{
 	ActionTranslate:       "Translate selection",
 	ActionDictate:         "Dictate",
 	ActionAsk:             "Ask by voice",
+	ActionAskTyped:        "Ask by typing",
 }
 
 func (k ActionKind) Label() string {
@@ -75,7 +78,7 @@ func (k ActionKind) Operation() Operation {
 		return OpTranslate
 	case ActionDictate:
 		return OpDictate
-	case ActionAsk:
+	case ActionAsk, ActionAskTyped:
 		return OpAsk
 	default:
 		return OpRevise
@@ -135,6 +138,7 @@ func defaultHotkeys() map[ActionKind]string {
 			ActionTranslate:       "ctrl+option+g",
 			ActionDictate:         "ctrl+shift+space",
 			ActionAsk:             "ctrl+option+a",
+			ActionAskTyped:        "ctrl+option+k",
 		}
 	case "windows":
 		return map[ActionKind]string{
@@ -143,6 +147,7 @@ func defaultHotkeys() map[ActionKind]string {
 			ActionTranslate:       "ctrl+alt+g",
 			ActionDictate:         "ctrl+shift+space",
 			ActionAsk:             "ctrl+alt+a",
+			ActionAskTyped:        "ctrl+alt+k",
 		}
 	default:
 		return map[ActionKind]string{
@@ -151,6 +156,7 @@ func defaultHotkeys() map[ActionKind]string {
 			ActionTranslate:       "ctrl+alt+g",
 			ActionDictate:         "ctrl+shift+space",
 			ActionAsk:             "ctrl+alt+a",
+			ActionAskTyped:        "ctrl+alt+k",
 		}
 	}
 }

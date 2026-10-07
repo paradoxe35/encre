@@ -526,32 +526,40 @@ func (h *harness) ask() {
 }
 
 type shownAnswer struct {
-	question, text string
+	question, text, failure string
 }
 
 type fakeView struct {
 	mu       sync.Mutex
 	question string
+	text     string
 	stop     func()
 	opens    int
 	updates  int
 	done     chan shownAnswer
 }
 
-func (v *fakeView) Open(question string, stop func()) {
+func (v *fakeView) Open(question string, stop func()) (func(string, bool), func(string)) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.question, v.stop = question, stop
 	v.opens++
-}
 
-func (v *fakeView) Update(text string, done bool) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	v.updates++
-	if done {
-		v.done <- shownAnswer{v.question, text}
+	update := func(text string, done bool) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		v.updates++
+		v.text = text
+		if done {
+			v.done <- shownAnswer{question: v.question, text: text}
+		}
 	}
+	fail := func(reason string) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		v.done <- shownAnswer{question: v.question, text: v.text, failure: reason}
+	}
+	return update, fail
 }
 
 func (v *fakeView) counts() (opens, updates int) {
@@ -688,16 +696,17 @@ func TestClosingTheAnswerCancelsItQuietly(t *testing.T) {
 	h.expectNoReport(t)
 }
 
-func TestAnAnswerCutOffIsKeptAndReported(t *testing.T) {
+func TestAnAnswerCutOffShowsWhyBelowWhatArrived(t *testing.T) {
 	h := newHarness(t, false)
 	h.typist.answer = "Paris is"
 	h.typist.askErr = errors.New("connection lost")
 	h.ask()
 
-	if answer := h.expectAnswer(t); answer.text != "Paris is" {
-		t.Fatalf("finished with %q", answer.text)
+	answer := h.expectAnswer(t)
+	if answer.text != "Paris is" || answer.failure != "connection lost" {
+		t.Fatalf("finished with %+v", answer)
 	}
-	h.expectReport(t, h.typist.askErr)
+	h.expectNoReport(t)
 }
 
 type fakeAudio struct {
@@ -769,5 +778,36 @@ func TestClosingRestoresOtherAudio(t *testing.T) {
 
 	if seen := h.audio.seen(); !slices.Contains(seen, "restore") {
 		t.Fatalf("quitting mid-take left other audio low: %v", seen)
+	}
+}
+
+func TestATypedQuestionOpensAtOnceAndStreams(t *testing.T) {
+	typist := &fakeTypist{answer: "Paris is the capital."}
+	view := &fakeView{done: make(chan shownAnswer, 1)}
+
+	go func() { _ = streamAnswer(typist.Ask, view, "capital of france?", nil) }()
+
+	select {
+	case answer := <-view.done:
+		if answer.question != "capital of france?" || answer.text != "Paris is the capital." {
+			t.Fatalf("showed %+v", answer)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no answer shown")
+	}
+	if opens, updates := view.counts(); opens != 1 || updates < 2 {
+		t.Fatalf("opened %d times with %d updates", opens, updates)
+	}
+}
+
+func TestATypedQuestionThatFailsSaysSoInTheView(t *testing.T) {
+	typist := &fakeTypist{askErr: errors.New("no provider configured")}
+	view := &fakeView{done: make(chan shownAnswer, 1)}
+
+	if err := streamAnswer(typist.Ask, view, "q", nil); err != nil {
+		t.Fatalf("an error the view showed was returned: %v", err)
+	}
+	if answer := <-view.done; answer.failure != "no provider configured" {
+		t.Fatalf("showed %+v", answer)
 	}
 }

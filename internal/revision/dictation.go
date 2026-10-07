@@ -1,7 +1,6 @@
 package revision
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"strings"
@@ -35,12 +34,6 @@ type assistant interface {
 type otherAudio interface {
 	Lower()
 	Restore()
-}
-
-// answerView shows an answer while it is written; closing it calls stop.
-type answerView interface {
-	Open(question string, stop func())
-	Update(text string, done bool)
 }
 
 type Dictation struct {
@@ -243,29 +236,9 @@ func (d *Dictation) write(raw string) error {
 	return nil
 }
 
-// The indicator gives way to the answer at its first words; closing the answer cancels the request.
+// The indicator gives way to the answer at its first words.
 func (d *Dictation) answer(question string, settle func()) error {
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
-
-	question = strings.TrimSpace(question)
-	var written strings.Builder
-	reply, err := d.assistant.Ask(ctx, question, func(text string) {
-		if written.Len() == 0 {
-			settle()
-			d.answers.Open(question, stop)
-		}
-		written.WriteString(text)
-		d.answers.Update(written.String(), false)
-	})
-
-	if written.Len() > 0 {
-		d.answers.Update(cmp.Or(reply, written.String()), true)
-	}
-	if errors.Is(err, context.Canceled) {
-		return nil
-	}
-	return err
+	return streamAnswer(d.assistant.Ask, d.answers, strings.TrimSpace(question), settle)
 }
 
 // settle hides the indicator once nothing is recording or transcribing any more.
