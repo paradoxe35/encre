@@ -524,12 +524,12 @@ func TestAQuestionIsAnsweredNotTyped(t *testing.T) {
 	}
 }
 
-func TestTheIndicatorThinksWhileTheModelAnswers(t *testing.T) {
+func TestTheIndicatorKeepsOneWaitWhileTheModelAnswers(t *testing.T) {
 	h := newHarness(t, false)
 	h.ask()
 
 	seen := h.waitOverlay(t, "hide")
-	want := []string{"listening", "transcribing", "thinking", "hide"}
+	want := []string{"listening", "transcribing", "hide"}
 	if !slices.Equal(seen, want) {
 		t.Fatalf("indicator went %v, want %v", seen, want)
 	}

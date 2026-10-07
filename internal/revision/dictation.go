@@ -226,7 +226,6 @@ func (d *Dictation) write(raw string) error {
 }
 
 func (d *Dictation) answer(question string) error {
-	d.overlay().Show(overlay.Thinking)
 	reply, err := d.assistant.Ask(question)
 	if err != nil {
 		return err
