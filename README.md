@@ -27,6 +27,8 @@ It also translates, and it types what I say out loud. Same deal every time: one 
 | Revise everything   | Same thing, but it selects the whole field first                      |
 | Translate selection | Translates between your two languages, choosing the direction for you |
 | Dictate             | Hold the hotkey, talk, and your words are typed where the cursor is   |
+| Ask by voice        | Hold the hotkey, ask a question, and the answer appears in a card     |
+| Ask by typing       | Press the hotkey, type a question, and the answer appears in the card |
 
 Text is replaced in place, and your clipboard is put back the way you left it.
 
@@ -82,8 +84,10 @@ sudo apt install libgl1 libx11-6 libxext6 libxcb1 libxinerama1 libxtst6 libxdo3 
 | Revise everything   | `Ctrl+Alt+Space`   | `Ctrl+Alt+Space`   | `Ctrl+Option+Space` |
 | Translate selection | `Ctrl+Alt+G`       | `Ctrl+Alt+G`       | `Ctrl+Option+G`     |
 | Dictate             | `Ctrl+Shift+Space` | `Ctrl+Shift+Space` | `Ctrl+Shift+Space`  |
+| Ask by voice        | `Ctrl+Alt+A`       | `Ctrl+Alt+A`       | `Ctrl+Option+A`     |
+| Ask by typing       | `Ctrl+Alt+K`       | `Ctrl+Alt+K`       | `Ctrl+Option+K`     |
 
-Change them in Settings > Hotkeys. Translate and dictate ship switched off - turn them on there when you want them.
+Change them in Settings > Hotkeys. Translate, dictate and ask ship switched off - turn them on there when you want them.
 
 ## Supported AI Providers
 
@@ -117,6 +121,16 @@ Transcription runs **locally by default** - audio never leaves your machine. The
 - Drop your own `.gguf` or `.bin` into `~/.encre/models` and it shows up in the list
 - Prefer a hosted service? Point Speech at OpenAI, Groq, or anything OpenAI-compatible
 - Optionally clean the transcript up with your AI provider before it's typed
+- Optionally lower other audio while you talk: each app's volume on Linux and Windows, the output volume on macOS
+
+## Ask
+
+Ask the AI without leaving what you're doing. The answer streams into a small card where the indicator shows; nothing is typed into your app.
+
+- **By voice**: hold the ask hotkey, say your question, release. It uses the same speech model as dictation.
+- **By typing**: press the type hotkey and the card opens with the keyboard in its input. `Enter` sends, `Shift+Enter` adds a line.
+
+A typed question keeps the input open for the next one; on a spoken answer, press the type hotkey to follow up. Copy an answer with the button, and close the card with `Esc`, from whichever window you are in. The prompt, provider and timeout live under Settings > Actions > Ask; the timeout counts silence, so a long answer is never cut off while it is still being written.
 
 ## History
 
@@ -137,7 +151,7 @@ It holds your settings and API keys (`config.json`), downloaded speech models (`
 
 You'll need:
 
-- Go 1.24+ with `CGO_ENABLED=1`
+- Go 1.26+ with `CGO_ENABLED=1`
 - Rust toolchain (stable)
 - CMake
 - Platform dependencies (see `rust-ffi/README.md`)

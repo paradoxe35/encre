@@ -1,11 +1,13 @@
 package revision
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
 
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/ducking"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/overlay"
 	"github.com/paradoxe35/encre/internal/stt"
@@ -21,21 +23,30 @@ type speechService interface {
 	Close()
 }
 
-// typist is what dictation needs from the processor, so it can be tested without a clipboard.
-type typist interface {
+// assistant is what dictation needs from the processor, so it can be tested without a clipboard.
+type assistant interface {
 	CleanTranscript(text string) (string, error)
 	InsertText(text string) error
 	RecordSpeech(raw, final string)
+	Ask(ctx context.Context, question string, onText func(string)) (string, error)
+}
+
+type otherAudio interface {
+	Lower()
+	Restore()
 }
 
 type Dictation struct {
-	service speechService
-	typist  typist
-	config  func() *config.Config
-	report  func(error)
+	service   speechService
+	assistant assistant
+	config    func() *config.Config
+	report    func(config.ActionKind, error)
+	answers   answerView
+	audio     otherAudio
 
-	mu        sync.Mutex
-	running   bool
+	mu sync.Mutex
+	// recording is the action the open take belongs to, or "" when the microphone is closed.
+	recording config.ActionKind
 	indicator overlay.Overlay
 	// pending counts takes still transcribing; the indicator stays until they are typed.
 	pending int
@@ -61,16 +72,20 @@ func (s *sequence) claim() (<-chan struct{}, func()) {
 	return ahead, func() { close(mine) }
 }
 
-func NewDictation(processor *Processor, current func() *config.Config, report func(error)) *Dictation {
-	return newDictation(stt.NewService(), processor, current, report)
+func NewDictation(processor *Processor, current func() *config.Config,
+	report func(config.ActionKind, error), answers answerView) *Dictation {
+	return newDictation(stt.NewService(), processor, current, report, answers)
 }
 
-func newDictation(service speechService, typist typist, current func() *config.Config, report func(error)) *Dictation {
+func newDictation(service speechService, assistant assistant, current func() *config.Config,
+	report func(config.ActionKind, error), answers answerView) *Dictation {
 	return &Dictation{
 		service:   service,
-		typist:    typist,
+		assistant: assistant,
 		config:    current,
 		report:    report,
+		answers:   answers,
+		audio:     ducking.New(),
 		indicator: overlay.Disabled{},
 	}
 }
@@ -108,56 +123,73 @@ func (d *Dictation) Prepare() {
 	}()
 }
 
-func (d *Dictation) Toggle(down bool) {
-	if down {
-		d.start()
-		return
-	}
-	d.stop()
+func (d *Dictation) Toggle(down bool) { d.hold(config.ActionDictate, down) }
+
+func (d *Dictation) Ask(down bool) { d.hold(config.ActionAsk, down) }
+
+func (d *Dictation) Recording(kind config.ActionKind) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.recording == kind
 }
 
-func (d *Dictation) start() {
+func (d *Dictation) hold(kind config.ActionKind, down bool) {
+	if down {
+		d.start(kind)
+		return
+	}
+	d.stop(kind)
+}
+
+func (d *Dictation) start(kind config.ActionKind) {
 	d.mu.Lock()
-	if d.running {
+	if d.recording != "" {
 		d.mu.Unlock()
 		return
 	}
-	d.running = true
+	d.recording = kind
 	d.mu.Unlock()
 
-	if err := d.service.StartRecording(d.config().SpeechSettings()); err != nil {
+	speech := d.config().SpeechSettings()
+	if speech.LowerAudio {
+		d.audio.Lower()
+	}
+	if err := d.service.StartRecording(speech); err != nil {
 		d.mu.Lock()
-		d.running = false
+		d.recording = ""
 		d.mu.Unlock()
-		d.fail(err)
+		d.audio.Restore()
+		d.fail(kind, err)
 		return
 	}
 
 	// A release that beat us here has already moved the indicator on.
 	d.mu.Lock()
-	if d.running {
+	if d.recording == kind {
 		d.indicator.Show(overlay.Listening)
 	}
 	d.mu.Unlock()
-	logger.Info("Dictation started")
+	logger.Info("Recording started", "action", kind)
 }
 
-func (d *Dictation) stop() {
+func (d *Dictation) stop(kind config.ActionKind) {
 	d.mu.Lock()
-	if !d.running {
+	if d.recording != kind {
 		d.mu.Unlock()
 		return
 	}
-	d.running = false
+	d.recording = ""
 	d.pending++
 	d.mu.Unlock()
 
+	d.audio.Restore()
 	d.overlay().Show(overlay.Transcribing)
-	ahead, typed := d.order.claim()
+	ahead, done := d.order.claim()
 
 	go func() {
-		defer typed()
-		defer d.settle()
+		defer done()
+		settle := sync.OnceFunc(d.settle)
+		defer settle()
 
 		// Ends the capture straight away: the recorder cannot take the next
 		// press until this one is stopped.
@@ -167,38 +199,53 @@ func (d *Dictation) stop() {
 			<-ahead
 		}
 		if err != nil {
-			d.fail(err)
+			d.fail(kind, err)
 			return
 		}
 
-		logger.Info("Dictation finished", "characters", len(raw))
+		logger.Info("Recording transcribed", "action", kind, "characters", len(raw))
 		if strings.TrimSpace(raw) == "" {
-			d.fail(ErrNoSpeech)
+			d.fail(kind, ErrNoSpeech)
 			return
 		}
 
-		text := raw
-		if d.config().SpeechSettings().CleanUp {
-			if cleaned, err := d.typist.CleanTranscript(raw); err == nil {
-				text = cleaned
-			} else {
-				d.fail(err)
-				return
-			}
+		if kind == config.ActionAsk {
+			err = d.answer(raw, settle)
+		} else {
+			err = d.write(raw)
 		}
-		if err := d.typist.InsertText(text); err != nil {
-			d.fail(err)
-			return
+		if err != nil {
+			d.fail(kind, err)
 		}
-		d.typist.RecordSpeech(raw, text)
 	}()
+}
+
+func (d *Dictation) write(raw string) error {
+	text := raw
+	if d.config().SpeechSettings().CleanUp {
+		cleaned, err := d.assistant.CleanTranscript(raw)
+		if err != nil {
+			return err
+		}
+		text = cleaned
+	}
+	if err := d.assistant.InsertText(text); err != nil {
+		return err
+	}
+	d.assistant.RecordSpeech(raw, text)
+	return nil
+}
+
+// The indicator gives way to the answer at its first words.
+func (d *Dictation) answer(question string, settle func()) error {
+	return streamAnswer(d.assistant.Ask, d.answers, strings.TrimSpace(question), settle)
 }
 
 // settle hides the indicator once nothing is recording or transcribing any more.
 func (d *Dictation) settle() {
 	d.mu.Lock()
 	d.pending--
-	idle := d.pending == 0 && !d.running
+	idle := d.pending == 0 && d.recording == ""
 	indicator := d.indicator
 	d.mu.Unlock()
 
@@ -207,9 +254,12 @@ func (d *Dictation) settle() {
 	}
 }
 
-func (d *Dictation) Close() { d.service.Close() }
+func (d *Dictation) Close() {
+	d.audio.Restore()
+	d.service.Close()
+}
 
-func (d *Dictation) fail(err error) {
-	logger.Error("Dictation failed", "error", err)
-	d.report(err)
+func (d *Dictation) fail(kind config.ActionKind, err error) {
+	logger.Error("Voice action failed", "action", kind, "error", err)
+	d.report(kind, err)
 }

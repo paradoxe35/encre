@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -32,6 +33,7 @@ type Application struct {
 	hotkeyManager *input.FFIHotkeyManager
 	processor     *revision.Processor
 	dictation     *revision.Dictation
+	answers       *ui.AnswerCard
 	notifications *ui.NotificationManager
 	// updater is nil in development builds.
 	updater      ui.Updater
@@ -45,7 +47,11 @@ type Application struct {
 	indicator  *overlay.Indicator
 
 	reloadMutex sync.Mutex
+	// escapeBound is whether Esc closes the answer card, which outlives a hotkey reload.
+	escapeBound atomic.Bool
 }
+
+const closeAnswerAction = "close_answer"
 
 func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	processor, err := revision.NewProcessor(cfg)
@@ -80,15 +86,28 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	mainWindow.SetHistoryStore(processor.History())
 	application.mainWindow = mainWindow
 
+	application.answers = ui.NewAnswerCard(app)
+	application.answers.SetShowHideCallbacks(func() {
+		rememberFrontmostApp()
+		application.bindEscape()
+	}, func() {
+		application.unbindEscape()
+		restoreFrontmostApp()
+	})
+	application.answers.SetOnAsk(func(question string) {
+		go processor.AnswerTyped(application.answers, question)
+	})
+
 	application.dictation = revision.NewDictation(processor,
 		application.currentConfig,
-		func(err error) {
+		func(kind config.ActionKind, err error) {
 			fyne.Do(func() {
-				application.notifications.ShowError("Dictation failed", err.Error())
+				application.notifications.ShowError(kind.Label()+" failed", err.Error())
 				// A refused microphone is the one permission that can go missing after launch.
 				application.mainWindow.SetPermissionState(permissions.CurrentState(), application.permissionsMissingOnLaunch)
 			})
-		})
+		},
+		application.answers)
 
 	application.applyOverlay(cfg)
 	input.OnLevel(application.dictation.Level)
@@ -144,29 +163,33 @@ func (a *Application) setupHotkeys() {
 			continue
 		}
 
-		if kind == config.ActionDictate {
-			a.registerDictation(action)
-			continue
+		switch {
+		case kind.Listens():
+			a.registerVoice(kind, action)
+		case kind == config.ActionAskTyped:
+			err := a.hotkeyManager.RegisterHotkey(action.Hotkey, string(kind), a.answers.Prompt)
+			a.reportBindingFailure(action.Hotkey, err)
+		default:
+			err := a.hotkeyManager.RegisterHotkey(action.Hotkey, string(kind), a.actionHandler(kind))
+			a.reportBindingFailure(action.Hotkey, err)
 		}
-
-		err := a.hotkeyManager.RegisterHotkey(action.Hotkey, string(kind), a.actionHandler(kind))
-		a.reportBindingFailure(action.Hotkey, err)
 	}
 }
 
-func (a *Application) registerDictation(action config.ActionConfig) {
-	if action.PushToTalk {
-		err := a.hotkeyManager.RegisterHoldHotkey(action.Hotkey,
-			string(config.ActionDictate), a.dictation.Toggle)
-		a.reportBindingFailure(action.Hotkey, err)
-		return
+func (a *Application) registerVoice(kind config.ActionKind, action config.ActionConfig) {
+	hold := a.dictation.Toggle
+	if kind == config.ActionAsk {
+		hold = a.dictation.Ask
 	}
 
-	recording := false
-	err := a.hotkeyManager.RegisterHotkey(action.Hotkey, string(config.ActionDictate), func() {
-		recording = !recording
-		a.dictation.Toggle(recording)
-	})
+	var err error
+	if action.PushToTalk {
+		err = a.hotkeyManager.RegisterHoldHotkey(action.Hotkey, string(kind), hold)
+	} else {
+		err = a.hotkeyManager.RegisterHotkey(action.Hotkey, string(kind), func() {
+			hold(!a.dictation.Recording(kind))
+		})
+	}
 	a.reportBindingFailure(action.Hotkey, err)
 }
 
@@ -187,6 +210,26 @@ func (a *Application) actionHandler(kind config.ActionKind) func() {
 				a.notifications.ShowError(kind.Label()+" failed", err.Error())
 			})
 		}
+	}
+}
+
+// While the answer card shows, Esc closes it whichever window has the keyboard.
+func (a *Application) bindEscape() {
+	a.escapeBound.Store(true)
+	a.registerEscape()
+}
+
+func (a *Application) registerEscape() {
+	err := a.hotkeyManager.RegisterHotkey("escape", closeAnswerAction, func() { fyne.Do(a.answers.Hide) })
+	if err != nil {
+		logger.Warn("Esc will only close the answer card while it has the keyboard", "error", err)
+	}
+}
+
+func (a *Application) unbindEscape() {
+	a.escapeBound.Store(false)
+	if err := a.hotkeyManager.UnregisterHotkey(closeAnswerAction); err != nil {
+		logger.Warn("Could not release Esc", "error", err)
 	}
 }
 
@@ -222,6 +265,9 @@ func (a *Application) reloadHotkeysFromConfig() {
 	}
 
 	a.setupHotkeys()
+	if a.escapeBound.Load() {
+		a.registerEscape()
+	}
 	logger.Info("Hotkeys reloaded successfully")
 }
 

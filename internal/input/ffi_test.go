@@ -113,3 +113,27 @@ func TestFFIHotkeyManagerConcurrentRegisterAndClose(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestEscapeCanBeBoundAloneAndReleased(t *testing.T) {
+	manager := NewFFIHotkeyManager()
+	if manager == nil {
+		t.Skip("no hotkey manager on this system")
+	}
+	defer manager.Close()
+
+	if err := manager.RegisterHotkey("escape", "close_answer", func() {}); err != nil {
+		t.Fatalf("escape alone was refused: %v", err)
+	}
+	if err := manager.RegisterHotkey("k", "typing", func() {}); err == nil {
+		t.Fatal("a bare letter was accepted, which would fire on ordinary typing")
+	}
+	if err := manager.UnregisterHotkey("close_answer"); err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	_, kept := manager.handlers["close_answer"]
+	manager.mu.Unlock()
+	if kept {
+		t.Fatal("the handler outlived its binding")
+	}
+}

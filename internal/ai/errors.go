@@ -2,7 +2,9 @@ package ai
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -15,76 +17,78 @@ type APIError struct {
 
 func (e *APIError) Error() string { return e.Message }
 
-func apiError(statusCode int, format string, args ...any) error {
-	return &APIError{StatusCode: statusCode, Message: fmt.Sprintf(format, args...)}
+var (
+	errNoReply = errors.New("the reply held no text")
+	// A thinking model can spend its whole allowance thinking and stop before it writes a word.
+	errLengthLimit = errors.New("the reply hit the model's length limit - a model that thinks less, or one with a larger context, would finish")
+)
+
+// replyError is the error object the APIs put in a body; Ollama sends a bare string instead.
+type replyError struct {
+	Message string
 }
 
-func ParseAPIError(statusCode int, body []byte, providerName string) error {
-	var errResp struct {
-		Error *struct {
-			Message string      `json:"message"`
-			Type    string      `json:"type"`
-			Code    interface{} `json:"code,omitempty"`
-			Status  string      `json:"status,omitempty"`
-		} `json:"error,omitempty"`
+func (e *replyError) UnmarshalJSON(data []byte) error {
+	var text string
+	if json.Unmarshal(data, &text) == nil {
+		e.Message = text
+		return nil
 	}
-
-	if json.Unmarshal(body, &errResp) == nil && errResp.Error != nil {
-		return apiError(statusCode, "%s API error (%d): %s", providerName, statusCode, errResp.Error.Message)
+	var object struct {
+		Message string `json:"message"`
 	}
-
-	switch statusCode {
-	case 401:
-		return apiError(statusCode, "%s authentication failed: invalid API key or credentials", providerName)
-	case 403:
-		return apiError(statusCode, "%s access forbidden: check your API key permissions", providerName)
-	case 404:
-		return apiError(statusCode, "%s endpoint not found: verify the base URL is correct", providerName)
-	case 429:
-		return apiError(statusCode, "%s rate limit exceeded: please try again later", providerName)
-	case 500, 502, 503, 504:
-		return apiError(statusCode, "%s API server error (%d): service may be temporarily unavailable", providerName, statusCode)
-	default:
-		preview := string(body)
-		if len(preview) > 100 {
-			preview = preview[:100] + "..."
-		}
-		if len(preview) > 0 {
-			return apiError(statusCode, "%s API request failed (%d): %s", providerName, statusCode, preview)
-		}
-		return apiError(statusCode, "%s API request failed with status code %d", providerName, statusCode)
+	if err := json.Unmarshal(data, &object); err != nil {
+		return err
 	}
+	e.Message = object.Message
+	return nil
 }
 
-func ParseUnmarshalError(err error, body []byte, statusCode int, providerName string) error {
-	bodyPreview := string(body)
-	if len(bodyPreview) > 200 {
-		bodyPreview = bodyPreview[:200] + "..."
+func (e *replyError) err() error {
+	if e == nil {
+		return nil
 	}
+	return &APIError{Message: e.Message}
+}
 
-	if len(body) == 0 {
-		return fmt.Errorf("received empty response from API: verify the base URL is correct")
+func statusError(provider string, status int, body []byte) error {
+	var reply struct {
+		Error *replyError `json:"error"`
 	}
-
-	if strings.Contains(string(body), "<!DOCTYPE") || strings.Contains(string(body), "<html") {
-		return fmt.Errorf("received HTML instead of JSON: verify the base URL points to the API endpoint")
+	message := ""
+	if json.Unmarshal(body, &reply) == nil && reply.Error != nil {
+		message = reply.Error.Message
 	}
-
-	if statusCode == 404 {
-		var exampleURL string
-		switch providerName {
-		case "openai":
-			exampleURL = "https://api.openai.com/v1"
-		case "claude":
-			exampleURL = "https://api.anthropic.com"
-		case "gemini":
-			exampleURL = "https://generativelanguage.googleapis.com"
-		}
-		if exampleURL != "" {
-			return fmt.Errorf("endpoint not found: verify the base URL is correct (e.g., %s)", exampleURL)
-		}
-		return fmt.Errorf("endpoint not found: verify the base URL is correct")
+	if message == "" {
+		message = statusHint(status, body)
 	}
+	return &APIError{StatusCode: status, Message: fmt.Sprintf("%s: %s (%d)", provider, message, status)}
+}
 
-	return fmt.Errorf("invalid API response format: %v (status: %d, response: %s)", err, statusCode, bodyPreview)
+func statusHint(status int, body []byte) string {
+	switch status {
+	case http.StatusUnauthorized:
+		return "the API key was refused"
+	case http.StatusForbidden:
+		return "the API key lacks access"
+	case http.StatusNotFound, http.StatusMethodNotAllowed:
+		return "no API at this address - check the base URL, which usually ends in /v1"
+	case http.StatusTooManyRequests:
+		return "rate limited, try again shortly"
+	}
+	if status >= 500 {
+		return "the service is having trouble"
+	}
+	if text := strings.TrimSpace(string(body)); text != "" {
+		return preview(text)
+	}
+	return "request failed"
+}
+
+func preview(text string) string {
+	const limit = 120
+	if len(text) <= limit {
+		return text
+	}
+	return text[:limit] + "..."
 }

@@ -37,6 +37,8 @@ func TestOnlyReviseIsEnabledByDefault(t *testing.T) {
 		ActionReviseAll:       true,
 		ActionTranslate:       false,
 		ActionDictate:         false,
+		ActionAsk:             false,
+		ActionAskTyped:        false,
 	}
 
 	for kind, action := range DefaultActions() {
@@ -238,5 +240,20 @@ func TestDefaultHotkeysMatchWhatShipped(t *testing.T) {
 		if got := actions[kind].Hotkey; got != binding {
 			t.Errorf("%s default = %q, want %q", kind, got, binding)
 		}
+	}
+}
+
+func TestAskListensAndUsesItsOwnPrompt(t *testing.T) {
+	if !ActionAsk.Listens() || !ActionDictate.Listens() || ActionTranslate.Listens() {
+		t.Error("only the voice actions listen")
+	}
+	if !DefaultActions()[ActionAsk].PushToTalk {
+		t.Error("ask should default to hold-to-record")
+	}
+	if ActionAsk.Operation() != OpAsk || !OpAsk.UsesAI() {
+		t.Error("ask should run its own AI operation")
+	}
+	if DefaultPrompt(OpAsk) != prompt.Ask {
+		t.Error("ask should default to the ask prompt")
 	}
 }

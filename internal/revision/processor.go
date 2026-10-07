@@ -2,6 +2,7 @@ package revision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -19,6 +20,8 @@ import (
 	"github.com/paradoxe35/encre/internal/prompt"
 	"github.com/paradoxe35/encre/internal/stt"
 )
+
+var errTimedOut = errors.New("timed out")
 
 type Processor struct {
 	mu               sync.Mutex
@@ -95,30 +98,7 @@ func (p *Processor) buildProvider(cfg *config.Config, name string) (ai.Provider,
 		return nil, fmt.Errorf("no API key configured for %s", name)
 	}
 
-	var provider ai.Provider
-	switch {
-	case cfg.IsCustomProvider(name):
-		provider, err = ai.NewCustomProvider(name, settings.ProviderType, apiKey,
-			settings.BaseURL, settings.Model, settings.Temperature)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create custom provider: %w", err)
-		}
-	case name == config.BuiltInOpenAI:
-		provider = ai.NewOpenAIProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
-	case name == config.BuiltInClaude:
-		provider = ai.NewAnthropicProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
-	case name == config.BuiltInGemini:
-		provider = ai.NewGeminiProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
-	case name == config.BuiltInOpenRouter:
-		provider = ai.NewOpenRouterProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
-	default:
-		return nil, fmt.Errorf("unknown provider: %s", name)
-	}
-
-	if aware, ok := provider.(ai.ReasoningAware); ok {
-		aware.SetLowReasoning(settings.LowReasoning)
-	}
-	return provider, nil
+	return ai.FromSettings(name, settings, apiKey, cfg.IsCustomProvider(name))
 }
 
 func (p *Processor) providerNamed(name string) (ai.Provider, error) {
@@ -226,7 +206,7 @@ func (p *Processor) Run(kind config.ActionKind) error {
 		}
 	}
 
-	if err := p.clipboardManager.ReplaceSelectedText(result, p.currentConfig().PasteShortcut()); err != nil {
+	if err := p.clipboardManager.ReplaceSelectedText(result.text, p.currentConfig().PasteShortcut()); err != nil {
 		return fmt.Errorf("failed to replace text: %w", err)
 	}
 
@@ -256,15 +236,16 @@ func (p *Processor) RecordSpeech(raw, final string) {
 }
 
 // Never blocks the caller: history is a convenience, not a dependency.
-func (p *Processor) recordHistory(kind config.ActionKind, original, result string) {
+func (p *Processor) recordHistory(kind config.ActionKind, original string, result reply) {
 	cfg := p.currentConfig()
 
 	entry := history.Entry{
 		Kind:       history.Kind(kind.Operation()),
 		Original:   original,
-		Result:     result,
-		Provider:   cfg.GetCurrentProvider(),
-		Characters: utf8.RuneCountInString(result),
+		Result:     result.text,
+		Provider:   result.provider,
+		Model:      result.model,
+		Characters: utf8.RuneCountInString(result.text),
 	}
 	if kind.Operation() == config.OpTranslate {
 		translate := cfg.Translation()
@@ -274,50 +255,110 @@ func (p *Processor) recordHistory(kind config.ActionKind, original, result strin
 	p.history.Add(entry)
 }
 
-func (p *Processor) transform(text string, kind config.ActionKind) (string, error) {
+type reply struct {
+	text     string
+	provider string
+	model    string
+}
+
+func (p *Processor) transform(text string, kind config.ActionKind) (reply, error) {
 	cfg := p.currentConfig()
-	operation := cfg.Operation(kind.Operation())
-
 	mentioned, source := p.parseProviderMention(cfg, text)
-
-	trimmed := strings.TrimSpace(source)
-	if trimmed == "" {
-		return "", fmt.Errorf("nothing to work with - the selection is empty")
+	if strings.TrimSpace(source) == "" {
+		return reply{}, fmt.Errorf("nothing to work with - the selection is empty")
 	}
 
-	if err := checkCharacterLimit(trimmed, operation.CharacterLimit); err != nil {
-		return "", err
-	}
-
-	provider, err := p.resolveProvider(cfg, kind.Operation(), mentioned)
+	result, err := p.complete(context.Background(), cfg, kind.Operation(), mentioned, source, nil)
 	if err != nil {
-		return "", err
+		return reply{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(),
-		time.Duration(operation.TimeoutSeconds)*time.Second)
-	defer cancel()
-
-	logger.Info("Sending text to AI provider",
-		"action", kind,
-		"provider", provider.GetName(),
-		"model", provider.GetModel(),
-		"characters", utf8.RuneCountInString(trimmed),
-	)
-
-	answer, err := provider.ReviseText(ctx, trimmed, systemPrompt(cfg, kind.Operation(), operation))
-	if err != nil {
-		return "", fmt.Errorf("%s failed: %w", kind.Label(), err)
-	}
-
-	cleaned := ai.CleanResponse(answer)
-	if cleaned == "" {
-		return "", fmt.Errorf("the model returned an empty result")
+	result.text = ai.CleanResponse(result.text)
+	if result.text == "" {
+		return reply{}, fmt.Errorf("the model returned an empty result")
 	}
 
 	// The reply replaces the selection as it was, so the selection's own edges go back on. Without
 	// them "word " returns as "word" and runs into the next one.
-	return leadingWhitespace(source) + cleaned + trailingWhitespace(source), nil
+	result.text = leadingWhitespace(source) + result.text + trailingWhitespace(source)
+	return result, nil
+}
+
+// Ask streams the answer to onText as it is written. It is shown, not pasted, so its formatting stays.
+func (p *Processor) Ask(ctx context.Context, question string, onText func(string)) (string, error) {
+	question = strings.TrimSpace(question)
+	if question == "" {
+		return "", ErrNoSpeech
+	}
+
+	result, err := p.complete(ctx, p.currentConfig(), config.OpAsk, "", question, onText)
+	if err != nil {
+		return "", err
+	}
+
+	answer := strings.TrimSpace(result.text)
+	if answer == "" {
+		return "", fmt.Errorf("the model returned an empty answer")
+	}
+
+	p.history.Add(history.Entry{
+		Kind:       history.KindAsk,
+		Original:   question,
+		Result:     answer,
+		Provider:   result.provider,
+		Model:      result.model,
+		Characters: utf8.RuneCountInString(answer),
+	})
+	return answer, nil
+}
+
+// complete streams to onText when it is given, and waits for the whole reply otherwise.
+func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.Operation, mentioned, text string, onText func(string)) (reply, error) {
+	operation := cfg.Operation(op)
+	trimmed := strings.TrimSpace(text)
+
+	if err := checkCharacterLimit(trimmed, operation.CharacterLimit); err != nil {
+		return reply{}, err
+	}
+
+	name, provider, err := p.resolveProvider(cfg, op, mentioned)
+	if err != nil {
+		return reply{}, err
+	}
+
+	// The timeout is a silence: a stream that keeps writing is given as long as it needs.
+	timeout := time.Duration(operation.TimeoutSeconds) * time.Second
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	silence := time.AfterFunc(timeout, func() { cancel(errTimedOut) })
+	defer silence.Stop()
+
+	logger.Info("Sending text to AI provider",
+		"operation", op,
+		"provider", name,
+		"model", provider.Model(),
+		"characters", utf8.RuneCountInString(trimmed),
+		"streaming", onText != nil,
+	)
+
+	request := ai.Prompt{System: systemPrompt(cfg, op, operation), Text: trimmed}
+	var answer string
+	if onText != nil {
+		answer, err = provider.Stream(ctx, request, func(text string) {
+			silence.Reset(timeout)
+			onText(text)
+		})
+	} else {
+		answer, err = provider.Complete(ctx, request)
+	}
+	if errors.Is(context.Cause(ctx), errTimedOut) {
+		return reply{}, fmt.Errorf("%s got no reply within %ds - raise the timeout under Settings > Actions",
+			op.Label(), operation.TimeoutSeconds)
+	}
+	if err != nil {
+		return reply{}, fmt.Errorf("%s failed: %w", op.Label(), err)
+	}
+	return reply{text: answer, provider: name, model: provider.Model()}, nil
 }
 
 func systemPrompt(cfg *config.Config, op config.Operation, operation config.OperationConfig) string {
@@ -335,22 +376,23 @@ func systemPrompt(cfg *config.Config, op config.Operation, operation config.Oper
 
 // resolveProvider prefers an @mention, then the action's own override, then the
 // default. A failed mention falls back rather than aborting the run.
-func (p *Processor) resolveProvider(cfg *config.Config, op config.Operation, mentioned string) (ai.Provider, error) {
+func (p *Processor) resolveProvider(cfg *config.Config, op config.Operation, mentioned string) (string, ai.Provider, error) {
 	if mentioned != "" {
 		provider, err := p.providerNamed(mentioned)
 		if err == nil {
 			logger.Info("Using mentioned provider", "provider", mentioned)
-			return provider, nil
+			return mentioned, provider, nil
 		}
 		logger.Warn("Mentioned provider unusable, falling back",
 			"mentioned", mentioned, "error", err)
 	}
 
-	provider, err := p.providerNamed(cfg.ProviderFor(op))
+	name := cfg.ProviderFor(op)
+	provider, err := p.providerNamed(name)
 	if err != nil {
-		return nil, fmt.Errorf("no AI provider configured - add an API key in Settings")
+		return "", nil, fmt.Errorf("no AI provider configured - add an API key in Settings")
 	}
-	return provider, nil
+	return name, provider, nil
 }
 
 func (p *Processor) IsProcessing() bool {
@@ -437,7 +479,7 @@ func (p *Processor) CleanTranscript(text string) (string, error) {
 	}
 
 	cfg := p.currentConfig()
-	provider, err := p.providerNamed(cfg.GetCurrentProvider())
+	provider, err := p.providerNamed(cfg.ProviderFor(config.OpDictate))
 	if err != nil {
 		return "", fmt.Errorf("transcript cleanup unavailable: %w", err)
 	}
@@ -447,12 +489,12 @@ func (p *Processor) CleanTranscript(text string) (string, error) {
 	defer cancel()
 
 	logger.Info("Cleaning dictated transcript",
-		"provider", provider.GetName(),
-		"model", provider.GetModel(),
+		"provider", provider.Name(),
+		"model", provider.Model(),
 		"characters", utf8.RuneCountInString(trimmed),
 	)
 
-	cleaned, err := provider.ReviseText(ctx, trimmed, prompt.Dictate)
+	cleaned, err := provider.Complete(ctx, ai.Prompt{System: prompt.Dictate, Text: trimmed})
 	if err != nil {
 		return "", fmt.Errorf("transcript cleanup failed: %w", err)
 	}

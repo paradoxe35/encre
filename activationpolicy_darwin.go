@@ -25,6 +25,24 @@ void SetActivationPolicyAccessory(void) {
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     });
 }
+
+static NSRunningApplication* previousApp = nil;
+
+// Without this, hiding our last window leaves the keyboard with Encre instead of the user's app.
+void RememberFrontmostApp(void) {
+    NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+    if (front == nil || [front isEqual:[NSRunningApplication currentApplication]]) {
+        return;
+    }
+    [previousApp release];
+    previousApp = [front retain];
+}
+
+void RestoreFrontmostApp(void) {
+    [previousApp activateWithOptions:0];
+    [previousApp release];
+    previousApp = nil;
+}
 */
 import "C"
 
@@ -39,3 +57,7 @@ func hideFromDock() {
 	logger.Info("Setting macOS activation policy to Accessory (hide from Dock)")
 	C.SetActivationPolicyAccessory()
 }
+
+func rememberFrontmostApp() { C.RememberFrontmostApp() }
+
+func restoreFrontmostApp() { C.RestoreFrontmostApp() }

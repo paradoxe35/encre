@@ -33,6 +33,9 @@ type SpeechConfig struct {
 
 	// Routes the transcript through the selected AI provider before typing.
 	CleanUp bool `json:"clean_up,omitempty"`
+
+	// Turns other apps down while the microphone is open.
+	LowerAudio bool `json:"lower_audio,omitempty"`
 }
 
 func defaultSpeech() SpeechConfig {

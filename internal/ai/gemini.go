@@ -1,175 +1,114 @@
 package ai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
+	"errors"
 	"net/http"
 	"strings"
 )
 
-type GeminiProvider struct {
-	APIKey      string
-	BaseURL     string
-	Model       string
-	Temperature float64
-	// LowReasoning asks the model to think less. A correction is not a puzzle, and the tokens it
-	// spends thinking are billed and thrown away.
-	LowReasoning bool
-	client       *http.Client
+// generateContent is the Gemini API.
+type generateContent struct{}
+
+type geminiRequest struct {
+	SystemInstruction *geminiContent  `json:"systemInstruction,omitempty"`
+	Contents          []geminiContent `json:"contents"`
+	GenerationConfig  geminiConfig    `json:"generationConfig"`
 }
 
-func (p *GeminiProvider) SetLowReasoning(low bool) { p.LowReasoning = low }
-
-const geminiBaseURL = "https://generativelanguage.googleapis.com"
-
-func NewGeminiProvider(apiKey, baseURL, model string, temperature float64) *GeminiProvider {
-	if baseURL == "" {
-		baseURL = geminiBaseURL
-	}
-	if model == "" {
-		model = "gemini-3.1-flash-lite"
-	}
-	if temperature == 0 {
-		temperature = 1.0
-	}
-	return &GeminiProvider{
-		APIKey:      apiKey,
-		BaseURL:     strings.TrimRight(baseURL, "/"),
-		Model:       model,
-		Temperature: temperature,
-		client:      &http.Client{},
-	}
-}
-
-type ThinkingConfig struct {
-	ThinkingBudget int `json:"thinkingBudget"`
-}
-
-type GenerationConfig struct {
-	ThinkingConfig *ThinkingConfig `json:"thinkingConfig,omitempty"`
-	Temperature    float64         `json:"temperature"`
-}
-
-type GeminiRequest struct {
-	Contents         []GeminiContent  `json:"contents"`
-	GenerationConfig GenerationConfig `json:"generationConfig"`
-}
-
-type GeminiContent struct {
-	Parts []GeminiPart `json:"parts"`
+type geminiContent struct {
 	Role  string       `json:"role,omitempty"`
+	Parts []geminiPart `json:"parts"`
 }
 
-type GeminiPart struct {
-	Text string `json:"text"`
+type geminiPart struct {
+	Text    string `json:"text"`
+	Thought bool   `json:"thought,omitempty"`
 }
 
-type GeminiResponse struct {
+type geminiConfig struct {
+	Temperature    float64         `json:"temperature"`
+	ThinkingConfig *geminiThinking `json:"thinkingConfig,omitempty"`
+}
+
+type geminiThinking struct {
+	ThinkingBudget *int   `json:"thinkingBudget,omitempty"`
+	ThinkingLevel  string `json:"thinkingLevel,omitempty"`
+}
+
+type geminiReply struct {
 	Candidates []struct {
-		Content GeminiContent `json:"content"`
+		Content      geminiContent `json:"content"`
+		FinishReason string        `json:"finishReason"`
 	} `json:"candidates"`
-	Error *struct {
-		Message string `json:"message"`
-		Code    int    `json:"code"`
-		Status  string `json:"status"`
-	} `json:"error,omitempty"`
+	Error *replyError `json:"error"`
 }
 
-func (p *GeminiProvider) ReviseText(ctx context.Context, text, systemPrompt string) (string, error) {
-	if err := p.ValidateConfig(); err != nil {
+func (generateContent) request(ctx context.Context, target endpoint, prompt Prompt, stream, lowReasoning bool) (*http.Request, error) {
+	body := geminiRequest{
+		SystemInstruction: &geminiContent{Parts: []geminiPart{{Text: prompt.System}}},
+		Contents:          []geminiContent{{Role: "user", Parts: []geminiPart{{Text: prompt.Text}}}},
+		GenerationConfig:  geminiConfig{Temperature: target.temperature},
+	}
+	if lowReasoning {
+		body.GenerationConfig.ThinkingConfig = lowThinking(target.model)
+	}
+
+	method := ":generateContent"
+	if stream {
+		method = ":streamGenerateContent?alt=sse"
+	}
+	url := target.baseURL + "/v1beta/models/" + target.model + method
+	return newJSONRequest(ctx, url, body, map[string]string{"x-goog-api-key": target.apiKey})
+}
+
+// Gemini 2 takes a thinking budget and later models a level; each refuses the other's field.
+func lowThinking(model string) *geminiThinking {
+	if strings.HasPrefix(model, "gemini-2") {
+		none := 0
+		return &geminiThinking{ThinkingBudget: &none}
+	}
+	return &geminiThinking{ThinkingLevel: "low"}
+}
+
+func (generateContent) decode(body []byte) (string, error) {
+	text, err := geminiText(body)
+	if errors.Is(err, errLengthLimit) {
 		return "", err
 	}
+	if err == nil && text == "" {
+		return "", errNoReply
+	}
+	return text, err
+}
 
-	fullText := fmt.Sprintf("%s\n\n%s", systemPrompt, text)
+func (generateContent) event(data []byte) (string, bool, error) {
+	text, err := geminiText(data)
+	return text, false, err
+}
 
-	contents := []GeminiContent{
-		{
-			Parts: []GeminiPart{
-				{Text: fullText},
-			},
-		},
+func geminiText(data []byte) (string, error) {
+	var reply geminiReply
+	if err := json.Unmarshal(data, &reply); err != nil {
+		return "", err
+	}
+	if err := reply.Error.err(); err != nil {
+		return "", err
+	}
+	if len(reply.Candidates) == 0 {
+		return "", nil
 	}
 
-	// A zero budget is refused outright by the models that cannot switch thinking off, so the
-	// request is retried without it rather than failing the user's correction.
-	return withReasoningFallback(p.BaseURL, p.Model, p.LowReasoning, func(includeReasoning bool) (string, error) {
-		config := GenerationConfig{Temperature: p.Temperature}
-		if includeReasoning {
-			config.ThinkingConfig = &ThinkingConfig{ThinkingBudget: 0}
+	candidate := reply.Candidates[0]
+	var text strings.Builder
+	for _, part := range candidate.Content.Parts {
+		if !part.Thought {
+			text.WriteString(part.Text)
 		}
-		return p.send(ctx, GeminiRequest{Contents: contents, GenerationConfig: config})
-	})
-}
-
-func (p *GeminiProvider) send(ctx context.Context, requestBody GeminiRequest) (string, error) {
-	jsonData, err := json.Marshal(requestBody)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
-
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", p.BaseURL, p.Model)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+	if candidate.FinishReason == "MAX_TOKENS" {
+		return text.String(), errLengthLimit
 	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", p.APIKey)
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", ParseAPIError(resp.StatusCode, body, "gemini")
-	}
-
-	var response GeminiResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return "", ParseUnmarshalError(err, body, resp.StatusCode, "gemini")
-	}
-
-	if response.Error != nil {
-		return "", fmt.Errorf("API error: %s", response.Error.Message)
-	}
-
-	if len(response.Candidates) == 0 {
-		return "", fmt.Errorf("no response from API")
-	}
-
-	var result strings.Builder
-	for _, part := range response.Candidates[0].Content.Parts {
-		result.WriteString(part.Text)
-	}
-
-	return result.String(), nil
-}
-
-func (p *GeminiProvider) ValidateConfig() error {
-	if p.APIKey == "" {
-		return fmt.Errorf("gemini API key is required")
-	}
-	if p.BaseURL == "" {
-		return fmt.Errorf("gemini base URL is required")
-	}
-	return nil
-}
-
-func (p *GeminiProvider) GetName() string {
-	return "gemini"
-}
-
-func (p *GeminiProvider) GetModel() string {
-	return p.Model
+	return text.String(), nil
 }

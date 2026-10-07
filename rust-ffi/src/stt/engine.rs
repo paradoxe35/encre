@@ -17,6 +17,7 @@ const SILENCE_PAD_SECS: f32 = 0.5;
 
 /// Keeps the session resident between takes: loading costs seconds, a take costs
 /// milliseconds.
+#[derive(Default)]
 pub struct Engine {
     loaded: Option<Loaded>,
     /// Why the last load failed, reported by the transcription that needed it.
@@ -32,10 +33,7 @@ struct Loaded {
 
 impl Engine {
     pub fn new() -> Self {
-        Self {
-            loaded: None,
-            load_error: None,
-        }
+        Self::default()
     }
 
     pub fn unload(&mut self) {

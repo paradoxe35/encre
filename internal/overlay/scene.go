@@ -31,6 +31,9 @@ const (
 	kappa = 0.5523
 )
 
+// Surface is the indicator's colour.
+var Surface = color.NRGBA{R: 22, G: 22, B: 26, A: 255}
+
 // Frame is everything a picture of the indicator depends on.
 type Frame struct {
 	Phase Phase
@@ -56,7 +59,7 @@ func Paint(dst *image.RGBA, f Frame, scale float64) {
 	h := float64(bounds.Dy())
 	inset := pillInset * scale
 	roundedRect(z, inset, inset, w-2*inset, h-2*inset, (h-2*inset)/2)
-	z.Draw(dst, bounds, image.NewUniform(shade(22, 22, 26, 0.88*f.Alpha)), image.Point{})
+	z.Draw(dst, bounds, image.NewUniform(shade(Surface.R, Surface.G, Surface.B, 0.88*f.Alpha)), image.Point{})
 
 	if f.Phase == Thinking {
 		paintDots(dst, z, f, scale)

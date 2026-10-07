@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/paradoxe35/encre/internal/config"
 )
 
 func clearReasoningCache() {
@@ -16,78 +18,86 @@ func clearReasoningCache() {
 	})
 }
 
-const okReply = `{"choices":[{"message":{"role":"assistant","content":"corrigé"}}]}`
-
-// bodies records every request body the server saw, so a retry is visible rather than inferred.
-func recordingServer(t *testing.T, replies ...func(w http.ResponseWriter)) (*httptest.Server, *[]OpenAIRequest) {
+// recordingServer answers with replies in turn, the last one repeating, and keeps every request body.
+func recordingServer[T any](t *testing.T, replies ...http.HandlerFunc) (*httptest.Server, *[]T) {
 	t.Helper()
-	var seen []OpenAIRequest
+	var seen []T
 	attempt := 0
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		var body OpenAIRequest
+		var body T
 		_ = json.Unmarshal(raw, &body)
 		seen = append(seen, body)
 
-		reply := replies[len(replies)-1]
-		if attempt < len(replies) {
-			reply = replies[attempt]
-		}
+		reply := replies[min(attempt, len(replies)-1)]
 		attempt++
-		reply(w)
+		reply(w, r)
 	}))
 	t.Cleanup(server.Close)
-
 	return server, &seen
 }
 
-func ok(w http.ResponseWriter) { io.WriteString(w, okReply) }
-func badRequest(w http.ResponseWriter) {
-	w.WriteHeader(http.StatusBadRequest)
-	io.WriteString(w, `{"error":{"message":"unsupported parameter"}}`)
+func reply(body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, body) }
 }
 
-func provider(t *testing.T, url string, low bool) *OpenAIProvider {
+func status(code int, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(code)
+		io.WriteString(w, body)
+	}
+}
+
+var (
+	chatOK     = reply(`{"choices":[{"message":{"role":"assistant","content":"corrigé"}}]}`)
+	badRequest = status(http.StatusBadRequest, `{"error":{"message":"unsupported parameter"}}`)
+)
+
+func build(t *testing.T, name, url string, low bool) Provider {
 	t.Helper()
 	clearReasoningCache()
-	p := NewOpenAIProvider("sk-test", url, "gpt-test", 1.0)
-	p.LowReasoning = low
+	p, err := FromSettings(name, config.ProviderSettings{BaseURL: url, Model: "test-model", LowReasoning: low}, "sk-test", false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return p
 }
 
+func complete(t *testing.T, p Provider) (string, error) {
+	t.Helper()
+	return p.Complete(context.Background(), Prompt{System: "prompt", Text: "text"})
+}
+
 func TestLowReasoningSendsEffort(t *testing.T) {
-	server, seen := recordingServer(t, ok)
+	server, seen := recordingServer[chatRequest](t, chatOK)
 
-	if _, err := provider(t, server.URL, true).ReviseText(context.Background(), "text", "prompt"); err != nil {
-		t.Fatalf("revise: %v", err)
+	if _, err := complete(t, build(t, config.BuiltInOpenAI, server.URL, true)); err != nil {
+		t.Fatal(err)
 	}
-
 	if len(*seen) != 1 || (*seen)[0].ReasoningEffort != "low" {
 		t.Fatalf("expected one request asking for low effort, got %+v", *seen)
 	}
 }
 
 func TestReasoningIsNotSentWhenNotWanted(t *testing.T) {
-	server, seen := recordingServer(t, ok)
+	server, seen := recordingServer[chatRequest](t, chatOK)
 
-	if _, err := provider(t, server.URL, false).ReviseText(context.Background(), "text", "prompt"); err != nil {
-		t.Fatalf("revise: %v", err)
+	if _, err := complete(t, build(t, config.BuiltInOpenAI, server.URL, false)); err != nil {
+		t.Fatal(err)
 	}
-
 	if len(*seen) != 1 || (*seen)[0].ReasoningEffort != "" || (*seen)[0].Reasoning != nil {
 		t.Fatalf("expected one plain request, got %+v", *seen)
 	}
 }
 
 func TestARejectedParameterIsRetriedWithoutIt(t *testing.T) {
-	server, seen := recordingServer(t, badRequest, ok)
+	server, seen := recordingServer[chatRequest](t, badRequest, chatOK)
 
-	result, err := provider(t, server.URL, true).ReviseText(context.Background(), "text", "prompt")
+	result, err := complete(t, build(t, config.BuiltInOpenAI, server.URL, true))
 	if err != nil {
-		t.Fatalf("revise: %v", err)
+		t.Fatal(err)
 	}
-
 	if result != "corrigé" {
 		t.Fatalf("expected the retry's result, got %q", result)
 	}
@@ -97,17 +107,14 @@ func TestARejectedParameterIsRetriedWithoutIt(t *testing.T) {
 }
 
 func TestARejectionIsRememberedForTheNextCall(t *testing.T) {
-	server, seen := recordingServer(t, badRequest, ok)
-	p := provider(t, server.URL, true)
+	server, seen := recordingServer[chatRequest](t, badRequest, chatOK)
+	p := build(t, config.BuiltInOpenAI, server.URL, true)
 
-	if _, err := p.ReviseText(context.Background(), "text", "prompt"); err != nil {
-		t.Fatalf("first revise: %v", err)
+	for range 2 {
+		if _, err := complete(t, p); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := p.ReviseText(context.Background(), "text", "prompt"); err != nil {
-		t.Fatalf("second revise: %v", err)
-	}
-
-	// Three requests, not four: the second call skipped the parameter it already knows is refused.
 	if len(*seen) != 3 || (*seen)[2].ReasoningEffort != "" {
 		t.Fatalf("expected the rejection to be remembered, got %+v", *seen)
 	}
@@ -116,34 +123,23 @@ func TestARejectionIsRememberedForTheNextCall(t *testing.T) {
 // A 400 has many causes. Caching on the status alone would switch reasoning off for the session on
 // a model that never objected to it.
 func TestAPersistentBadRequestIsReportedAndNotCached(t *testing.T) {
-	server, seen := recordingServer(t, badRequest, badRequest)
-	p := provider(t, server.URL, true)
-
-	if _, err := p.ReviseText(context.Background(), "text", "prompt"); err == nil {
+	server, seen := recordingServer[chatRequest](t, badRequest)
+	if _, err := complete(t, build(t, config.BuiltInOpenAI, server.URL, true)); err == nil {
 		t.Fatal("expected the error to surface")
 	}
 	if len(*seen) != 2 {
 		t.Fatalf("expected one retry, got %d requests", len(*seen))
 	}
 
-	*seen = nil
-	server2, seen2 := recordingServer(t, ok)
-	p.BaseURL = server2.URL
-	if _, err := p.ReviseText(context.Background(), "text", "prompt"); err != nil {
-		t.Fatalf("revise: %v", err)
-	}
-	if (*seen2)[0].ReasoningEffort != "low" {
+	if _, refused := rejected.Load(server.URL + "::test-model"); refused {
 		t.Fatal("an unrelated 400 disabled reasoning for later calls")
 	}
 }
 
 func TestAServerErrorIsNotRetried(t *testing.T) {
-	server, seen := recordingServer(t, func(w http.ResponseWriter) {
-		w.WriteHeader(http.StatusInternalServerError)
-		io.WriteString(w, `{"error":{"message":"down"}}`)
-	})
+	server, seen := recordingServer[chatRequest](t, status(http.StatusInternalServerError, `{"error":{"message":"down"}}`))
 
-	if _, err := provider(t, server.URL, true).ReviseText(context.Background(), "text", "prompt"); err == nil {
+	if _, err := complete(t, build(t, config.BuiltInOpenAI, server.URL, true)); err == nil {
 		t.Fatal("expected the error to surface")
 	}
 	if len(*seen) != 1 {
@@ -152,10 +148,45 @@ func TestAServerErrorIsNotRetried(t *testing.T) {
 }
 
 func TestOpenRouterGetsItsOwnShape(t *testing.T) {
-	if style := DetectReasoningStyle("https://openrouter.ai/api/v1"); style != ReasoningOpenRouter {
-		t.Fatalf("expected the OpenRouter shape, got %v", style)
+	server, seen := recordingServer[chatRequest](t, chatOK)
+	p := build(t, config.BuiltInOpenRouter, server.URL+"/openrouter.ai", true)
+
+	if _, err := complete(t, p); err != nil {
+		t.Fatal(err)
 	}
-	if style := DetectReasoningStyle("https://api.openai.com/v1"); style != ReasoningOpenAIEffort {
-		t.Fatalf("expected the OpenAI shape, got %v", style)
+	request := (*seen)[0]
+	if request.ReasoningEffort != "" || request.Reasoning == nil || !request.Reasoning.Exclude {
+		t.Fatalf("expected OpenRouter's reasoning object alone, got %+v", request)
+	}
+}
+
+func TestAnthropicNeverRetriesForReasoning(t *testing.T) {
+	server, seen := recordingServer[messagesRequest](t, badRequest)
+
+	if _, err := complete(t, build(t, config.BuiltInClaude, server.URL, true)); err == nil {
+		t.Fatal("expected the error to surface")
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("a model with no reasoning parameter was retried: %d requests", len(*seen))
+	}
+}
+
+func TestGeminiThinksLessByModelGeneration(t *testing.T) {
+	server, seen := recordingServer[geminiRequest](t, reply(`{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`))
+
+	for _, model := range []string{"gemini-2.5-flash", "gemini-3.1-flash-lite"} {
+		clearReasoningCache()
+		p, _ := FromSettings(config.BuiltInGemini, config.ProviderSettings{BaseURL: server.URL, Model: model, LowReasoning: true}, "k", false)
+		if _, err := complete(t, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	older, newer := (*seen)[0].GenerationConfig.ThinkingConfig, (*seen)[1].GenerationConfig.ThinkingConfig
+	if older == nil || older.ThinkingBudget == nil || *older.ThinkingBudget != 0 || older.ThinkingLevel != "" {
+		t.Fatalf("gemini 2 should get a zero budget, got %+v", older)
+	}
+	if newer == nil || newer.ThinkingLevel != "low" || newer.ThinkingBudget != nil {
+		t.Fatalf("gemini 3 should get a low level, got %+v", newer)
 	}
 }

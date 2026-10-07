@@ -1,11 +1,15 @@
 package revision
 
 import (
-	"github.com/paradoxe35/encre/internal/overlay"
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/paradoxe35/encre/internal/ai"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/overlay"
 )
 
 func mentionConfig(enabled bool) *config.Config {
@@ -236,10 +240,97 @@ func TestOpenRouterBuildsAnOpenAIStyleProviderUnderItsOwnName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if provider.GetName() != config.BuiltInOpenRouter {
-		t.Fatalf("name %q", provider.GetName())
+	if provider.Name() != config.BuiltInOpenRouter {
+		t.Fatalf("name %q", provider.Name())
 	}
-	if provider.GetModel() != "google/gemini-2.5-flash" {
-		t.Fatalf("model %q", provider.GetModel())
+	if provider.Model() != "google/gemini-2.5-flash" {
+		t.Fatalf("model %q", provider.Model())
+	}
+}
+
+type cannedProvider struct {
+	name, model, answer string
+}
+
+func (c cannedProvider) Complete(context.Context, ai.Prompt) (string, error) { return c.answer, nil }
+func (c cannedProvider) Stream(_ context.Context, _ ai.Prompt, onText func(string)) (string, error) {
+	onText(c.answer)
+	return c.answer, nil
+}
+func (c cannedProvider) Name() string  { return c.name }
+func (c cannedProvider) Model() string { return c.model }
+
+func TestTheReplyNamesTheProviderThatAnswered(t *testing.T) {
+	cfg := mentionConfig(true)
+	cfg.AIProvider.Provider = "OpenAI"
+
+	p := &Processor{config: cfg, providerFactory: ai.NewProviderFactory()}
+	p.providerFactory.Register("OpenAI", cannedProvider{"OpenAI", "gpt", "from openai"})
+	p.providerFactory.Register("claude", cannedProvider{"claude", "haiku", "from claude"})
+
+	cases := []struct {
+		text, provider, model, answer string
+	}{
+		{"fix this", "OpenAI", "gpt", "from openai"},
+		{"@claude fix this", "claude", "haiku", "from claude"},
+	}
+	for _, c := range cases {
+		got, err := p.transform(c.text, config.ActionReviseSelection)
+		if err != nil {
+			t.Fatalf("%q: %v", c.text, err)
+		}
+		if got.provider != c.provider || got.model != c.model || got.text != c.answer {
+			t.Errorf("%q answered as %+v, want %s/%s %q", c.text, got, c.provider, c.model, c.answer)
+		}
+	}
+}
+
+// slowProvider writes a piece every gap, count times, or stays silent until cancelled when count is 0.
+type slowProvider struct {
+	gap   time.Duration
+	count int
+}
+
+func (s slowProvider) Complete(context.Context, ai.Prompt) (string, error) { return "", nil }
+func (s slowProvider) Stream(ctx context.Context, _ ai.Prompt, onText func(string)) (string, error) {
+	if s.count == 0 {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	for range s.count {
+		select {
+		case <-time.After(s.gap):
+			onText("word ")
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	return "done", nil
+}
+func (s slowProvider) Name() string  { return "slow" }
+func (s slowProvider) Model() string { return "m" }
+
+func askWith(t *testing.T, provider ai.Provider) error {
+	t.Helper()
+	cfg := mentionConfig(false)
+	cfg.AIProvider.Provider = "OpenAI"
+	cfg.SetOperation(config.OpAsk, config.OperationConfig{TimeoutSeconds: 1, CharacterLimit: 100})
+
+	p := &Processor{config: cfg, providerFactory: ai.NewProviderFactory()}
+	p.providerFactory.Register("OpenAI", provider)
+	_, err := p.complete(context.Background(), cfg, config.OpAsk, "", "q", func(string) {})
+	return err
+}
+
+func TestAStreamThatKeepsWritingOutlastsTheTimeout(t *testing.T) {
+	if err := askWith(t, slowProvider{gap: 300 * time.Millisecond, count: 6}); err != nil {
+		t.Fatalf("a stream writing for longer than the timeout was cut off: %v", err)
+	}
+}
+
+func TestASilentStreamTimesOutWithAHint(t *testing.T) {
+	err := askWith(t, slowProvider{})
+	if err == nil || !strings.Contains(err.Error(), "no reply within 1s") || errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
 	}
 }

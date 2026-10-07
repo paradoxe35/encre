@@ -290,6 +290,7 @@ func (w *MainWindow) buildSpeechOptions() {
 
 	w.speechKeepLoaded = w.dirtyCheck("Keep the model in memory", speech.KeepModelLoaded)
 	w.speechCleanUp = w.dirtyCheck("Tidy the transcript with AI", speech.CleanUp)
+	w.speechLowerAudio = w.dirtyCheck("Lower other audio while recording", speech.LowerAudio)
 }
 
 // key tells a change of set from a redraw; resolve only runs on a change.
@@ -509,6 +510,7 @@ func (w *MainWindow) showSpeechOptions() {
 		widget.NewSeparator(),
 		w.speechKeepLoaded,
 		w.speechCleanUp,
+		w.speechLowerAudio,
 	)
 
 	options := dialog.NewCustom("Speech options", "Done", content, w.Window)
@@ -533,6 +535,7 @@ func (w *MainWindow) applySpeechSettings() {
 	speech.Language = w.selectedSpeechLanguage()
 	speech.KeepModelLoaded = w.speechKeepLoaded.Checked
 	speech.CleanUp = w.speechCleanUp.Checked
+	speech.LowerAudio = w.speechLowerAudio.Checked
 
 	if preset, ok := stt.PresetByName(w.speechRemote.Selected); ok {
 		speech.RemoteProvider = preset.ID

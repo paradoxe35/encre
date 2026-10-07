@@ -12,3 +12,5 @@ import (
 func noFocus(*glfw.Window) {}
 
 func focusPoint() (image.Point, bool) { return image.Point{}, false }
+
+func Panel(uintptr, image.Rectangle, int) {}

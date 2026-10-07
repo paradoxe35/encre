@@ -212,6 +212,9 @@ fn canonical_key_name(name: &str) -> Option<&'static str> {
         .map(|(_, name)| *name)
 }
 
+/// Esc is the one key bound alone: it only closes what Encre shows, and is bound only while it shows.
+const STANDALONE_KEY: &str = "escape";
+
 /// A binding is modifiers, then optionally one key: `ctrl+alt+space`, or `ctrl+cmd` on its own.
 /// A modifier is required, or the binding would fire on ordinary typing.
 fn parse_binding(binding: &str) -> Result<(Modifiers, Option<&'static str>), String> {
@@ -241,7 +244,7 @@ fn parse_binding(binding: &str) -> Result<(Modifiers, Option<&'static str>), Str
         None => Some(canonical_key_name(&name).ok_or_else(|| format!("unknown key '{}'", last))?),
     };
 
-    if modifiers.is_empty() {
+    if modifiers.is_empty() && key != Some(STANDALONE_KEY) {
         return Err("binding needs a modifier".to_string());
     }
     Ok((modifiers, key))
@@ -415,13 +418,13 @@ impl ListenerState {
                 self.held_key = None;
             }
             // Only the named key ends a hold; a modifier released first is a slipped finger.
-            if let (Some(name), Some(holding)) = (name, self.holding) {
-                if name == holding {
-                    self.holding = None;
-                    for binding in bindings.lock().iter() {
-                        if binding.is_hold() && binding.key == Some(name) {
-                            fire(binding, false);
-                        }
+            if let (Some(name), Some(holding)) = (name, self.holding)
+                && name == holding
+            {
+                self.holding = None;
+                for binding in bindings.lock().iter() {
+                    if binding.is_hold() && binding.key == Some(name) {
+                        fire(binding, false);
                     }
                 }
             }
@@ -451,6 +454,7 @@ impl ListenerState {
     }
 }
 
+#[derive(Default)]
 pub struct SimpleHotkeyManager {
     bindings: Arc<Mutex<Vec<HotkeyBinding>>>,
     listener_handle: Option<thread::JoinHandle<()>>,
@@ -462,17 +466,18 @@ pub struct SimpleHotkeyManager {
 
 impl SimpleHotkeyManager {
     pub fn new() -> Self {
-        Self {
-            bindings: Arc::new(Mutex::new(Vec::new())),
-            listener_handle: None,
-            active: Arc::new(Mutex::new(false)),
-            listen_error: Arc::new(Mutex::new(None)),
-        }
+        Self::default()
     }
 
     pub fn clear_bindings(&mut self) {
         self.bindings.lock().clear();
         tracing::info!("Cleared all hotkey bindings");
+    }
+
+    pub fn unregister(&mut self, action: &str) {
+        self.bindings
+            .lock()
+            .retain(|binding| binding.action != action);
     }
 
     pub fn register(
@@ -674,6 +679,23 @@ pub unsafe extern "C" fn encre_hotkey_clear(handle: HotkeyManagerHandle) -> c_in
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn encre_hotkey_unregister(
+    handle: HotkeyManagerHandle,
+    action: *const c_char,
+) -> c_int {
+    let Some(manager) = manager(handle) else {
+        return FFIErrorCode::NullPointer as c_int;
+    };
+    match unsafe { c_str_to_string(action) } {
+        Ok(action) => {
+            manager.unregister(&action);
+            FFIErrorCode::Success as c_int
+        }
+        Err(_) => FFIErrorCode::InvalidUtf8 as c_int,
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_register(
     handle: HotkeyManagerHandle,
     binding: *const c_char,
@@ -813,6 +835,52 @@ mod tests {
     ];
 
     /// Option arrives as `Key::Alt`, the space bar as "space".
+    #[test]
+    fn escape_alone_is_the_one_key_needing_no_modifier() {
+        assert_eq!(
+            fired(
+                &[("escape", "close")],
+                &[Down(Key::Escape), Up(Key::Escape)]
+            ),
+            ["close"]
+        );
+        assert!(
+            fired(
+                &[("escape", "close")],
+                &[Down(Key::ShiftLeft), Down(Key::Escape)]
+            )
+            .is_empty(),
+            "shift+escape fired the bare escape binding"
+        );
+
+        let mut manager = SimpleHotkeyManager::new();
+        assert!(
+            manager
+                .register("a".to_string(), "x".to_string(), record)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn unregistering_drops_only_that_action() {
+        let mut manager = SimpleHotkeyManager::new();
+        manager
+            .register("escape".to_string(), "close".to_string(), record)
+            .unwrap();
+        manager
+            .register("ctrl+alt+k".to_string(), "ask".to_string(), record)
+            .unwrap();
+        manager.unregister("close");
+
+        let actions: Vec<String> = manager
+            .bindings
+            .lock()
+            .iter()
+            .map(|b| b.action.clone())
+            .collect();
+        assert_eq!(actions, ["ask"]);
+    }
+
     #[test]
     fn ctrl_option_space_revises_everything() {
         let actions = fired(

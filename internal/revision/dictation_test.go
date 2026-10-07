@@ -1,8 +1,10 @@
 package revision
 
 import (
+	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -66,6 +68,43 @@ type fakeTypist struct {
 	typed    []string
 	insErr   error
 	history  [][2]string
+	answer   string
+	askErr   error
+	asked    []string
+	// hold, when set, keeps the answer open after its first words until it is closed or cancelled.
+	hold chan struct{}
+}
+
+// Ask streams the answer a word at a time, then fails with askErr if there is one.
+func (f *fakeTypist) Ask(ctx context.Context, question string, onText func(string)) (string, error) {
+	f.mu.Lock()
+	f.asked = append(f.asked, question)
+	answer, askErr, hold := f.answer, f.askErr, f.hold
+	f.mu.Unlock()
+
+	if askErr != nil && answer == "" {
+		return "", askErr
+	}
+	for i, word := range strings.SplitAfter(answer, " ") {
+		onText(word)
+		if i == 0 && hold != nil {
+			select {
+			case <-hold:
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+	}
+	if askErr != nil {
+		return "", askErr
+	}
+	return answer, nil
+}
+
+func (f *fakeTypist) questions() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.asked)
 }
 
 func (f *fakeTypist) CleanTranscript(string) (string, error) {
@@ -110,8 +149,11 @@ func (f *fakeOverlay) Show(phase overlay.Phase) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	name := "listening"
-	if phase == overlay.Transcribing {
+	switch phase {
+	case overlay.Transcribing:
 		name = "transcribing"
+	case overlay.Thinking:
+		name = "thinking"
 	}
 	f.calls = append(f.calls, name)
 }
@@ -140,6 +182,10 @@ type harness struct {
 	typist    *fakeTypist
 	overlay   *fakeOverlay
 	reported  chan error
+	failed    chan config.ActionKind
+	view      *fakeView
+	cfg       *config.Config
+	audio     *fakeAudio
 }
 
 func newHarness(t *testing.T, cleanUp bool) *harness {
@@ -150,15 +196,23 @@ func newHarness(t *testing.T, cleanUp bool) *harness {
 	cfg.SetSpeechSettings(speech)
 
 	h := &harness{
+		cfg:      cfg,
+		audio:    &fakeAudio{},
 		speech:   &fakeSpeech{stops: []stopResult{{text: "hello world"}}},
-		typist:   &fakeTypist{cleaned: "Hello, world."},
+		typist:   &fakeTypist{cleaned: "Hello, world.", answer: "Paris."},
 		overlay:  &fakeOverlay{},
 		reported: make(chan error, 8),
+		failed:   make(chan config.ActionKind, 8),
+		view:     &fakeView{done: make(chan shownAnswer, 8)},
 	}
-	h.dictation = newDictation(h.speech, h.typist, func() *config.Config { return cfg }, func(err error) {
-		h.reported <- err
-	})
+	h.dictation = newDictation(h.speech, h.typist, func() *config.Config { return cfg },
+		func(kind config.ActionKind, err error) {
+			h.failed <- kind
+			h.reported <- err
+		},
+		h.view)
 	h.dictation.SetOverlay(h.overlay)
+	h.dictation.audio = h.audio
 	return h
 }
 
@@ -463,5 +517,297 @@ func TestLevelsReachTheCurrentIndicatorAndTheOldOneIsHidden(t *testing.T) {
 	}
 	if got := replacement.levels; !slices.Equal(got, []float32{0.7}) {
 		t.Fatalf("replacement levels %v", got)
+	}
+}
+
+func (h *harness) ask() {
+	h.dictation.Ask(true)
+	h.dictation.Ask(false)
+}
+
+type shownAnswer struct {
+	question, text, failure string
+}
+
+type fakeView struct {
+	mu       sync.Mutex
+	question string
+	text     string
+	stop     func()
+	opens    int
+	updates  int
+	done     chan shownAnswer
+}
+
+func (v *fakeView) Open(question string, stop func()) (func(string, bool), func(string)) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.question, v.stop = question, stop
+	v.opens++
+
+	update := func(text string, done bool) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		v.updates++
+		v.text = text
+		if done {
+			v.done <- shownAnswer{question: v.question, text: text}
+		}
+	}
+	fail := func(reason string) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		v.done <- shownAnswer{question: v.question, text: v.text, failure: reason}
+	}
+	return update, fail
+}
+
+func (v *fakeView) counts() (opens, updates int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.opens, v.updates
+}
+
+func (v *fakeView) close() {
+	v.mu.Lock()
+	stop := v.stop
+	v.mu.Unlock()
+	stop()
+}
+
+func (h *harness) expectAnswer(t *testing.T) shownAnswer {
+	t.Helper()
+	select {
+	case answer := <-h.view.done:
+		return answer
+	case <-time.After(time.Second):
+		t.Fatal("no answer shown")
+		return shownAnswer{}
+	}
+}
+
+func TestAQuestionIsAnsweredNotTyped(t *testing.T) {
+	h := newHarness(t, true)
+	h.ask()
+
+	answer := h.expectAnswer(t)
+	if answer.question != "hello world" || answer.text != "Paris." {
+		t.Fatalf("showed %+v", answer)
+	}
+	if typed := h.typist.typedSoFar(); len(typed) != 0 {
+		t.Fatalf("typed %v, want nothing", typed)
+	}
+	if remembered := h.typist.remembered(); len(remembered) != 0 {
+		t.Fatalf("recorded as speech: %v", remembered)
+	}
+}
+
+func TestTheIndicatorKeepsOneWaitWhileTheModelAnswers(t *testing.T) {
+	h := newHarness(t, false)
+	h.ask()
+
+	seen := h.waitOverlay(t, "hide")
+	want := []string{"listening", "transcribing", "hide"}
+	if !slices.Equal(seen, want) {
+		t.Fatalf("indicator went %v, want %v", seen, want)
+	}
+}
+
+func TestAFailedAnswerIsReportedAsAsk(t *testing.T) {
+	h := newHarness(t, false)
+	h.typist.answer = ""
+	h.typist.askErr = errors.New("provider down")
+	h.ask()
+
+	h.expectReport(t, h.typist.askErr)
+	if kind := <-h.failed; kind != config.ActionAsk {
+		t.Fatalf("reported for %q, want %q", kind, config.ActionAsk)
+	}
+	if opens, _ := h.view.counts(); opens != 0 {
+		t.Fatal("an answer opened for a request that failed before writing")
+	}
+}
+
+func TestAnotherActionsReleaseDoesNotEndTheTake(t *testing.T) {
+	h := newHarness(t, false)
+	h.dictation.Ask(true)
+	h.dictation.Toggle(false)
+
+	if !h.dictation.Recording(config.ActionAsk) {
+		t.Fatal("the ask take ended on the dictate release")
+	}
+	h.dictation.Ask(false)
+	h.expectAnswer(t)
+	if questions := h.typist.questions(); len(questions) != 1 {
+		t.Fatalf("asked %v, want one question", questions)
+	}
+}
+
+func TestRecordingClearsAfterAFailedStart(t *testing.T) {
+	h := newHarness(t, false)
+	h.speech.startErr = errors.New("no microphone")
+	h.dictation.Toggle(true)
+
+	h.expectReport(t, h.speech.startErr)
+	if h.dictation.Recording(config.ActionDictate) {
+		t.Fatal("still recording after the start failed")
+	}
+}
+
+func TestAnAnswerStreamsIntoOneView(t *testing.T) {
+	h := newHarness(t, false)
+	h.typist.answer = "Paris is the capital of France."
+	h.ask()
+
+	if answer := h.expectAnswer(t); answer.text != "Paris is the capital of France." {
+		t.Fatalf("finished with %q", answer.text)
+	}
+	if opens, updates := h.view.counts(); opens != 1 || updates < 3 {
+		t.Fatalf("opened %d times with %d updates, want one view filling up", opens, updates)
+	}
+}
+
+func TestTheIndicatorGivesWayAtTheFirstWords(t *testing.T) {
+	h := newHarness(t, false)
+	h.typist.answer = "Paris is the capital."
+	h.typist.hold = make(chan struct{})
+	h.ask()
+
+	h.waitOverlay(t, "hide")
+	if opens, _ := h.view.counts(); opens != 1 {
+		t.Fatal("the indicator hid before the answer opened")
+	}
+	close(h.typist.hold)
+	h.expectAnswer(t)
+}
+
+func TestClosingTheAnswerCancelsItQuietly(t *testing.T) {
+	h := newHarness(t, false)
+	h.typist.answer = "Paris is the capital."
+	h.typist.hold = make(chan struct{})
+	h.ask()
+
+	h.waitUntil(t, "the answer to open", func() bool { opens, _ := h.view.counts(); return opens == 1 })
+	h.view.close()
+
+	if answer := h.expectAnswer(t); answer.text != "Paris " {
+		t.Fatalf("finished with %q, want the words written so far", answer.text)
+	}
+	h.expectNoReport(t)
+}
+
+func TestAnAnswerCutOffShowsWhyBelowWhatArrived(t *testing.T) {
+	h := newHarness(t, false)
+	h.typist.answer = "Paris is"
+	h.typist.askErr = errors.New("connection lost")
+	h.ask()
+
+	answer := h.expectAnswer(t)
+	if answer.text != "Paris is" || answer.failure != "connection lost" {
+		t.Fatalf("finished with %+v", answer)
+	}
+	h.expectNoReport(t)
+}
+
+type fakeAudio struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (f *fakeAudio) Lower()   { f.record("lower") }
+func (f *fakeAudio) Restore() { f.record("restore") }
+
+func (f *fakeAudio) record(call string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call)
+}
+
+func (f *fakeAudio) seen() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
+}
+
+func (h *harness) lowerAudio() {
+	speech := h.cfg.SpeechSettings()
+	speech.LowerAudio = true
+	h.cfg.SetSpeechSettings(speech)
+}
+
+func TestOtherAudioIsLoweredOnlyWhileTheMicrophoneIsOpen(t *testing.T) {
+	h := newHarness(t, false)
+	h.lowerAudio()
+
+	h.dictation.Toggle(true)
+	if seen := h.audio.seen(); !slices.Equal(seen, []string{"lower"}) {
+		t.Fatalf("while recording: %v", seen)
+	}
+	h.dictation.Toggle(false)
+	if seen := h.audio.seen(); !slices.Equal(seen, []string{"lower", "restore"}) {
+		t.Fatalf("after the release: %v", seen)
+	}
+}
+
+func TestOtherAudioIsLeftAloneByDefault(t *testing.T) {
+	h := newHarness(t, false)
+	h.take()
+
+	if slices.Contains(h.audio.seen(), "lower") {
+		t.Fatal("lowered other audio without the setting")
+	}
+}
+
+func TestOtherAudioComesBackWhenTheMicrophoneFails(t *testing.T) {
+	h := newHarness(t, false)
+	h.lowerAudio()
+	h.speech.startErr = errors.New("no microphone")
+
+	h.dictation.Toggle(true)
+	h.expectReport(t, h.speech.startErr)
+	if seen := h.audio.seen(); !slices.Equal(seen, []string{"lower", "restore"}) {
+		t.Fatalf("got %v", seen)
+	}
+}
+
+func TestClosingRestoresOtherAudio(t *testing.T) {
+	h := newHarness(t, false)
+	h.lowerAudio()
+	h.dictation.Toggle(true)
+	h.dictation.Close()
+
+	if seen := h.audio.seen(); !slices.Contains(seen, "restore") {
+		t.Fatalf("quitting mid-take left other audio low: %v", seen)
+	}
+}
+
+func TestATypedQuestionOpensAtOnceAndStreams(t *testing.T) {
+	typist := &fakeTypist{answer: "Paris is the capital."}
+	view := &fakeView{done: make(chan shownAnswer, 1)}
+
+	go func() { _ = streamAnswer(typist.Ask, view, "capital of france?", nil) }()
+
+	select {
+	case answer := <-view.done:
+		if answer.question != "capital of france?" || answer.text != "Paris is the capital." {
+			t.Fatalf("showed %+v", answer)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no answer shown")
+	}
+	if opens, updates := view.counts(); opens != 1 || updates < 2 {
+		t.Fatalf("opened %d times with %d updates", opens, updates)
+	}
+}
+
+func TestATypedQuestionThatFailsSaysSoInTheView(t *testing.T) {
+	typist := &fakeTypist{askErr: errors.New("no provider configured")}
+	view := &fakeView{done: make(chan shownAnswer, 1)}
+
+	if err := streamAnswer(typist.Ask, view, "q", nil); err != nil {
+		t.Fatalf("an error the view showed was returned: %v", err)
+	}
+	if answer := <-view.done; answer.failure != "no provider configured" {
+		t.Fatalf("showed %+v", answer)
 	}
 }
