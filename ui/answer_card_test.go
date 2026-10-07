@@ -16,11 +16,12 @@ func TestAnswerCardShowsTheAnswerAndEscapeDismissesIt(t *testing.T) {
 	card.SetShowHideCallbacks(func() { shown++ }, func() { hidden++ })
 
 	card.Show("what is the capital of france", "**Paris**.")
-	if !card.Visible() || card.question.Text != "what is the capital of france" {
-		t.Fatalf("visible %v, question %q", card.Visible(), card.question.Text)
+	if !card.Visible() {
+		t.Fatal("the card is not showing")
 	}
-	if got := card.answer.String(); !strings.Contains(got, "Paris") {
-		t.Fatalf("answer reads %q", got)
+	got := card.content.String()
+	if !strings.HasPrefix(got, "what is the capital of france") || !strings.Contains(got, "Paris") {
+		t.Fatalf("card reads %q", got)
 	}
 
 	card.Show("and of spain", "Madrid.")
@@ -47,6 +48,19 @@ func TestAnswerCardCopiesTheWholeAnswer(t *testing.T) {
 	test.Tap(card.copy)
 	if got := app.Clipboard().Content(); got != "line one\n\n- line two" {
 		t.Fatalf("clipboard holds %q", got)
+	}
+}
+
+func TestALongQuestionDoesNotGrowTheFooter(t *testing.T) {
+	app := test.NewTempApp(t)
+	card := NewAnswerCard(app)
+
+	card.Show("q", "a")
+	footer := card.footer.MinSize().Height
+	card.Show(strings.Repeat("a long spoken question ", 30), "a")
+
+	if card.footer.MinSize().Height != footer {
+		t.Fatal("the footer grew with the question")
 	}
 }
 

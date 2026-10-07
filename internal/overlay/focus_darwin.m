@@ -29,12 +29,24 @@ void encre_overlay_no_focus(void* window) {
         | NSWindowCollectionBehaviorFullScreenAuxiliary];
 }
 
-void encre_overlay_panel(uintptr_t window) {
+// GLFW places windows from the top left of the primary screen, Cocoa from its bottom left.
+void encre_overlay_panel(uintptr_t window, int x, int y, int radius) {
     NSWindow* w = (__bridge NSWindow*)(void*)window;
     [w setCollectionBehavior:[w collectionBehavior]
         | NSWindowCollectionBehaviorCanJoinAllSpaces
         | NSWindowCollectionBehaviorIgnoresCycle
         | NSWindowCollectionBehaviorFullScreenAuxiliary];
+
+    CGFloat top = NSMaxY([[[NSScreen screens] firstObject] frame]);
+    [w setFrameTopLeftPoint:NSMakePoint(x, top - y)];
+
+    [w setOpaque:NO];
+    [w setBackgroundColor:[NSColor clearColor]];
+    NSView* view = [w contentView];
+    [view setWantsLayer:YES];
+    [[view layer] setCornerRadius:radius];
+    [[view layer] setMasksToBounds:YES];
+    [w invalidateShadow];
 }
 
 static int focused_window_centre(int* x, int* y) {

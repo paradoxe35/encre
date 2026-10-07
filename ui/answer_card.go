@@ -4,9 +4,11 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/overlay"
@@ -14,25 +16,25 @@ import (
 
 const (
 	answerWidth     = 480
-	answerMinHeight = 120
+	answerMinHeight = 96
 	answerMaxHeight = 440
+	answerInset     = 12
+	answerRadius    = 14
 	copiedFor       = 1500 * time.Millisecond
 )
 
-// AnswerCard shows the reply to a spoken question until it is dismissed. Like the indicator it floats
-// above other windows and stays out of the taskbar, but it takes the keyboard so Esc can close it.
-// Every method runs on the UI thread.
+// AnswerCard shows an answer where the indicator was. Unlike the indicator it takes the keyboard,
+// so Esc can close it. Every method runs on the UI thread.
 type AnswerCard struct {
 	app     fyne.App
 	window  fyne.Window
 	visible bool
 	text    string
 
-	header   fyne.CanvasObject
-	question *widget.Label
-	answer   *widget.RichText
-	scroll   *container.Scroll
-	copy     *widget.Button
+	content *widget.RichText
+	scroll  *container.Scroll
+	footer  fyne.CanvasObject
+	copy    *widget.Button
 
 	onShow func()
 	onHide func()
@@ -47,27 +49,29 @@ func (c *AnswerCard) SetShowHideCallbacks(onShow, onHide func()) {
 	c.onHide = onHide
 }
 
-// Show replaces whatever the card was showing.
 func (c *AnswerCard) Show(question, answer string) {
 	if c.window == nil {
 		c.build()
 	}
+	spot, placed := c.findSpot()
 
 	c.text = answer
-	c.question.SetText(question)
-	c.answer.ParseMarkdown(answer)
+	c.content.Segments = append(questionSegments(question), widget.NewRichTextFromMarkdown(answer).Segments...)
+	c.content.Refresh()
 	c.copy.SetIcon(theme.ContentCopyIcon())
-	c.window.Resize(c.fit())
+
+	size := c.fit()
+	c.window.Resize(size)
 	c.scroll.ScrollToTop()
 
 	if !c.visible && c.onShow != nil {
 		c.onShow()
 	}
 	c.visible = true
-	// The first Show creates the native window, so only the second call reaches it then.
-	c.float()
+	// The first Show creates the native window, so the first call has nothing to reach yet.
+	c.float(spot, placed, size)
 	c.window.Show()
-	c.float()
+	c.float(spot, placed, size)
 	c.window.RequestFocus()
 }
 
@@ -88,25 +92,21 @@ func (c *AnswerCard) build() {
 	c.window = borderlessWindow(c.app)
 	c.window.SetTitle("Encre")
 
-	c.question = widget.NewLabel("")
-	c.question.Truncation = fyne.TextTruncateEllipsis
-	c.question.TextStyle.Italic = true
+	c.content = widget.NewRichText()
+	c.content.Wrapping = fyne.TextWrapWord
+	c.scroll = container.NewVScroll(c.content)
 
-	c.copy = widget.NewButtonWithIcon("", theme.ContentCopyIcon(), c.copyAnswer)
-	c.copy.Importance = widget.LowImportance
-	dismiss := widget.NewButtonWithIcon("", theme.CancelIcon(), c.Hide)
-	dismiss.Importance = widget.LowImportance
+	c.copy = iconButton(theme.ContentCopyIcon(), c.copyAnswer)
+	hint := widget.NewRichText(&widget.TextSegment{Text: "Esc to close", Style: mutedStyle(true)})
+	c.footer = container.NewBorder(nil, nil, hint, container.NewHBox(c.copy, iconButton(theme.CancelIcon(), c.Hide)))
 
-	c.header = container.NewVBox(
-		container.NewBorder(nil, nil, nil, container.NewHBox(c.copy, dismiss), c.question),
-		widget.NewSeparator(),
-	)
+	body := container.NewBorder(nil, c.footer, nil, nil, c.scroll)
+	inset := container.New(layout.NewCustomPaddedLayout(answerInset, answerInset/2, answerInset, answerInset/2), body)
+	c.window.SetContent(container.NewStack(
+		canvas.NewRectangle(overlay.Surface),
+		container.NewThemeOverride(inset, &fixedVariant{theme.VariantDark}),
+	))
 
-	c.answer = widget.NewRichText()
-	c.answer.Wrapping = fyne.TextWrapWord
-	c.scroll = container.NewVScroll(c.answer)
-
-	c.window.SetContent(container.NewPadded(container.NewBorder(c.header, nil, nil, nil, c.scroll)))
 	c.window.SetCloseIntercept(c.Hide)
 	c.window.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
 		if event.Name == fyne.KeyEscape {
@@ -116,12 +116,10 @@ func (c *AnswerCard) build() {
 	c.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { c.copyAnswer() })
 }
 
-// fit grows the card with the answer, and past the cap the answer scrolls.
 func (c *AnswerCard) fit() fyne.Size {
-	padding := theme.Padding()
-	c.answer.Resize(fyne.NewSize(answerWidth-2*padding, 0))
+	c.content.Resize(fyne.NewSize(answerWidth-answerInset*3/2, 0))
 
-	height := c.header.MinSize().Height + c.answer.MinSize().Height + 3*padding
+	height := c.content.MinSize().Height + c.footer.MinSize().Height + answerInset*3/2 + theme.Padding()
 	return fyne.NewSize(answerWidth, min(max(height, answerMinHeight), answerMaxHeight))
 }
 
@@ -134,21 +132,54 @@ func (c *AnswerCard) copyAnswer() {
 	})
 }
 
-func (c *AnswerCard) float() {
-	native, ok := c.window.(driver.NativeWindow)
-	if !ok {
+func (c *AnswerCard) findSpot() (overlay.Spot, bool) {
+	if _, ok := c.window.(driver.NativeWindow); !ok {
+		return overlay.Spot{}, false
+	}
+	return overlay.FindSpot()
+}
+
+func (c *AnswerCard) float(spot overlay.Spot, placed bool, size fyne.Size) {
+	if !placed {
 		return
 	}
+	native := c.window.(driver.NativeWindow)
+
+	scale := c.window.Canvas().Scale()
+	frame := spot.Frame(int(size.Width*scale), int(size.Height*scale))
+	radius := int(answerRadius * scale)
+
 	native.RunNative(func(context any) {
 		switch window := context.(type) {
 		case driver.X11WindowContext:
-			overlay.Panel(window.WindowHandle)
+			overlay.Panel(window.WindowHandle, frame, radius)
 		case driver.WindowsWindowContext:
-			overlay.Panel(window.HWND)
+			overlay.Panel(window.HWND, frame, radius)
 		case driver.MacWindowContext:
-			overlay.Panel(window.NSWindow)
+			overlay.Panel(window.NSWindow, frame, radius)
 		}
 	})
+}
+
+func questionSegments(question string) []widget.RichTextSegment {
+	return []widget.RichTextSegment{
+		&widget.TextSegment{Text: question, Style: mutedStyle(false)},
+		&widget.SeparatorSegment{},
+	}
+}
+
+func mutedStyle(inline bool) widget.RichTextStyle {
+	return widget.RichTextStyle{
+		ColorName: theme.ColorNamePlaceHolder,
+		Inline:    inline,
+		TextStyle: fyne.TextStyle{Italic: true},
+	}
+}
+
+func iconButton(icon fyne.Resource, tapped func()) *widget.Button {
+	button := widget.NewButtonWithIcon("", icon, tapped)
+	button.Importance = widget.LowImportance
+	return button
 }
 
 func borderlessWindow(app fyne.App) fyne.Window {

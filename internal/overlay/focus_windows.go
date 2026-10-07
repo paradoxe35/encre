@@ -23,6 +23,9 @@ const (
 
 	swHide = 0
 	swShow = 5
+
+	dwmwaWindowCornerPreference = 33
+	dwmwcpRound                 = 2
 )
 
 var (
@@ -35,6 +38,8 @@ var (
 	getCursorPos        = user32.NewProc("GetCursorPos")
 	showWindow          = user32.NewProc("ShowWindow")
 	isWindowVisible     = user32.NewProc("IsWindowVisible")
+
+	dwmSetWindowAttribute = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
 )
 
 type winRect struct{ left, top, right, bottom int32 }
@@ -67,11 +72,20 @@ func focusPoint() (image.Point, bool) {
 	return image.Point{}, false
 }
 
-// The taskbar only rereads the style when a window is shown, so a visible one is shown again.
-func Panel(window uintptr) {
+// Panel makes a focusable window float like the indicator, placed in the frame. Only Windows 11 rounds it.
+func Panel(window uintptr, frame image.Rectangle, _ int) {
 	if window == 0 {
 		return
 	}
+	keepOffTaskbar(window)
+
+	corner := uint32(dwmwcpRound)
+	dwmSetWindowAttribute.Call(window, dwmwaWindowCornerPreference, uintptr(unsafe.Pointer(&corner)), unsafe.Sizeof(corner))
+	setWindowPos.Call(window, 0, uintptr(frame.Min.X), uintptr(frame.Min.Y), 0, 0, swpNoSize|swpNoZOrder|swpNoActivate)
+}
+
+// The taskbar only rereads the style when a window is shown, so a visible one is shown again.
+func keepOffTaskbar(window uintptr) {
 	style, _, _ := getWindowLongPtrW.Call(window, gwlExStyle)
 	if style&wsExToolWindow != 0 {
 		return

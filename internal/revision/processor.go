@@ -304,7 +304,7 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 	return result, nil
 }
 
-// Ask answers a spoken question; nothing is pasted, so the reply keeps its formatting.
+// The answer is shown, not pasted, so its formatting stays.
 func (p *Processor) Ask(question string) (string, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {

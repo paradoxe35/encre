@@ -28,8 +28,7 @@ void SetActivationPolicyAccessory(void) {
 
 static NSRunningApplication* previousApp = nil;
 
-// Hiding our last window leaves Encre active with nothing to type into, so the app the
-// user came from gets the keyboard back.
+// Without this, hiding our last window leaves the keyboard with Encre instead of the user's app.
 void RememberFrontmostApp(void) {
     NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
     if (front == nil || [front isEqual:[NSRunningApplication currentApplication]]) {

@@ -119,10 +119,8 @@ func (d *Dictation) Prepare() {
 	}()
 }
 
-// Toggle types what is said between the press and the release.
 func (d *Dictation) Toggle(down bool) { d.hold(config.ActionDictate, down) }
 
-// Ask sends what is said between the press and the release to the model and presents its answer.
 func (d *Dictation) Ask(down bool) { d.hold(config.ActionAsk, down) }
 
 func (d *Dictation) Recording(kind config.ActionKind) bool {

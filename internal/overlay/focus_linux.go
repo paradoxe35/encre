@@ -3,10 +3,11 @@
 package overlay
 
 /*
-#cgo LDFLAGS: -lX11
+#cgo LDFLAGS: -lX11 -lXext
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
+#include <X11/extensions/shape.h>
 
 // The window manager, not GLFW, decides who gets focus when a window appears. A
 // window that declares the "no input" model and calls itself a notification is
@@ -33,8 +34,7 @@ static void encre_overlay_no_focus(Display* display, Window window) {
     XFlush(display);
 }
 
-// The state property is read when a window maps, and a mapped one only changes on request.
-// It is written whole, so the floating GLFW asked for goes in with the rest.
+// Set for the next map and requested for the current one; written whole, so it keeps GLFW's floating.
 static void encre_overlay_panel_state(Display* display, Window window) {
     Atom state = XInternAtom(display, "_NET_WM_STATE", False);
     Atom states[3] = {
@@ -58,6 +58,26 @@ static void encre_overlay_panel_state(Display* display, Window window) {
                    SubstructureRedirectMask | SubstructureNotifyMask, &event);
     }
     XFlush(display);
+}
+
+static void encre_overlay_round(Display* display, Window window, int width, int height, int radius) {
+    Pixmap mask = XCreatePixmap(display, window, width, height, 1);
+    GC gc = XCreateGC(display, mask, 0, NULL);
+    int d = 2 * radius;
+
+    XSetForeground(display, gc, 0);
+    XFillRectangle(display, mask, gc, 0, 0, width, height);
+    XSetForeground(display, gc, 1);
+    XFillRectangle(display, mask, gc, radius, 0, width - d, height);
+    XFillRectangle(display, mask, gc, 0, radius, width, height - d);
+    XFillArc(display, mask, gc, 0, 0, d, d, 0, 360 * 64);
+    XFillArc(display, mask, gc, width - d, 0, d, d, 0, 360 * 64);
+    XFillArc(display, mask, gc, 0, height - d, d, d, 0, 360 * 64);
+    XFillArc(display, mask, gc, width - d, height - d, d, d, 0, 360 * 64);
+
+    XShapeCombineMask(display, window, ShapeBounding, 0, 0, mask, ShapeSet);
+    XFreeGC(display, gc);
+    XFreePixmap(display, mask);
 }
 
 // The active window can vanish between two calls; Xlib's default handler would
@@ -139,11 +159,14 @@ func noFocus(window *glfw.Window) {
 	C.encre_overlay_no_focus(display, C.Window(window.GetX11Window()))
 }
 
-// Panel keeps a window that does take the keyboard out of the taskbar and the pager, as the indicator is.
-func Panel(window uintptr) {
+// Panel makes a focusable window float like the indicator, rounded and placed in the frame.
+func Panel(window uintptr, frame image.Rectangle, radius int) {
 	if window == 0 || glfw.GetPlatform() != glfw.PlatformX11 {
 		return
 	}
 	display := (*C.Display)(unsafe.Pointer(glfw.GetX11Display()))
 	C.encre_overlay_panel_state(display, C.Window(window))
+	C.XMoveWindow(display, C.Window(window), C.int(frame.Min.X), C.int(frame.Min.Y))
+	C.encre_overlay_round(display, C.Window(window), C.int(frame.Dx()), C.int(frame.Dy()), C.int(radius))
+	C.XFlush(display)
 }

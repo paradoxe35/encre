@@ -88,6 +88,30 @@ func openSurface() (surface, error) {
 	return &glfwSurface{window: window, width: fw, height: fh}, nil
 }
 
+// Spot is the work area the indicator shows on: that of the screen the user is working on.
+type Spot struct {
+	workarea image.Rectangle
+}
+
+// FindSpot must run on the UI thread, before one of our windows takes the focus.
+func FindSpot() (Spot, bool) {
+	if !Supported() {
+		return Spot{}, false
+	}
+	screens := attachedScreens()
+	if len(screens) == 0 {
+		return Spot{}, false
+	}
+	focus, known := focusPoint()
+	return Spot{workarea: workareaFor(screens, focus, known)}, true
+}
+
+// Frame aligns a window's bottom with the indicator's, so a taller one grows upwards.
+func (s Spot) Frame(width, height int) image.Rectangle {
+	origin := pillOrigin(s.workarea, width, height)
+	return image.Rectangle{Min: origin, Max: origin.Add(image.Pt(width, height))}
+}
+
 // attachedScreens lists the monitors in GLFW's virtual coordinates, primary first.
 func attachedScreens() []screen {
 	var screens []screen
