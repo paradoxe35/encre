@@ -1,154 +1,96 @@
 package ai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"strings"
 )
 
-type AnthropicProvider struct {
-	APIKey      string
-	BaseURL     string
-	Model       string
-	Temperature float64
-	client      *http.Client
-}
+// messages is Anthropic's Messages API.
+type messages struct{}
 
 const (
-	anthropicBaseURL = "https://api.anthropic.com"
-	anthropicVersion = "2023-06-01"
+	anthropicVersion   = "2023-06-01"
+	anthropicMaxTokens = 4096
 )
 
-func NewAnthropicProvider(apiKey, baseURL, model string, temperature float64) *AnthropicProvider {
-	if baseURL == "" {
-		baseURL = anthropicBaseURL
+type messagesRequest struct {
+	Model       string        `json:"model"`
+	MaxTokens   int           `json:"max_tokens"`
+	System      string        `json:"system,omitempty"`
+	Messages    []chatMessage `json:"messages"`
+	Temperature float64       `json:"temperature"`
+	Stream      bool          `json:"stream,omitempty"`
+}
+
+type textBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type messagesReply struct {
+	Type    string      `json:"type"`
+	Content []textBlock `json:"content"`
+	Delta   textBlock   `json:"delta"`
+	Error   *replyError `json:"error"`
+}
+
+func (messages) request(ctx context.Context, target endpoint, prompt Prompt, stream, _ bool) (*http.Request, error) {
+	body := messagesRequest{
+		Model:       target.model,
+		MaxTokens:   anthropicMaxTokens,
+		System:      prompt.System,
+		Messages:    []chatMessage{{Role: "user", Content: prompt.Text}},
+		Temperature: target.temperature,
+		Stream:      stream,
 	}
-	if model == "" {
-		model = "claude-haiku-4-5"
-	}
-	if temperature == 0 {
-		temperature = 1.0
-	}
-	return &AnthropicProvider{
-		APIKey:      apiKey,
-		BaseURL:     strings.TrimRight(baseURL, "/"),
-		Model:       model,
-		Temperature: temperature,
-		client:      &http.Client{},
+	return newJSONRequest(ctx, target.baseURL+"/v1/messages", body, anthropicHeaders(target.apiKey))
+}
+
+func anthropicHeaders(apiKey string) map[string]string {
+	return map[string]string{
+		"x-api-key":         apiKey,
+		"anthropic-version": anthropicVersion,
 	}
 }
 
-type AnthropicRequest struct {
-	Model       string             `json:"model"`
-	Messages    []AnthropicMessage `json:"messages"`
-	MaxTokens   int                `json:"max_tokens"`
-	System      string             `json:"system,omitempty"`
-	Temperature float64            `json:"temperature"`
-}
-
-type AnthropicMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type AnthropicResponse struct {
-	Content []struct {
-		Text string `json:"text"`
-		Type string `json:"type"`
-	} `json:"content"`
-	Error *struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
-}
-
-func (p *AnthropicProvider) ReviseText(ctx context.Context, text, systemPrompt string) (string, error) {
-	if err := p.ValidateConfig(); err != nil {
+func (messages) decode(body []byte) (string, error) {
+	var reply messagesReply
+	if err := json.Unmarshal(body, &reply); err != nil {
+		return "", err
+	}
+	if err := reply.Error.err(); err != nil {
 		return "", err
 	}
 
-	messages := []AnthropicMessage{
-		{Role: "user", Content: text},
-	}
-
-	requestBody := AnthropicRequest{
-		Model:       p.Model,
-		Messages:    messages,
-		MaxTokens:   4096,
-		System:      systemPrompt,
-		Temperature: p.Temperature,
-	}
-
-	jsonData, err := json.Marshal(requestBody)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", p.BaseURL+"/v1/messages", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", p.APIKey)
-	req.Header.Set("anthropic-version", anthropicVersion)
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", ParseAPIError(resp.StatusCode, body, "claude")
-	}
-
-	var response AnthropicResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return "", ParseUnmarshalError(err, body, resp.StatusCode, "claude")
-	}
-
-	if response.Error != nil {
-		return "", fmt.Errorf("API error: %s", response.Error.Message)
-	}
-
-	if len(response.Content) == 0 {
-		return "", fmt.Errorf("no response from API")
-	}
-
-	var result strings.Builder
-	for _, content := range response.Content {
-		if content.Type == "text" {
-			result.WriteString(content.Text)
+	var text strings.Builder
+	for _, block := range reply.Content {
+		if block.Type == "text" {
+			text.WriteString(block.Text)
 		}
 	}
-
-	return result.String(), nil
-}
-
-func (p *AnthropicProvider) ValidateConfig() error {
-	if p.APIKey == "" {
-		return fmt.Errorf("anthropic API key is required")
+	if text.Len() == 0 {
+		return "", errNoReply
 	}
-	if p.BaseURL == "" {
-		return fmt.Errorf("anthropic base URL is required")
+	return text.String(), nil
+}
+
+func (messages) event(data []byte) (string, bool, error) {
+	var reply messagesReply
+	if err := json.Unmarshal(data, &reply); err != nil {
+		return "", false, err
 	}
-	return nil
-}
 
-func (p *AnthropicProvider) GetName() string {
-	return "claude"
-}
-
-func (p *AnthropicProvider) GetModel() string {
-	return p.Model
+	switch reply.Type {
+	case "content_block_delta":
+		if reply.Delta.Type == "text_delta" {
+			return reply.Delta.Text, false, nil
+		}
+	case "message_stop":
+		return "", true, nil
+	case "error":
+		return "", false, reply.Error.err()
+	}
+	return "", false, nil
 }

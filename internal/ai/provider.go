@@ -6,11 +6,18 @@ import (
 	"sync"
 )
 
+// Prompt is one request: the instructions, and the text they apply to.
+type Prompt struct {
+	System string
+	Text   string
+}
+
 type Provider interface {
-	ReviseText(ctx context.Context, text, systemPrompt string) (string, error)
-	ValidateConfig() error
-	GetName() string
-	GetModel() string
+	Name() string
+	Model() string
+	Complete(ctx context.Context, prompt Prompt) (string, error)
+	// Stream hands each piece of the reply to onText as it arrives, and returns the whole of it.
+	Stream(ctx context.Context, prompt Prompt, onText func(string)) (string, error)
 }
 
 type ProviderFactory struct {

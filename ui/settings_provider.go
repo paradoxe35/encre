@@ -178,7 +178,10 @@ func (w *MainWindow) testAPIConnection(report progress) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		_, err := testProvider.ReviseText(ctx, "Hello", "Reply with 'Connection successful' if you receive this message.")
+		_, err := testProvider.Complete(ctx, ai.Prompt{
+			System: "Reply with 'Connection successful' if you receive this message.",
+			Text:   "Hello",
+		})
 
 		fyne.Do(func() {
 			if err != nil {
@@ -195,22 +198,9 @@ func (w *MainWindow) testAPIConnection(report progress) {
 
 // Builds the provider from what is on screen, so settings can be tried before they are saved.
 func (w *MainWindow) providerUnderTest(provider string, settings config.ProviderSettings, apiKey, baseURL, model string) (ai.Provider, error) {
-	if w.config.IsCustomProvider(provider) {
-		return ai.NewCustomProvider(provider, settings.ProviderType, apiKey, baseURL, model, settings.Temperature)
-	}
-
-	switch provider {
-	case config.BuiltInOpenAI:
-		return ai.NewOpenAIProvider(apiKey, baseURL, model, settings.Temperature), nil
-	case config.BuiltInClaude:
-		return ai.NewAnthropicProvider(apiKey, baseURL, model, settings.Temperature), nil
-	case config.BuiltInGemini:
-		return ai.NewGeminiProvider(apiKey, baseURL, model, settings.Temperature), nil
-	case config.BuiltInOpenRouter:
-		return ai.NewOpenRouterProvider(apiKey, baseURL, model, settings.Temperature), nil
-	default:
-		return nil, fmt.Errorf("unknown provider: %s", provider)
-	}
+	settings.BaseURL = baseURL
+	settings.Model = model
+	return ai.FromSettings(provider, settings, apiKey, w.config.IsCustomProvider(provider))
 }
 
 // The widgets are still nil when initBindings loads the first provider, before the tab exists.

@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,40 +27,17 @@ type modelsEndpoint struct {
 }
 
 func endpointFor(provider, apiKey, baseURL string) modelsEndpoint {
-	base := strings.TrimRight(baseURL, "/")
+	base := strings.TrimRight(cmp.Or(baseURL, defaultBaseURL(provider)), "/")
 
 	switch provider {
 	case config.BuiltInClaude:
-		if base == "" {
-			base = anthropicBaseURL
-		}
-		return modelsEndpoint{
-			url: base + "/v1/models?limit=1000",
-			headers: map[string]string{
-				"x-api-key":         apiKey,
-				"anthropic-version": anthropicVersion,
-			},
-		}
-
+		return modelsEndpoint{url: base + "/v1/models?limit=1000", headers: anthropicHeaders(apiKey)}
 	case config.BuiltInGemini:
-		if base == "" {
-			base = geminiBaseURL
-		}
 		return modelsEndpoint{
 			url:     base + "/v1beta/models?pageSize=1000",
 			headers: map[string]string{"x-goog-api-key": apiKey},
 		}
-
-	case config.BuiltInOpenRouter:
-		if base == "" {
-			base = openRouterBaseURL
-		}
-		return bearerEndpoint(base, apiKey)
-
 	default:
-		if base == "" {
-			base = openAIBaseURL
-		}
 		return bearerEndpoint(base, apiKey)
 	}
 }
@@ -86,8 +64,9 @@ func ListModels(ctx context.Context, provider, apiKey, baseURL string) ([]ModelI
 		req.Header.Set(name, value)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	resp, err := httpClient.Do(req.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch models: %w", err)
 	}

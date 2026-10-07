@@ -238,11 +238,11 @@ func TestOpenRouterBuildsAnOpenAIStyleProviderUnderItsOwnName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if provider.GetName() != config.BuiltInOpenRouter {
-		t.Fatalf("name %q", provider.GetName())
+	if provider.Name() != config.BuiltInOpenRouter {
+		t.Fatalf("name %q", provider.Name())
 	}
-	if provider.GetModel() != "google/gemini-2.5-flash" {
-		t.Fatalf("model %q", provider.GetModel())
+	if provider.Model() != "google/gemini-2.5-flash" {
+		t.Fatalf("model %q", provider.Model())
 	}
 }
 
@@ -250,12 +250,13 @@ type cannedProvider struct {
 	name, model, answer string
 }
 
-func (c cannedProvider) ReviseText(context.Context, string, string) (string, error) {
+func (c cannedProvider) Complete(context.Context, ai.Prompt) (string, error) { return c.answer, nil }
+func (c cannedProvider) Stream(_ context.Context, _ ai.Prompt, onText func(string)) (string, error) {
+	onText(c.answer)
 	return c.answer, nil
 }
-func (c cannedProvider) ValidateConfig() error { return nil }
-func (c cannedProvider) GetName() string       { return c.name }
-func (c cannedProvider) GetModel() string      { return c.model }
+func (c cannedProvider) Name() string  { return c.name }
+func (c cannedProvider) Model() string { return c.model }
 
 func TestTheReplyNamesTheProviderThatAnswered(t *testing.T) {
 	cfg := mentionConfig(true)

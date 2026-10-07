@@ -62,10 +62,10 @@ func TestEndpointForBuiltIns(t *testing.T) {
 		wantURL  string
 		wantKey  string
 	}{
-		{config.BuiltInOpenAI, "", openAIBaseURL + "/models", "Authorization"},
-		{config.BuiltInClaude, "", anthropicBaseURL + "/v1/models?limit=1000", "x-api-key"},
-		{config.BuiltInGemini, "", geminiBaseURL + "/v1beta/models?pageSize=1000", "x-goog-api-key"},
-		{config.BuiltInOpenRouter, "", openRouterBaseURL + "/models", "Authorization"},
+		{config.BuiltInOpenAI, "", "https://api.openai.com/v1/models", "Authorization"},
+		{config.BuiltInClaude, "", "https://api.anthropic.com/v1/models?limit=1000", "x-api-key"},
+		{config.BuiltInGemini, "", "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", "x-goog-api-key"},
+		{config.BuiltInOpenRouter, "", "https://openrouter.ai/api/v1/models", "Authorization"},
 		{"my-ollama", "http://localhost:11434/v1/", "http://localhost:11434/v1/models", "Authorization"},
 	}
 

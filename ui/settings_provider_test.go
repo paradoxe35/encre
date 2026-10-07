@@ -22,8 +22,8 @@ func TestTheConnectionTestKnowsEveryProvider(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if provider.GetName() != name {
-			t.Fatalf("%s built a provider called %q", name, provider.GetName())
+		if provider.Name() != name {
+			t.Fatalf("%s built a provider called %q", name, provider.Name())
 		}
 	}
 

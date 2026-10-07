@@ -95,30 +95,7 @@ func (p *Processor) buildProvider(cfg *config.Config, name string) (ai.Provider,
 		return nil, fmt.Errorf("no API key configured for %s", name)
 	}
 
-	var provider ai.Provider
-	switch {
-	case cfg.IsCustomProvider(name):
-		provider, err = ai.NewCustomProvider(name, settings.ProviderType, apiKey,
-			settings.BaseURL, settings.Model, settings.Temperature)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create custom provider: %w", err)
-		}
-	case name == config.BuiltInOpenAI:
-		provider = ai.NewOpenAIProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
-	case name == config.BuiltInClaude:
-		provider = ai.NewAnthropicProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
-	case name == config.BuiltInGemini:
-		provider = ai.NewGeminiProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
-	case name == config.BuiltInOpenRouter:
-		provider = ai.NewOpenRouterProvider(apiKey, settings.BaseURL, settings.Model, settings.Temperature)
-	default:
-		return nil, fmt.Errorf("unknown provider: %s", name)
-	}
-
-	if aware, ok := provider.(ai.ReasoningAware); ok {
-		aware.SetLowReasoning(settings.LowReasoning)
-	}
-	return provider, nil
+	return ai.FromSettings(name, settings, apiKey, cfg.IsCustomProvider(name))
 }
 
 func (p *Processor) providerNamed(name string) (ai.Provider, error) {
@@ -345,22 +322,21 @@ func (p *Processor) complete(cfg *config.Config, op config.Operation, mentioned,
 		return reply{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(),
-		time.Duration(operation.TimeoutSeconds)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(operation.TimeoutSeconds)*time.Second)
 	defer cancel()
 
 	logger.Info("Sending text to AI provider",
 		"operation", op,
 		"provider", name,
-		"model", provider.GetModel(),
+		"model", provider.Model(),
 		"characters", utf8.RuneCountInString(trimmed),
 	)
 
-	answer, err := provider.ReviseText(ctx, trimmed, systemPrompt(cfg, op, operation))
+	answer, err := provider.Complete(ctx, ai.Prompt{System: systemPrompt(cfg, op, operation), Text: trimmed})
 	if err != nil {
 		return reply{}, fmt.Errorf("%s failed: %w", op.Label(), err)
 	}
-	return reply{text: answer, provider: name, model: provider.GetModel()}, nil
+	return reply{text: answer, provider: name, model: provider.Model()}, nil
 }
 
 func systemPrompt(cfg *config.Config, op config.Operation, operation config.OperationConfig) string {
@@ -491,12 +467,12 @@ func (p *Processor) CleanTranscript(text string) (string, error) {
 	defer cancel()
 
 	logger.Info("Cleaning dictated transcript",
-		"provider", provider.GetName(),
-		"model", provider.GetModel(),
+		"provider", provider.Name(),
+		"model", provider.Model(),
 		"characters", utf8.RuneCountInString(trimmed),
 	)
 
-	cleaned, err := provider.ReviseText(ctx, trimmed, prompt.Dictate)
+	cleaned, err := provider.Complete(ctx, ai.Prompt{System: prompt.Dictate, Text: trimmed})
 	if err != nil {
 		return "", fmt.Errorf("transcript cleanup failed: %w", err)
 	}
