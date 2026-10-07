@@ -84,6 +84,8 @@ encre_HotkeyManagerHandle encre_hotkey_manager_new(void);
 
 int encre_hotkey_clear(encre_HotkeyManagerHandle handle);
 
+int encre_hotkey_unregister(encre_HotkeyManagerHandle handle, const char *action);
+
 int encre_hotkey_register(encre_HotkeyManagerHandle handle,
                           const char *binding,
                           const char *action,

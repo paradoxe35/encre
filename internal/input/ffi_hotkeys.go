@@ -120,6 +120,26 @@ func (h *FFIHotkeyManager) RegisterHotkey(binding, action string, handler func()
 	return nil
 }
 
+func (h *FFIHotkeyManager) UnregisterHotkey(action string) error {
+	h.ffiMu.Lock()
+	defer h.ffiMu.Unlock()
+
+	if h.handle == nil {
+		return fmt.Errorf("hotkey manager not initialized")
+	}
+
+	h.mu.Lock()
+	delete(h.handlers, action)
+	h.mu.Unlock()
+
+	cAction := C.CString(action)
+	defer C.free(unsafe.Pointer(cAction))
+	if result := C.encre_hotkey_unregister(h.handle, cAction); result != 0 {
+		return fmt.Errorf("failed to unregister %s: %s", action, getLastError())
+	}
+	return nil
+}
+
 // ListenError reports why the listener is not running, or "" when it is. Start only spawns the
 // thread; the system refuses the key tap afterwards, so a successful start proves nothing.
 func (h *FFIHotkeyManager) ListenError() string {
