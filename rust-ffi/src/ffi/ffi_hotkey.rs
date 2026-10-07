@@ -415,13 +415,13 @@ impl ListenerState {
                 self.held_key = None;
             }
             // Only the named key ends a hold; a modifier released first is a slipped finger.
-            if let (Some(name), Some(holding)) = (name, self.holding) {
-                if name == holding {
-                    self.holding = None;
-                    for binding in bindings.lock().iter() {
-                        if binding.is_hold() && binding.key == Some(name) {
-                            fire(binding, false);
-                        }
+            if let (Some(name), Some(holding)) = (name, self.holding)
+                && name == holding
+            {
+                self.holding = None;
+                for binding in bindings.lock().iter() {
+                    if binding.is_hold() && binding.key == Some(name) {
+                        fire(binding, false);
                     }
                 }
             }
@@ -451,6 +451,7 @@ impl ListenerState {
     }
 }
 
+#[derive(Default)]
 pub struct SimpleHotkeyManager {
     bindings: Arc<Mutex<Vec<HotkeyBinding>>>,
     listener_handle: Option<thread::JoinHandle<()>>,
@@ -462,12 +463,7 @@ pub struct SimpleHotkeyManager {
 
 impl SimpleHotkeyManager {
     pub fn new() -> Self {
-        Self {
-            bindings: Arc::new(Mutex::new(Vec::new())),
-            listener_handle: None,
-            active: Arc::new(Mutex::new(false)),
-            listen_error: Arc::new(Mutex::new(None)),
-        }
+        Self::default()
     }
 
     pub fn clear_bindings(&mut self) {
