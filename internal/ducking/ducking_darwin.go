@@ -28,30 +28,37 @@ static OSStatus encre_set_volume(AudioObjectID device, Float32 volume) {
 */
 import "C"
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
-// macOS has no public way to set another app's volume, so the output device is turned down instead.
-func lower() (func() error, error) {
-	var device C.AudioObjectID
-	if status := C.encre_default_output(&device); status != 0 {
+// outputSession turns the output device down: macOS has no public way to set another app's volume.
+type outputSession struct {
+	device C.AudioObjectID
+	volume C.Float32
+}
+
+func open() (session, error) {
+	s := &outputSession{}
+	if status := C.encre_default_output(&s.device); status != 0 {
 		return nil, coreAudioError("finding the output device", status)
 	}
-
-	var volume C.Float32
-	if status := C.encre_get_volume(device, &volume); status != 0 {
+	if status := C.encre_get_volume(s.device, &s.volume); status != 0 {
 		return nil, coreAudioError("reading the output volume", status)
 	}
-	if status := C.encre_set_volume(device, volume*C.Float32(sliderGain)); status != 0 {
-		return nil, coreAudioError("lowering the output volume", status)
-	}
-
-	return func() error {
-		if status := C.encre_set_volume(device, volume); status != 0 {
-			return coreAudioError("restoring the output volume", status)
-		}
-		return nil
-	}, nil
+	return s, nil
 }
+
+// The output volume is a slider, close to cubic, so an amplitude share is its cube root there.
+func (s *outputSession) scale(share float64) error {
+	if status := C.encre_set_volume(s.device, s.volume*C.Float32(math.Cbrt(share))); status != 0 {
+		return coreAudioError("setting the output volume", status)
+	}
+	return nil
+}
+
+func (s *outputSession) close() {}
 
 func coreAudioError(action string, status C.OSStatus) error {
 	return fmt.Errorf("%s: Core Audio status %d", action, int32(status))

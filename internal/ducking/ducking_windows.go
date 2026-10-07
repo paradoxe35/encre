@@ -3,7 +3,6 @@ package ducking
 import (
 	"errors"
 	"os"
-	"runtime"
 
 	"github.com/go-ole/go-ole"
 	"github.com/moutend/go-wca/pkg/wca"
@@ -11,50 +10,29 @@ import (
 
 const sFalse = 1
 
-// Each app's session on the default output is turned down, as its slider in the volume mixer would be.
-// Sessions are found again to restore them, since the COM objects belong to the thread that made them.
-func lower() (func() error, error) {
-	saved := map[string]float32{}
-	err := eachSession(func(id string, active bool, volume *wca.ISimpleAudioVolume) error {
-		if !active {
-			return nil
-		}
-		var level float32
-		if err := volume.GetMasterVolume(&level); err != nil {
-			return err
-		}
-		if err := volume.SetMasterVolume(level*float32(gain), nil); err != nil {
-			return err
-		}
-		saved[id] = level
-		return nil
-	})
-	if len(saved) == 0 && err != nil {
-		return nil, err
-	}
-
-	return func() error {
-		return eachSession(func(id string, _ bool, volume *wca.ISimpleAudioVolume) error {
-			if level, ok := saved[id]; ok {
-				return volume.SetMasterVolume(level, nil)
-			}
-			return nil
-		})
-	}, nil
+// mixerSession holds each app's session on the default output, as its slider in the volume mixer.
+// Its objects live on the worker's thread, which opened them.
+type mixerSession struct {
+	volumes []*wca.ISimpleAudioVolume
+	levels  []float32
 }
 
-// eachSession visits the sessions of other apps playing to the default output.
-func eachSession(visit func(id string, active bool, volume *wca.ISimpleAudioVolume) error) error {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
+func open() (session, error) {
 	if err := ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED); err != nil {
 		if oleErr, ok := errors.AsType[*ole.OleError](err); !ok || oleErr.Code() != sFalse {
-			return err
+			return nil, err
 		}
 	}
-	defer ole.CoUninitialize()
 
+	s := &mixerSession{}
+	if err := s.find(); err != nil {
+		s.close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *mixerSession) find() error {
 	var enumerator *wca.IMMDeviceEnumerator
 	if err := wca.CoCreateInstance(wca.CLSID_MMDeviceEnumerator, 0, wca.CLSCTX_ALL, wca.IID_IMMDeviceEnumerator, &enumerator); err != nil {
 		return err
@@ -83,49 +61,63 @@ func eachSession(visit func(id string, active bool, volume *wca.ISimpleAudioVolu
 	if err := sessions.GetCount(&count); err != nil {
 		return err
 	}
-
-	var errs []error
 	for i := range count {
-		errs = append(errs, visitSession(sessions, i, visit))
+		s.add(sessions, i)
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
-func visitSession(sessions *wca.IAudioSessionEnumerator, i int, visit func(string, bool, *wca.ISimpleAudioVolume) error) error {
+// add keeps a session only when it is another app's, and playing.
+func (s *mixerSession) add(sessions *wca.IAudioSessionEnumerator, i int) {
 	var control *wca.IAudioSessionControl
-	if err := sessions.GetSession(i, &control); err != nil {
-		return err
+	if sessions.GetSession(i, &control) != nil {
+		return
 	}
 	defer control.Release()
 
 	var details *wca.IAudioSessionControl2
-	if err := control.PutQueryInterface(wca.IID_IAudioSessionControl2, &details); err != nil {
-		return err
+	if control.PutQueryInterface(wca.IID_IAudioSessionControl2, &details) != nil {
+		return
 	}
 	defer details.Release()
 
 	// Returns no error exactly when it is the system sounds session, which is not an app's.
 	if details.IsSystemSoundsSession() == nil {
-		return nil
+		return
 	}
-	var pid uint32
-	if err := details.GetProcessId(&pid); err != nil || pid == uint32(os.Getpid()) {
-		return nil
+	var pid, state uint32
+	if details.GetProcessId(&pid) != nil || pid == uint32(os.Getpid()) {
+		return
 	}
-
-	var id string
-	if err := details.GetSessionInstanceIdentifier(&id); err != nil {
-		return err
-	}
-	var state uint32
-	if err := control.GetState(&state); err != nil {
-		return err
+	if control.GetState(&state) != nil || state != wca.AudioSessionStateActive {
+		return
 	}
 
 	var volume *wca.ISimpleAudioVolume
-	if err := control.PutQueryInterface(wca.IID_ISimpleAudioVolume, &volume); err != nil {
-		return err
+	if control.PutQueryInterface(wca.IID_ISimpleAudioVolume, &volume) != nil {
+		return
 	}
-	defer volume.Release()
-	return visit(id, state == wca.AudioSessionStateActive, volume)
+	var level float32
+	if volume.GetMasterVolume(&level) != nil {
+		volume.Release()
+		return
+	}
+	s.volumes = append(s.volumes, volume)
+	s.levels = append(s.levels, level)
+}
+
+// The mixer's levels apply to amplitude, so the share is used as it is.
+func (s *mixerSession) scale(share float64) error {
+	var errs []error
+	for i, volume := range s.volumes {
+		errs = append(errs, volume.SetMasterVolume(s.levels[i]*float32(share), nil))
+	}
+	return errors.Join(errs...)
+}
+
+func (s *mixerSession) close() {
+	for _, volume := range s.volumes {
+		volume.Release()
+	}
+	ole.CoUninitialize()
 }

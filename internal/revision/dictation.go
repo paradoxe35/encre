@@ -34,6 +34,7 @@ type assistant interface {
 type otherAudio interface {
 	Lower()
 	Restore()
+	Close()
 }
 
 type Dictation struct {
@@ -255,7 +256,7 @@ func (d *Dictation) settle() {
 }
 
 func (d *Dictation) Close() {
-	d.audio.Restore()
+	d.audio.Close()
 	d.service.Close()
 }
 

@@ -3,55 +3,152 @@ package ducking
 
 import (
 	"math"
-	"sync"
+	"runtime"
+	"time"
 
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
 // Other audio drops by 18 dB: clearly in the background, still there.
-var (
-	gain       = math.Pow(10, -18.0/20)
-	sliderGain = math.Cbrt(gain)
+var gain = math.Pow(10, -18.0/20)
+
+const (
+	fadeDown = 400 * time.Millisecond
+	fadeUp   = 800 * time.Millisecond
+	step     = 20 * time.Millisecond
 )
 
-// lowerFunc turns other audio down and returns what puts it back.
-type lowerFunc func() (restore func() error, err error)
+// session is the other audio found playing when lowering began.
+type session interface {
+	// scale sets every stream to share of the amplitude it had when found; 1 puts it back.
+	scale(share float64) error
+	close()
+}
 
-// Ducker restores only what it lowered, at the level it found it.
+type wish struct {
+	lowered bool
+	// done, when set, asks for the audio back at once and is closed once it is.
+	done chan struct{}
+}
+
+// Ducker fades other audio down and back up on a worker of its own, so neither the microphone nor
+// the transcript waits for a fade, and a wish that comes mid-fade turns it around from where it is.
 type Ducker struct {
-	mu      sync.Mutex
-	lower   lowerFunc
-	restore func() error
+	open  func() (session, error)
+	step  time.Duration
+	wants chan wish
 }
 
 func New() *Ducker {
-	return &Ducker{lower: lower}
+	return newDucker(open, step)
 }
 
-func (d *Ducker) Lower() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.restore != nil {
-		return
-	}
-
-	restore, err := d.lower()
-	if err != nil {
-		logger.Warn("Could not lower other audio", "error", err)
-		return
-	}
-	d.restore = restore
+func newDucker(open func() (session, error), step time.Duration) *Ducker {
+	d := &Ducker{open: open, step: step, wants: make(chan wish, 1)}
+	go d.run()
+	return d
 }
 
-func (d *Ducker) Restore() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.restore == nil {
-		return
-	}
+func (d *Ducker) Lower()   { d.want(wish{lowered: true}) }
+func (d *Ducker) Restore() { d.want(wish{}) }
 
-	if err := d.restore(); err != nil {
-		logger.Warn("Could not restore other audio", "error", err)
+// Close puts the audio back without a fade and waits for it, so quitting never leaves it low.
+func (d *Ducker) Close() {
+	done := make(chan struct{})
+	d.want(wish{done: done})
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		logger.Warn("Other audio may still be lowered")
 	}
-	d.restore = nil
+}
+
+// want replaces a wish the worker has not taken yet: only the latest one matters.
+func (d *Ducker) want(w wish) {
+	select {
+	case <-d.wants:
+	default:
+	}
+	d.wants <- w
+}
+
+func (d *Ducker) run() {
+	// Windows audio objects belong to the thread that made them.
+	runtime.LockOSThread()
+
+	var current session
+	share := 1.0
+	for w := range d.wants {
+		for {
+			if w.lowered && current == nil {
+				opened, err := d.open()
+				if err != nil {
+					logger.Warn("Could not lower other audio", "error", err)
+					break
+				}
+				current, share = opened, 1
+			}
+			if current == nil {
+				break
+			}
+
+			if w.done != nil {
+				d.apply(current, 1)
+				current.close()
+				current = nil
+				break
+			}
+
+			target, over := 1.0, fadeUp
+			if w.lowered {
+				target, over = gain, fadeDown
+			}
+			next, interrupted := d.fade(current, &share, target, over)
+			if interrupted {
+				w = next
+				continue
+			}
+			if !w.lowered {
+				current.close()
+				current = nil
+			}
+			break
+		}
+		if w.done != nil {
+			close(w.done)
+		}
+	}
+}
+
+// fade moves share to target over the given time and reports a newer wish that cut it short.
+func (d *Ducker) fade(current session, share *float64, target float64, over time.Duration) (wish, bool) {
+	from := *share
+	steps := max(int(over/d.step), 1)
+	for i := 1; i <= steps; i++ {
+		select {
+		case next := <-d.wants:
+			return next, true
+		case <-time.After(d.step):
+		}
+		*share = between(from, target, float64(i)/float64(steps))
+		d.apply(current, *share)
+	}
+	return wish{}, false
+}
+
+func (d *Ducker) apply(current session, share float64) {
+	if err := current.scale(share); err != nil {
+		logger.Warn("Could not change other audio", "error", err)
+	}
+}
+
+// between eases from one share to another evenly in decibels, the way loudness is heard, and
+// slowly at both ends, so the change never lands as a step.
+func between(from, to, t float64) float64 {
+	if t >= 1 {
+		return to
+	}
+	eased := t * t * (3 - 2*t)
+	fromDB, toDB := 20*math.Log10(from), 20*math.Log10(to)
+	return math.Pow(10, (fromDB+(toDB-fromDB)*eased)/20)
 }

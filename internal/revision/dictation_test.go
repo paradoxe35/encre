@@ -716,6 +716,7 @@ type fakeAudio struct {
 
 func (f *fakeAudio) Lower()   { f.record("lower") }
 func (f *fakeAudio) Restore() { f.record("restore") }
+func (f *fakeAudio) Close()   { f.record("close") }
 
 func (f *fakeAudio) record(call string) {
 	f.mu.Lock()
@@ -776,7 +777,7 @@ func TestClosingRestoresOtherAudio(t *testing.T) {
 	h.dictation.Toggle(true)
 	h.dictation.Close()
 
-	if seen := h.audio.seen(); !slices.Contains(seen, "restore") {
+	if seen := h.audio.seen(); !slices.Contains(seen, "close") {
 		t.Fatalf("quitting mid-take left other audio low: %v", seen)
 	}
 }
