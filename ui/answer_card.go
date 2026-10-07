@@ -90,7 +90,6 @@ func (c *AnswerCard) build() {
 
 	c.question = widget.NewLabel("")
 	c.question.Truncation = fyne.TextTruncateEllipsis
-	c.question.Importance = widget.LowImportance
 	c.question.TextStyle.Italic = true
 
 	c.copy = widget.NewButtonWithIcon("", theme.ContentCopyIcon(), c.copyAnswer)

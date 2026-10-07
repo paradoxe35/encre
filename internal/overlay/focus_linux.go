@@ -34,25 +34,29 @@ static void encre_overlay_no_focus(Display* display, Window window) {
 }
 
 // The state property is read when a window maps, and a mapped one only changes on request.
-static void encre_overlay_skip_taskbar(Display* display, Window window) {
+// It is written whole, so the floating GLFW asked for goes in with the rest.
+static void encre_overlay_panel_state(Display* display, Window window) {
     Atom state = XInternAtom(display, "_NET_WM_STATE", False);
-    Atom skip[2] = {
+    Atom states[3] = {
         XInternAtom(display, "_NET_WM_STATE_SKIP_TASKBAR", False),
         XInternAtom(display, "_NET_WM_STATE_SKIP_PAGER", False),
+        XInternAtom(display, "_NET_WM_STATE_ABOVE", False),
     };
-    XChangeProperty(display, window, state, XA_ATOM, 32, PropModeReplace, (unsigned char*)skip, 2);
+    XChangeProperty(display, window, state, XA_ATOM, 32, PropModeReplace, (unsigned char*)states, 3);
 
-    XEvent event = {0};
-    event.xclient.type = ClientMessage;
-    event.xclient.window = window;
-    event.xclient.message_type = state;
-    event.xclient.format = 32;
-    event.xclient.data.l[0] = 1;
-    event.xclient.data.l[1] = skip[0];
-    event.xclient.data.l[2] = skip[1];
-    event.xclient.data.l[3] = 1;
-    XSendEvent(display, DefaultRootWindow(display), False,
-               SubstructureRedirectMask | SubstructureNotifyMask, &event);
+    for (int i = 0; i < 3; i += 2) {
+        XEvent event = {0};
+        event.xclient.type = ClientMessage;
+        event.xclient.window = window;
+        event.xclient.message_type = state;
+        event.xclient.format = 32;
+        event.xclient.data.l[0] = 1;
+        event.xclient.data.l[1] = states[i];
+        event.xclient.data.l[2] = i + 1 < 3 ? states[i + 1] : 0;
+        event.xclient.data.l[3] = 1;
+        XSendEvent(display, DefaultRootWindow(display), False,
+                   SubstructureRedirectMask | SubstructureNotifyMask, &event);
+    }
     XFlush(display);
 }
 
@@ -141,5 +145,5 @@ func Panel(window uintptr) {
 		return
 	}
 	display := (*C.Display)(unsafe.Pointer(glfw.GetX11Display()))
-	C.encre_overlay_skip_taskbar(display, C.Window(window))
+	C.encre_overlay_panel_state(display, C.Window(window))
 }
