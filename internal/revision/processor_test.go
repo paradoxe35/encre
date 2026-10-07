@@ -2,8 +2,10 @@ package revision
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paradoxe35/encre/internal/ai"
 	"github.com/paradoxe35/encre/internal/config"
@@ -280,5 +282,55 @@ func TestTheReplyNamesTheProviderThatAnswered(t *testing.T) {
 		if got.provider != c.provider || got.model != c.model || got.text != c.answer {
 			t.Errorf("%q answered as %+v, want %s/%s %q", c.text, got, c.provider, c.model, c.answer)
 		}
+	}
+}
+
+// slowProvider writes a piece every gap, count times, or stays silent until cancelled when count is 0.
+type slowProvider struct {
+	gap   time.Duration
+	count int
+}
+
+func (s slowProvider) Complete(context.Context, ai.Prompt) (string, error) { return "", nil }
+func (s slowProvider) Stream(ctx context.Context, _ ai.Prompt, onText func(string)) (string, error) {
+	if s.count == 0 {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	for range s.count {
+		select {
+		case <-time.After(s.gap):
+			onText("word ")
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	return "done", nil
+}
+func (s slowProvider) Name() string  { return "slow" }
+func (s slowProvider) Model() string { return "m" }
+
+func askWith(t *testing.T, provider ai.Provider) error {
+	t.Helper()
+	cfg := mentionConfig(false)
+	cfg.AIProvider.Provider = "OpenAI"
+	cfg.SetOperation(config.OpAsk, config.OperationConfig{TimeoutSeconds: 1, CharacterLimit: 100})
+
+	p := &Processor{config: cfg, providerFactory: ai.NewProviderFactory()}
+	p.providerFactory.Register("OpenAI", provider)
+	_, err := p.complete(context.Background(), cfg, config.OpAsk, "", "q", func(string) {})
+	return err
+}
+
+func TestAStreamThatKeepsWritingOutlastsTheTimeout(t *testing.T) {
+	if err := askWith(t, slowProvider{gap: 300 * time.Millisecond, count: 6}); err != nil {
+		t.Fatalf("a stream writing for longer than the timeout was cut off: %v", err)
+	}
+}
+
+func TestASilentStreamTimesOutWithAHint(t *testing.T) {
+	err := askWith(t, slowProvider{})
+	if err == nil || !strings.Contains(err.Error(), "no reply within 1s") || errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
 	}
 }

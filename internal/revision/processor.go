@@ -2,6 +2,7 @@ package revision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -19,6 +20,8 @@ import (
 	"github.com/paradoxe35/encre/internal/prompt"
 	"github.com/paradoxe35/encre/internal/stt"
 )
+
+var errTimedOut = errors.New("timed out")
 
 type Processor struct {
 	mu               sync.Mutex
@@ -323,8 +326,12 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.
 		return reply{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(operation.TimeoutSeconds)*time.Second)
-	defer cancel()
+	// The timeout is a silence: a stream that keeps writing is given as long as it needs.
+	timeout := time.Duration(operation.TimeoutSeconds) * time.Second
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	silence := time.AfterFunc(timeout, func() { cancel(errTimedOut) })
+	defer silence.Stop()
 
 	logger.Info("Sending text to AI provider",
 		"operation", op,
@@ -337,9 +344,16 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.
 	request := ai.Prompt{System: systemPrompt(cfg, op, operation), Text: trimmed}
 	var answer string
 	if onText != nil {
-		answer, err = provider.Stream(ctx, request, onText)
+		answer, err = provider.Stream(ctx, request, func(text string) {
+			silence.Reset(timeout)
+			onText(text)
+		})
 	} else {
 		answer, err = provider.Complete(ctx, request)
+	}
+	if errors.Is(context.Cause(ctx), errTimedOut) {
+		return reply{}, fmt.Errorf("%s got no reply within %ds - raise the timeout under Settings > Actions",
+			op.Label(), operation.TimeoutSeconds)
 	}
 	if err != nil {
 		return reply{}, fmt.Errorf("%s failed: %w", op.Label(), err)
