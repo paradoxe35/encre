@@ -32,8 +32,9 @@ type openRouterReasoning struct {
 
 type chatReply struct {
 	Choices []struct {
-		Message chatMessage `json:"message"`
-		Delta   chatMessage `json:"delta"`
+		Message      chatMessage `json:"message"`
+		Delta        chatMessage `json:"delta"`
+		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 	Error *replyError `json:"error"`
 }
@@ -76,6 +77,9 @@ func (chatCompletions) decode(body []byte) (string, error) {
 	if len(reply.Choices) == 0 {
 		return "", errNoReply
 	}
+	if reply.Choices[0].FinishReason == "length" {
+		return "", errLengthLimit
+	}
 	return reply.Choices[0].Message.Content, nil
 }
 
@@ -93,7 +97,11 @@ func (chatCompletions) event(data []byte) (string, bool, error) {
 	if len(reply.Choices) == 0 {
 		return "", false, nil
 	}
-	return reply.Choices[0].Delta.Content, false, nil
+	choice := reply.Choices[0]
+	if choice.FinishReason == "length" {
+		return choice.Delta.Content, false, errLengthLimit
+	}
+	return choice.Delta.Content, false, nil
 }
 
 func isOpenRouter(baseURL string) bool {

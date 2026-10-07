@@ -191,3 +191,47 @@ func TestReadEventsJoinsMultilineData(t *testing.T) {
 		t.Fatalf("got %q, %v", got, err)
 	}
 }
+
+func TestAReplyCutOffByTheLengthLimitSaysSo(t *testing.T) {
+	cases := []struct {
+		provider string
+		events   []string
+	}{
+		{config.BuiltInOpenAI, []string{
+			`{"choices":[{"delta":{"content":"Bon"}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"length"}]}`,
+			`[DONE]`,
+		}},
+		{config.BuiltInClaude, []string{
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Bon"}}`,
+			`{"type":"message_delta","delta":{"stop_reason":"max_tokens"}}`,
+			`{"type":"message_stop"}`,
+		}},
+		{config.BuiltInGemini, []string{
+			`{"candidates":[{"content":{"parts":[{"text":"Bon"}]},"finishReason":"MAX_TOKENS"}]}`,
+		}},
+	}
+
+	for _, c := range cases {
+		server := httptest.NewServer(sse(c.events...))
+		p, _ := FromSettings(c.provider, config.ProviderSettings{BaseURL: server.URL}, "k", false)
+		_, reply, err := stream(t, p)
+		server.Close()
+
+		if !errors.Is(err, errLengthLimit) || reply != "Bon" {
+			t.Errorf("%s: kept %q with %v", c.provider, reply, err)
+		}
+	}
+}
+
+// A truncated rewrite pasted over the user's text would lose the rest of it.
+func TestACompleteReplyCutOffIsNotReturned(t *testing.T) {
+	server := httptest.NewServer(reply(`{"choices":[{"message":{"content":"Bon"},"finish_reason":"length"}]}`))
+	defer server.Close()
+	p, _ := FromSettings(config.BuiltInOpenAI, config.ProviderSettings{BaseURL: server.URL}, "k", false)
+
+	text, err := complete(t, p)
+	if err == nil || !strings.Contains(err.Error(), "length limit") || text != "" {
+		t.Fatalf("got %q, %v", text, err)
+	}
+}

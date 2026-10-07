@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 )
@@ -38,7 +39,8 @@ type geminiThinking struct {
 
 type geminiReply struct {
 	Candidates []struct {
-		Content geminiContent `json:"content"`
+		Content      geminiContent `json:"content"`
+		FinishReason string        `json:"finishReason"`
 	} `json:"candidates"`
 	Error *replyError `json:"error"`
 }
@@ -72,6 +74,9 @@ func lowThinking(model string) *geminiThinking {
 
 func (generateContent) decode(body []byte) (string, error) {
 	text, err := geminiText(body)
+	if errors.Is(err, errLengthLimit) {
+		return "", err
+	}
 	if err == nil && text == "" {
 		return "", errNoReply
 	}
@@ -95,11 +100,15 @@ func geminiText(data []byte) (string, error) {
 		return "", nil
 	}
 
+	candidate := reply.Candidates[0]
 	var text strings.Builder
-	for _, part := range reply.Candidates[0].Content.Parts {
+	for _, part := range candidate.Content.Parts {
 		if !part.Thought {
 			text.WriteString(part.Text)
 		}
+	}
+	if candidate.FinishReason == "MAX_TOKENS" {
+		return text.String(), errLengthLimit
 	}
 	return text.String(), nil
 }

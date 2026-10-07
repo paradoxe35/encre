@@ -80,14 +80,11 @@ func (p *provider) Stream(ctx context.Context, prompt Prompt, onText func(string
 		var reply strings.Builder
 		err = readEvents(resp.Body, func(data []byte) (bool, error) {
 			text, done, err := p.protocol.event(data)
-			if err != nil {
-				return false, err
-			}
 			if text != "" {
 				reply.WriteString(text)
 				onText(text)
 			}
-			return done, nil
+			return done, err
 		})
 		if err != nil {
 			return reply.String(), fmt.Errorf("%s: %w", p.name, err)

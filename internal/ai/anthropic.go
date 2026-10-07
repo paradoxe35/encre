@@ -29,12 +29,20 @@ type textBlock struct {
 	Text string `json:"text"`
 }
 
-type messagesReply struct {
-	Type    string      `json:"type"`
-	Content []textBlock `json:"content"`
-	Delta   textBlock   `json:"delta"`
-	Error   *replyError `json:"error"`
+type messagesDelta struct {
+	textBlock
+	StopReason string `json:"stop_reason"`
 }
+
+type messagesReply struct {
+	Type       string        `json:"type"`
+	Content    []textBlock   `json:"content"`
+	Delta      messagesDelta `json:"delta"`
+	StopReason string        `json:"stop_reason"`
+	Error      *replyError   `json:"error"`
+}
+
+const anthropicLengthLimit = "max_tokens"
 
 func (messages) request(ctx context.Context, target endpoint, prompt Prompt, stream, _ bool) (*http.Request, error) {
 	body := messagesRequest{
@@ -63,6 +71,9 @@ func (messages) decode(body []byte) (string, error) {
 	if err := reply.Error.err(); err != nil {
 		return "", err
 	}
+	if reply.StopReason == anthropicLengthLimit {
+		return "", errLengthLimit
+	}
 
 	var text strings.Builder
 	for _, block := range reply.Content {
@@ -86,6 +97,10 @@ func (messages) event(data []byte) (string, bool, error) {
 	case "content_block_delta":
 		if reply.Delta.Type == "text_delta" {
 			return reply.Delta.Text, false, nil
+		}
+	case "message_delta":
+		if reply.Delta.StopReason == anthropicLengthLimit {
+			return "", false, errLengthLimit
 		}
 	case "message_stop":
 		return "", true, nil
