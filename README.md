@@ -137,7 +137,7 @@ It holds your settings and API keys (`config.json`), downloaded speech models (`
 
 You'll need:
 
-- Go 1.24+ with `CGO_ENABLED=1`
+- Go 1.26+ with `CGO_ENABLED=1`
 - Rust toolchain (stable)
 - CMake
 - Platform dependencies (see `rust-ffi/README.md`)
