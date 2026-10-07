@@ -184,6 +184,8 @@ type harness struct {
 	reported  chan error
 	failed    chan config.ActionKind
 	view      *fakeView
+	cfg       *config.Config
+	audio     *fakeAudio
 }
 
 func newHarness(t *testing.T, cleanUp bool) *harness {
@@ -194,6 +196,8 @@ func newHarness(t *testing.T, cleanUp bool) *harness {
 	cfg.SetSpeechSettings(speech)
 
 	h := &harness{
+		cfg:      cfg,
+		audio:    &fakeAudio{},
 		speech:   &fakeSpeech{stops: []stopResult{{text: "hello world"}}},
 		typist:   &fakeTypist{cleaned: "Hello, world.", answer: "Paris."},
 		overlay:  &fakeOverlay{},
@@ -208,6 +212,7 @@ func newHarness(t *testing.T, cleanUp bool) *harness {
 		},
 		h.view)
 	h.dictation.SetOverlay(h.overlay)
+	h.dictation.audio = h.audio
 	return h
 }
 
@@ -693,4 +698,76 @@ func TestAnAnswerCutOffIsKeptAndReported(t *testing.T) {
 		t.Fatalf("finished with %q", answer.text)
 	}
 	h.expectReport(t, h.typist.askErr)
+}
+
+type fakeAudio struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (f *fakeAudio) Lower()   { f.record("lower") }
+func (f *fakeAudio) Restore() { f.record("restore") }
+
+func (f *fakeAudio) record(call string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call)
+}
+
+func (f *fakeAudio) seen() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
+}
+
+func (h *harness) lowerAudio() {
+	speech := h.cfg.SpeechSettings()
+	speech.LowerAudio = true
+	h.cfg.SetSpeechSettings(speech)
+}
+
+func TestOtherAudioIsLoweredOnlyWhileTheMicrophoneIsOpen(t *testing.T) {
+	h := newHarness(t, false)
+	h.lowerAudio()
+
+	h.dictation.Toggle(true)
+	if seen := h.audio.seen(); !slices.Equal(seen, []string{"lower"}) {
+		t.Fatalf("while recording: %v", seen)
+	}
+	h.dictation.Toggle(false)
+	if seen := h.audio.seen(); !slices.Equal(seen, []string{"lower", "restore"}) {
+		t.Fatalf("after the release: %v", seen)
+	}
+}
+
+func TestOtherAudioIsLeftAloneByDefault(t *testing.T) {
+	h := newHarness(t, false)
+	h.take()
+
+	if slices.Contains(h.audio.seen(), "lower") {
+		t.Fatal("lowered other audio without the setting")
+	}
+}
+
+func TestOtherAudioComesBackWhenTheMicrophoneFails(t *testing.T) {
+	h := newHarness(t, false)
+	h.lowerAudio()
+	h.speech.startErr = errors.New("no microphone")
+
+	h.dictation.Toggle(true)
+	h.expectReport(t, h.speech.startErr)
+	if seen := h.audio.seen(); !slices.Equal(seen, []string{"lower", "restore"}) {
+		t.Fatalf("got %v", seen)
+	}
+}
+
+func TestClosingRestoresOtherAudio(t *testing.T) {
+	h := newHarness(t, false)
+	h.lowerAudio()
+	h.dictation.Toggle(true)
+	h.dictation.Close()
+
+	if seen := h.audio.seen(); !slices.Contains(seen, "restore") {
+		t.Fatalf("quitting mid-take left other audio low: %v", seen)
+	}
 }

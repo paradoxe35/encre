@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/ducking"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/overlay"
 	"github.com/paradoxe35/encre/internal/stt"
@@ -31,6 +32,11 @@ type assistant interface {
 	Ask(ctx context.Context, question string, onText func(string)) (string, error)
 }
 
+type otherAudio interface {
+	Lower()
+	Restore()
+}
+
 // answerView shows an answer while it is written; closing it calls stop.
 type answerView interface {
 	Open(question string, stop func())
@@ -43,6 +49,7 @@ type Dictation struct {
 	config    func() *config.Config
 	report    func(config.ActionKind, error)
 	answers   answerView
+	audio     otherAudio
 
 	mu sync.Mutex
 	// recording is the action the open take belongs to, or "" when the microphone is closed.
@@ -85,6 +92,7 @@ func newDictation(service speechService, assistant assistant, current func() *co
 		config:    current,
 		report:    report,
 		answers:   answers,
+		audio:     ducking.New(),
 		indicator: overlay.Disabled{},
 	}
 }
@@ -149,10 +157,15 @@ func (d *Dictation) start(kind config.ActionKind) {
 	d.recording = kind
 	d.mu.Unlock()
 
-	if err := d.service.StartRecording(d.config().SpeechSettings()); err != nil {
+	speech := d.config().SpeechSettings()
+	if speech.LowerAudio {
+		d.audio.Lower()
+	}
+	if err := d.service.StartRecording(speech); err != nil {
 		d.mu.Lock()
 		d.recording = ""
 		d.mu.Unlock()
+		d.audio.Restore()
 		d.fail(kind, err)
 		return
 	}
@@ -176,6 +189,7 @@ func (d *Dictation) stop(kind config.ActionKind) {
 	d.pending++
 	d.mu.Unlock()
 
+	d.audio.Restore()
 	d.overlay().Show(overlay.Transcribing)
 	ahead, done := d.order.claim()
 
@@ -267,7 +281,10 @@ func (d *Dictation) settle() {
 	}
 }
 
-func (d *Dictation) Close() { d.service.Close() }
+func (d *Dictation) Close() {
+	d.audio.Restore()
+	d.service.Close()
+}
 
 func (d *Dictation) fail(kind config.ActionKind, err error) {
 	logger.Error("Voice action failed", "action", kind, "error", err)

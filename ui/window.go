@@ -70,6 +70,7 @@ type MainWindow struct {
 	speechModelDraft    string
 	speechKeepLoaded    *widget.Check
 	speechCleanUp       *widget.Check
+	speechLowerAudio    *widget.Check
 	microphone          *MicrophonePicker
 	speechRemote        *widget.Select
 	speechRemoteModel   *widget.SelectEntry
