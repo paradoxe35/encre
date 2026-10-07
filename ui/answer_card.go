@@ -21,15 +21,27 @@ const (
 	answerInset     = 12
 	answerRadius    = 14
 	copiedFor       = 1500 * time.Millisecond
+	renderEvery     = 50 * time.Millisecond
 )
 
-// AnswerCard shows an answer where the indicator was. Unlike the indicator it takes the keyboard,
-// so Esc can close it. Every method runs on the UI thread.
+// AnswerCard shows an answer where the indicator was, as it is written. Unlike the indicator it takes
+// the keyboard, so Esc can close it. Open and Update may be called from any goroutine.
 type AnswerCard struct {
 	app     fyne.App
 	window  fyne.Window
 	visible bool
-	text    string
+
+	question string
+	text     string
+	done     bool
+	stop     func()
+
+	spot     overlay.Spot
+	placed   bool
+	size     fyne.Size
+	rendered time.Time
+	pending  bool
+	later    func(time.Duration, func())
 
 	content *widget.RichText
 	scroll  *container.Scroll
@@ -41,7 +53,12 @@ type AnswerCard struct {
 }
 
 func NewAnswerCard(app fyne.App) *AnswerCard {
-	return &AnswerCard{app: app}
+	return &AnswerCard{
+		app: app,
+		later: func(wait time.Duration, run func()) {
+			time.AfterFunc(wait, func() { fyne.Do(run) })
+		},
+	}
 }
 
 func (c *AnswerCard) SetShowHideCallbacks(onShow, onHide func()) {
@@ -49,30 +66,74 @@ func (c *AnswerCard) SetShowHideCallbacks(onShow, onHide func()) {
 	c.onHide = onHide
 }
 
-func (c *AnswerCard) Show(question, answer string) {
+// Open shows the card for a new question; stop is called if it is closed before the answer is done.
+func (c *AnswerCard) Open(question string, stop func()) {
+	fyne.Do(func() { c.open(question, stop) })
+}
+
+// Update replaces the answer written so far; done marks it complete.
+func (c *AnswerCard) Update(text string, done bool) {
+	fyne.Do(func() { c.update(text, done) })
+}
+
+func (c *AnswerCard) open(question string, stop func()) {
 	if c.window == nil {
 		c.build()
 	}
-	spot, placed := c.findSpot()
-
-	c.text = answer
-	c.content.Segments = append(questionSegments(question), widget.NewRichTextFromMarkdown(answer).Segments...)
-	c.content.Refresh()
+	c.spot, c.placed = c.findSpot()
+	c.question, c.text, c.done, c.stop = question, "", false, stop
+	c.size = fyne.Size{}
 	c.copy.SetIcon(theme.ContentCopyIcon())
-
-	size := c.fit()
-	c.window.Resize(size)
 	c.scroll.ScrollToTop()
+	c.render()
 
 	if !c.visible && c.onShow != nil {
 		c.onShow()
 	}
 	c.visible = true
-	// The first Show creates the native window, so the first call has nothing to reach yet.
-	c.float(spot, placed, size)
+	// The first Show creates the native window, which the placement in render could not reach yet.
 	c.window.Show()
-	c.float(spot, placed, size)
+	c.float()
 	c.window.RequestFocus()
+}
+
+func (c *AnswerCard) update(text string, done bool) {
+	if !c.visible {
+		return
+	}
+	c.text, c.done = text, done
+
+	wait := renderEvery - time.Since(c.rendered)
+	if done || wait <= 0 {
+		c.render()
+		return
+	}
+	if !c.pending {
+		c.pending = true
+		c.later(wait, func() {
+			c.pending = false
+			if c.visible {
+				c.render()
+			}
+		})
+	}
+}
+
+// render keeps the end of the answer in view, unless the reader has scrolled away from it.
+func (c *AnswerCard) render() {
+	following := c.scroll.Offset.Y >= c.content.Size().Height-c.scroll.Size().Height-1
+
+	c.content.Segments = append(questionSegments(c.question), widget.NewRichTextFromMarkdown(c.text).Segments...)
+	c.content.Refresh()
+	if size := c.fit(); size != c.size {
+		c.size = size
+		c.window.Resize(size)
+		c.float()
+	}
+	if following {
+		c.scroll.ScrollToBottom()
+	}
+	c.rendered = time.Now()
 }
 
 func (c *AnswerCard) Hide() {
@@ -80,6 +141,9 @@ func (c *AnswerCard) Hide() {
 		return
 	}
 	c.visible = false
+	if !c.done && c.stop != nil {
+		c.stop()
+	}
 	c.window.Hide()
 	if c.onHide != nil {
 		c.onHide()
@@ -139,14 +203,14 @@ func (c *AnswerCard) findSpot() (overlay.Spot, bool) {
 	return overlay.FindSpot()
 }
 
-func (c *AnswerCard) float(spot overlay.Spot, placed bool, size fyne.Size) {
-	if !placed {
+func (c *AnswerCard) float() {
+	if !c.placed {
 		return
 	}
 	native := c.window.(driver.NativeWindow)
 
 	scale := c.window.Canvas().Scale()
-	frame := spot.Frame(int(size.Width*scale), int(size.Height*scale))
+	frame := c.spot.Frame(int(c.size.Width*scale), int(c.size.Height*scale))
 	radius := int(answerRadius * scale)
 
 	native.RunNative(func(context any) {

@@ -93,9 +93,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 				application.mainWindow.SetPermissionState(permissions.CurrentState(), application.permissionsMissingOnLaunch)
 			})
 		},
-		func(answer revision.Answer) {
-			fyne.Do(func() { application.answers.Show(answer.Question, answer.Text) })
-		})
+		application.answers)
 
 	application.applyOverlay(cfg)
 	input.OnLevel(application.dictation.Level)

@@ -1,6 +1,8 @@
 package revision
 
 import (
+	"cmp"
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -26,12 +28,13 @@ type assistant interface {
 	CleanTranscript(text string) (string, error)
 	InsertText(text string) error
 	RecordSpeech(raw, final string)
-	Ask(question string) (string, error)
+	Ask(ctx context.Context, question string, onText func(string)) (string, error)
 }
 
-type Answer struct {
-	Question string
-	Text     string
+// answerView shows an answer while it is written; closing it calls stop.
+type answerView interface {
+	Open(question string, stop func())
+	Update(text string, done bool)
 }
 
 type Dictation struct {
@@ -39,7 +42,7 @@ type Dictation struct {
 	assistant assistant
 	config    func() *config.Config
 	report    func(config.ActionKind, error)
-	present   func(Answer)
+	answers   answerView
 
 	mu sync.Mutex
 	// recording is the action the open take belongs to, or "" when the microphone is closed.
@@ -70,18 +73,18 @@ func (s *sequence) claim() (<-chan struct{}, func()) {
 }
 
 func NewDictation(processor *Processor, current func() *config.Config,
-	report func(config.ActionKind, error), present func(Answer)) *Dictation {
-	return newDictation(stt.NewService(), processor, current, report, present)
+	report func(config.ActionKind, error), answers answerView) *Dictation {
+	return newDictation(stt.NewService(), processor, current, report, answers)
 }
 
 func newDictation(service speechService, assistant assistant, current func() *config.Config,
-	report func(config.ActionKind, error), present func(Answer)) *Dictation {
+	report func(config.ActionKind, error), answers answerView) *Dictation {
 	return &Dictation{
 		service:   service,
 		assistant: assistant,
 		config:    current,
 		report:    report,
-		present:   present,
+		answers:   answers,
 		indicator: overlay.Disabled{},
 	}
 }
@@ -178,7 +181,8 @@ func (d *Dictation) stop(kind config.ActionKind) {
 
 	go func() {
 		defer done()
-		defer d.settle()
+		settle := sync.OnceFunc(d.settle)
+		defer settle()
 
 		// Ends the capture straight away: the recorder cannot take the next
 		// press until this one is stopped.
@@ -199,7 +203,7 @@ func (d *Dictation) stop(kind config.ActionKind) {
 		}
 
 		if kind == config.ActionAsk {
-			err = d.answer(raw)
+			err = d.answer(raw, settle)
 		} else {
 			err = d.write(raw)
 		}
@@ -225,13 +229,29 @@ func (d *Dictation) write(raw string) error {
 	return nil
 }
 
-func (d *Dictation) answer(question string) error {
-	reply, err := d.assistant.Ask(question)
-	if err != nil {
-		return err
+// The indicator gives way to the answer at its first words; closing the answer cancels the request.
+func (d *Dictation) answer(question string, settle func()) error {
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+
+	question = strings.TrimSpace(question)
+	var written strings.Builder
+	reply, err := d.assistant.Ask(ctx, question, func(text string) {
+		if written.Len() == 0 {
+			settle()
+			d.answers.Open(question, stop)
+		}
+		written.WriteString(text)
+		d.answers.Update(written.String(), false)
+	})
+
+	if written.Len() > 0 {
+		d.answers.Update(cmp.Or(reply, written.String()), true)
 	}
-	d.present(Answer{Question: strings.TrimSpace(question), Text: reply})
-	return nil
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 // settle hides the indicator once nothing is recording or transcribing any more.

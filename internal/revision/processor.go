@@ -265,7 +265,7 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 		return reply{}, fmt.Errorf("nothing to work with - the selection is empty")
 	}
 
-	result, err := p.complete(cfg, kind.Operation(), mentioned, source)
+	result, err := p.complete(context.Background(), cfg, kind.Operation(), mentioned, source, nil)
 	if err != nil {
 		return reply{}, err
 	}
@@ -281,14 +281,14 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 	return result, nil
 }
 
-// The answer is shown, not pasted, so its formatting stays.
-func (p *Processor) Ask(question string) (string, error) {
+// Ask streams the answer to onText as it is written. It is shown, not pasted, so its formatting stays.
+func (p *Processor) Ask(ctx context.Context, question string, onText func(string)) (string, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return "", ErrNoSpeech
 	}
 
-	result, err := p.complete(p.currentConfig(), config.OpAsk, "", question)
+	result, err := p.complete(ctx, p.currentConfig(), config.OpAsk, "", question, onText)
 	if err != nil {
 		return "", err
 	}
@@ -309,7 +309,8 @@ func (p *Processor) Ask(question string) (string, error) {
 	return answer, nil
 }
 
-func (p *Processor) complete(cfg *config.Config, op config.Operation, mentioned, text string) (reply, error) {
+// complete streams to onText when it is given, and waits for the whole reply otherwise.
+func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.Operation, mentioned, text string, onText func(string)) (reply, error) {
 	operation := cfg.Operation(op)
 	trimmed := strings.TrimSpace(text)
 
@@ -322,7 +323,7 @@ func (p *Processor) complete(cfg *config.Config, op config.Operation, mentioned,
 		return reply{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(operation.TimeoutSeconds)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(operation.TimeoutSeconds)*time.Second)
 	defer cancel()
 
 	logger.Info("Sending text to AI provider",
@@ -330,9 +331,16 @@ func (p *Processor) complete(cfg *config.Config, op config.Operation, mentioned,
 		"provider", name,
 		"model", provider.Model(),
 		"characters", utf8.RuneCountInString(trimmed),
+		"streaming", onText != nil,
 	)
 
-	answer, err := provider.Complete(ctx, ai.Prompt{System: systemPrompt(cfg, op, operation), Text: trimmed})
+	request := ai.Prompt{System: systemPrompt(cfg, op, operation), Text: trimmed}
+	var answer string
+	if onText != nil {
+		answer, err = provider.Stream(ctx, request, onText)
+	} else {
+		answer, err = provider.Complete(ctx, request)
+	}
 	if err != nil {
 		return reply{}, fmt.Errorf("%s failed: %w", op.Label(), err)
 	}
