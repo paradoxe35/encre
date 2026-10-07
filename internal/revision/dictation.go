@@ -152,7 +152,7 @@ func (d *Dictation) start(kind config.ActionKind) {
 	d.mu.Unlock()
 
 	speech := d.config().SpeechSettings()
-	if speech.LowerAudio {
+	if speech.LowersAudio() {
 		d.audio.Lower()
 	}
 	if err := d.service.StartRecording(speech); err != nil {

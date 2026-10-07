@@ -730,15 +730,15 @@ func (f *fakeAudio) seen() []string {
 	return slices.Clone(f.calls)
 }
 
-func (h *harness) lowerAudio() {
+func (h *harness) lowerAudio(on bool) {
 	speech := h.cfg.SpeechSettings()
-	speech.LowerAudio = true
+	speech.LowerAudio = &on
 	h.cfg.SetSpeechSettings(speech)
 }
 
 func TestOtherAudioIsLoweredOnlyWhileTheMicrophoneIsOpen(t *testing.T) {
 	h := newHarness(t, false)
-	h.lowerAudio()
+	h.lowerAudio(true)
 
 	h.dictation.Toggle(true)
 	if seen := h.audio.seen(); !slices.Equal(seen, []string{"lower"}) {
@@ -750,18 +750,28 @@ func TestOtherAudioIsLoweredOnlyWhileTheMicrophoneIsOpen(t *testing.T) {
 	}
 }
 
-func TestOtherAudioIsLeftAloneByDefault(t *testing.T) {
+func TestOtherAudioIsLoweredByDefault(t *testing.T) {
 	h := newHarness(t, false)
 	h.take()
 
+	if !slices.Contains(h.audio.seen(), "lower") {
+		t.Fatal("a new install left other audio playing at full volume")
+	}
+}
+
+func TestOtherAudioIsLeftAloneOnceSwitchedOff(t *testing.T) {
+	h := newHarness(t, false)
+	h.lowerAudio(false)
+	h.take()
+
 	if slices.Contains(h.audio.seen(), "lower") {
-		t.Fatal("lowered other audio without the setting")
+		t.Fatal("lowered other audio after it was switched off")
 	}
 }
 
 func TestOtherAudioComesBackWhenTheMicrophoneFails(t *testing.T) {
 	h := newHarness(t, false)
-	h.lowerAudio()
+	h.lowerAudio(true)
 	h.speech.startErr = errors.New("no microphone")
 
 	h.dictation.Toggle(true)
@@ -773,7 +783,7 @@ func TestOtherAudioComesBackWhenTheMicrophoneFails(t *testing.T) {
 
 func TestClosingRestoresOtherAudio(t *testing.T) {
 	h := newHarness(t, false)
-	h.lowerAudio()
+	h.lowerAudio(true)
 	h.dictation.Toggle(true)
 	h.dictation.Close()
 
