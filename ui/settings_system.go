@@ -67,7 +67,7 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 // The indicator needs a window that floats without taking focus, which Wayland has no
 // way to offer; the switch stays visible but off, with the reason.
 func (w *MainWindow) createIndicatorControls() fyne.CanvasObject {
-	dictation := widget.NewCheck("Show a floating indicator while dictating", nil)
+	dictation := widget.NewCheck("Show a floating indicator while dictating or asking", nil)
 	dictation.Bind(w.dictationIndicator)
 	actions := widget.NewCheck("Show a floating indicator while revising or translating", nil)
 	actions.Bind(w.actionIndicator)

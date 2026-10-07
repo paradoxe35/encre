@@ -33,6 +33,29 @@ static void encre_overlay_no_focus(Display* display, Window window) {
     XFlush(display);
 }
 
+// The state property is read when a window maps, and a mapped one only changes on request.
+static void encre_overlay_skip_taskbar(Display* display, Window window) {
+    Atom state = XInternAtom(display, "_NET_WM_STATE", False);
+    Atom skip[2] = {
+        XInternAtom(display, "_NET_WM_STATE_SKIP_TASKBAR", False),
+        XInternAtom(display, "_NET_WM_STATE_SKIP_PAGER", False),
+    };
+    XChangeProperty(display, window, state, XA_ATOM, 32, PropModeReplace, (unsigned char*)skip, 2);
+
+    XEvent event = {0};
+    event.xclient.type = ClientMessage;
+    event.xclient.window = window;
+    event.xclient.message_type = state;
+    event.xclient.format = 32;
+    event.xclient.data.l[0] = 1;
+    event.xclient.data.l[1] = skip[0];
+    event.xclient.data.l[2] = skip[1];
+    event.xclient.data.l[3] = 1;
+    XSendEvent(display, DefaultRootWindow(display), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &event);
+    XFlush(display);
+}
+
 // The active window can vanish between two calls; Xlib's default handler would
 // then end the whole process, so errors are swallowed while we look.
 static int encre_overlay_locate(Display* display, int* x, int* y);
@@ -110,4 +133,13 @@ func noFocus(window *glfw.Window) {
 	}
 	display := (*C.Display)(unsafe.Pointer(glfw.GetX11Display()))
 	C.encre_overlay_no_focus(display, C.Window(window.GetX11Window()))
+}
+
+// Panel keeps a window that does take the keyboard out of the taskbar and the pager, as the indicator is.
+func Panel(window uintptr) {
+	if window == 0 || glfw.GetPlatform() != glfw.PlatformX11 {
+		return
+	}
+	display := (*C.Display)(unsafe.Pointer(glfw.GetX11Display()))
+	C.encre_overlay_skip_taskbar(display, C.Window(window))
 }

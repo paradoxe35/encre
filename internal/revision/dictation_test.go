@@ -66,6 +66,22 @@ type fakeTypist struct {
 	typed    []string
 	insErr   error
 	history  [][2]string
+	answer   string
+	askErr   error
+	asked    []string
+}
+
+func (f *fakeTypist) Ask(question string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, question)
+	return f.answer, f.askErr
+}
+
+func (f *fakeTypist) questions() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.asked)
 }
 
 func (f *fakeTypist) CleanTranscript(string) (string, error) {
@@ -110,8 +126,11 @@ func (f *fakeOverlay) Show(phase overlay.Phase) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	name := "listening"
-	if phase == overlay.Transcribing {
+	switch phase {
+	case overlay.Transcribing:
 		name = "transcribing"
+	case overlay.Thinking:
+		name = "thinking"
 	}
 	f.calls = append(f.calls, name)
 }
@@ -140,6 +159,8 @@ type harness struct {
 	typist    *fakeTypist
 	overlay   *fakeOverlay
 	reported  chan error
+	failed    chan config.ActionKind
+	answers   chan Answer
 }
 
 func newHarness(t *testing.T, cleanUp bool) *harness {
@@ -151,13 +172,18 @@ func newHarness(t *testing.T, cleanUp bool) *harness {
 
 	h := &harness{
 		speech:   &fakeSpeech{stops: []stopResult{{text: "hello world"}}},
-		typist:   &fakeTypist{cleaned: "Hello, world."},
+		typist:   &fakeTypist{cleaned: "Hello, world.", answer: "Paris."},
 		overlay:  &fakeOverlay{},
 		reported: make(chan error, 8),
+		failed:   make(chan config.ActionKind, 8),
+		answers:  make(chan Answer, 8),
 	}
-	h.dictation = newDictation(h.speech, h.typist, func() *config.Config { return cfg }, func(err error) {
-		h.reported <- err
-	})
+	h.dictation = newDictation(h.speech, h.typist, func() *config.Config { return cfg },
+		func(kind config.ActionKind, err error) {
+			h.failed <- kind
+			h.reported <- err
+		},
+		func(answer Answer) { h.answers <- answer })
 	h.dictation.SetOverlay(h.overlay)
 	return h
 }
@@ -463,5 +489,90 @@ func TestLevelsReachTheCurrentIndicatorAndTheOldOneIsHidden(t *testing.T) {
 	}
 	if got := replacement.levels; !slices.Equal(got, []float32{0.7}) {
 		t.Fatalf("replacement levels %v", got)
+	}
+}
+
+func (h *harness) ask() {
+	h.dictation.Ask(true)
+	h.dictation.Ask(false)
+}
+
+func (h *harness) expectAnswer(t *testing.T) Answer {
+	t.Helper()
+	select {
+	case answer := <-h.answers:
+		return answer
+	case <-time.After(time.Second):
+		t.Fatal("no answer presented")
+		return Answer{}
+	}
+}
+
+func TestAQuestionIsAnsweredNotTyped(t *testing.T) {
+	h := newHarness(t, true)
+	h.ask()
+
+	answer := h.expectAnswer(t)
+	if answer.Question != "hello world" || answer.Text != "Paris." {
+		t.Fatalf("presented %+v", answer)
+	}
+	if typed := h.typist.typedSoFar(); len(typed) != 0 {
+		t.Fatalf("typed %v, want nothing", typed)
+	}
+	if remembered := h.typist.remembered(); len(remembered) != 0 {
+		t.Fatalf("recorded as speech: %v", remembered)
+	}
+}
+
+func TestTheIndicatorThinksWhileTheModelAnswers(t *testing.T) {
+	h := newHarness(t, false)
+	h.ask()
+
+	seen := h.waitOverlay(t, "hide")
+	want := []string{"listening", "transcribing", "thinking", "hide"}
+	if !slices.Equal(seen, want) {
+		t.Fatalf("indicator went %v, want %v", seen, want)
+	}
+}
+
+func TestAFailedAnswerIsReportedAsAsk(t *testing.T) {
+	h := newHarness(t, false)
+	h.typist.askErr = errors.New("provider down")
+	h.ask()
+
+	h.expectReport(t, h.typist.askErr)
+	if kind := <-h.failed; kind != config.ActionAsk {
+		t.Fatalf("reported for %q, want %q", kind, config.ActionAsk)
+	}
+	select {
+	case answer := <-h.answers:
+		t.Fatalf("presented %+v after a failure", answer)
+	default:
+	}
+}
+
+func TestAnotherActionsReleaseDoesNotEndTheTake(t *testing.T) {
+	h := newHarness(t, false)
+	h.dictation.Ask(true)
+	h.dictation.Toggle(false)
+
+	if !h.dictation.Recording(config.ActionAsk) {
+		t.Fatal("the ask take ended on the dictate release")
+	}
+	h.dictation.Ask(false)
+	h.expectAnswer(t)
+	if questions := h.typist.questions(); len(questions) != 1 {
+		t.Fatalf("asked %v, want one question", questions)
+	}
+}
+
+func TestRecordingClearsAfterAFailedStart(t *testing.T) {
+	h := newHarness(t, false)
+	h.speech.startErr = errors.New("no microphone")
+	h.dictation.Toggle(true)
+
+	h.expectReport(t, h.speech.startErr)
+	if h.dictation.Recording(config.ActionDictate) {
+		t.Fatal("still recording after the start failed")
 	}
 }

@@ -29,6 +29,14 @@ void encre_overlay_no_focus(void* window) {
         | NSWindowCollectionBehaviorFullScreenAuxiliary];
 }
 
+void encre_overlay_panel(uintptr_t window) {
+    NSWindow* w = (__bridge NSWindow*)(void*)window;
+    [w setCollectionBehavior:[w collectionBehavior]
+        | NSWindowCollectionBehaviorCanJoinAllSpaces
+        | NSWindowCollectionBehaviorIgnoresCycle
+        | NSWindowCollectionBehaviorFullScreenAuxiliary];
+}
+
 static int focused_window_centre(int* x, int* y) {
     AXUIElementRef system = AXUIElementCreateSystemWide();
     AXUIElementRef app = NULL;

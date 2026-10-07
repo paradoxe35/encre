@@ -27,6 +27,7 @@ It also translates, and it types what I say out loud. Same deal every time: one 
 | Revise everything   | Same thing, but it selects the whole field first                      |
 | Translate selection | Translates between your two languages, choosing the direction for you |
 | Dictate             | Hold the hotkey, talk, and your words are typed where the cursor is   |
+| Ask by voice        | Hold the hotkey, ask a question, and the answer appears in a card     |
 
 Text is replaced in place, and your clipboard is put back the way you left it.
 
@@ -82,8 +83,9 @@ sudo apt install libgl1 libx11-6 libxext6 libxcb1 libxinerama1 libxtst6 libxdo3 
 | Revise everything   | `Ctrl+Alt+Space`   | `Ctrl+Alt+Space`   | `Ctrl+Option+Space` |
 | Translate selection | `Ctrl+Alt+G`       | `Ctrl+Alt+G`       | `Ctrl+Option+G`     |
 | Dictate             | `Ctrl+Shift+Space` | `Ctrl+Shift+Space` | `Ctrl+Shift+Space`  |
+| Ask by voice        | `Ctrl+Alt+A`       | `Ctrl+Alt+A`       | `Ctrl+Option+A`     |
 
-Change them in Settings > Hotkeys. Translate and dictate ship switched off - turn them on there when you want them.
+Change them in Settings > Hotkeys. Translate, dictate and ask ship switched off - turn them on there when you want them.
 
 ## Supported AI Providers
 
@@ -117,6 +119,12 @@ Transcription runs **locally by default** - audio never leaves your machine. The
 - Drop your own `.gguf` or `.bin` into `~/.encre/models` and it shows up in the list
 - Prefer a hosted service? Point Speech at OpenAI, Groq, or anything OpenAI-compatible
 - Optionally clean the transcript up with your AI provider before it's typed
+
+## Ask by Voice
+
+Hold the ask hotkey, say your question, release. The answer shows up in a small card: copy it with the button or `Ctrl+C`, and close it with `Esc` or the close button. Nothing is typed into your app.
+
+It uses the same speech model as dictation, and its prompt and provider live under Settings > Actions > Ask.
 
 ## History
 

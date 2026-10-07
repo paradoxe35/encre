@@ -1,11 +1,13 @@
 package revision
 
 import (
-	"github.com/paradoxe35/encre/internal/overlay"
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/paradoxe35/encre/internal/ai"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/overlay"
 )
 
 func mentionConfig(enabled bool) *config.Config {
@@ -241,5 +243,41 @@ func TestOpenRouterBuildsAnOpenAIStyleProviderUnderItsOwnName(t *testing.T) {
 	}
 	if provider.GetModel() != "google/gemini-2.5-flash" {
 		t.Fatalf("model %q", provider.GetModel())
+	}
+}
+
+type cannedProvider struct {
+	name, model, answer string
+}
+
+func (c cannedProvider) ReviseText(context.Context, string, string) (string, error) {
+	return c.answer, nil
+}
+func (c cannedProvider) ValidateConfig() error { return nil }
+func (c cannedProvider) GetName() string       { return c.name }
+func (c cannedProvider) GetModel() string      { return c.model }
+
+func TestTheReplyNamesTheProviderThatAnswered(t *testing.T) {
+	cfg := mentionConfig(true)
+	cfg.AIProvider.Provider = "OpenAI"
+
+	p := &Processor{config: cfg, providerFactory: ai.NewProviderFactory()}
+	p.providerFactory.Register("OpenAI", cannedProvider{"OpenAI", "gpt", "from openai"})
+	p.providerFactory.Register("claude", cannedProvider{"claude", "haiku", "from claude"})
+
+	cases := []struct {
+		text, provider, model, answer string
+	}{
+		{"fix this", "OpenAI", "gpt", "from openai"},
+		{"@claude fix this", "claude", "haiku", "from claude"},
+	}
+	for _, c := range cases {
+		got, err := p.transform(c.text, config.ActionReviseSelection)
+		if err != nil {
+			t.Fatalf("%q: %v", c.text, err)
+		}
+		if got.provider != c.provider || got.model != c.model || got.text != c.answer {
+			t.Errorf("%q answered as %+v, want %s/%s %q", c.text, got, c.provider, c.model, c.answer)
+		}
 	}
 }

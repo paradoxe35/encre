@@ -20,6 +20,9 @@ const (
 	swpNoZOrder     = 0x0004
 	swpNoActivate   = 0x0010
 	swpFrameChanged = 0x0020
+
+	swHide = 0
+	swShow = 5
 )
 
 var (
@@ -30,6 +33,8 @@ var (
 	getForegroundWindow = user32.NewProc("GetForegroundWindow")
 	getWindowRect       = user32.NewProc("GetWindowRect")
 	getCursorPos        = user32.NewProc("GetCursorPos")
+	showWindow          = user32.NewProc("ShowWindow")
+	isWindowVisible     = user32.NewProc("IsWindowVisible")
 )
 
 type winRect struct{ left, top, right, bottom int32 }
@@ -60,4 +65,24 @@ func focusPoint() (image.Point, bool) {
 		return image.Pt(int(p.x), int(p.y)), true
 	}
 	return image.Point{}, false
+}
+
+// The taskbar only rereads the style when a window is shown, so a visible one is shown again.
+func Panel(window uintptr) {
+	if window == 0 {
+		return
+	}
+	style, _, _ := getWindowLongPtrW.Call(window, gwlExStyle)
+	if style&wsExToolWindow != 0 {
+		return
+	}
+
+	visible, _, _ := isWindowVisible.Call(window)
+	if visible != 0 {
+		showWindow.Call(window, swHide)
+	}
+	setWindowLongPtrW.Call(window, gwlExStyle, (style|wsExToolWindow)&^wsExAppWindow)
+	if visible != 0 {
+		showWindow.Call(window, swShow)
+	}
 }

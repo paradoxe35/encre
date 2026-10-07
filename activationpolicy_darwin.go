@@ -25,6 +25,25 @@ void SetActivationPolicyAccessory(void) {
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     });
 }
+
+static NSRunningApplication* previousApp = nil;
+
+// Hiding our last window leaves Encre active with nothing to type into, so the app the
+// user came from gets the keyboard back.
+void RememberFrontmostApp(void) {
+    NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+    if (front == nil || [front isEqual:[NSRunningApplication currentApplication]]) {
+        return;
+    }
+    [previousApp release];
+    previousApp = [front retain];
+}
+
+void RestoreFrontmostApp(void) {
+    [previousApp activateWithOptions:0];
+    [previousApp release];
+    previousApp = nil;
+}
 */
 import "C"
 
@@ -39,3 +58,7 @@ func hideFromDock() {
 	logger.Info("Setting macOS activation policy to Accessory (hide from Dock)")
 	C.SetActivationPolicyAccessory()
 }
+
+func rememberFrontmostApp() { C.RememberFrontmostApp() }
+
+func restoreFrontmostApp() { C.RestoreFrontmostApp() }

@@ -32,6 +32,7 @@ type Application struct {
 	hotkeyManager *input.FFIHotkeyManager
 	processor     *revision.Processor
 	dictation     *revision.Dictation
+	answers       *ui.AnswerCard
 	notifications *ui.NotificationManager
 	// updater is nil in development builds.
 	updater      ui.Updater
@@ -80,14 +81,20 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	mainWindow.SetHistoryStore(processor.History())
 	application.mainWindow = mainWindow
 
+	application.answers = ui.NewAnswerCard(app)
+	application.answers.SetShowHideCallbacks(rememberFrontmostApp, restoreFrontmostApp)
+
 	application.dictation = revision.NewDictation(processor,
 		application.currentConfig,
-		func(err error) {
+		func(kind config.ActionKind, err error) {
 			fyne.Do(func() {
-				application.notifications.ShowError("Dictation failed", err.Error())
+				application.notifications.ShowError(kind.Label()+" failed", err.Error())
 				// A refused microphone is the one permission that can go missing after launch.
 				application.mainWindow.SetPermissionState(permissions.CurrentState(), application.permissionsMissingOnLaunch)
 			})
+		},
+		func(answer revision.Answer) {
+			fyne.Do(func() { application.answers.Show(answer.Question, answer.Text) })
 		})
 
 	application.applyOverlay(cfg)
@@ -144,8 +151,8 @@ func (a *Application) setupHotkeys() {
 			continue
 		}
 
-		if kind == config.ActionDictate {
-			a.registerDictation(action)
+		if kind.Listens() {
+			a.registerVoice(kind, action)
 			continue
 		}
 
@@ -154,19 +161,20 @@ func (a *Application) setupHotkeys() {
 	}
 }
 
-func (a *Application) registerDictation(action config.ActionConfig) {
-	if action.PushToTalk {
-		err := a.hotkeyManager.RegisterHoldHotkey(action.Hotkey,
-			string(config.ActionDictate), a.dictation.Toggle)
-		a.reportBindingFailure(action.Hotkey, err)
-		return
+func (a *Application) registerVoice(kind config.ActionKind, action config.ActionConfig) {
+	hold := a.dictation.Toggle
+	if kind == config.ActionAsk {
+		hold = a.dictation.Ask
 	}
 
-	recording := false
-	err := a.hotkeyManager.RegisterHotkey(action.Hotkey, string(config.ActionDictate), func() {
-		recording = !recording
-		a.dictation.Toggle(recording)
-	})
+	var err error
+	if action.PushToTalk {
+		err = a.hotkeyManager.RegisterHoldHotkey(action.Hotkey, string(kind), hold)
+	} else {
+		err = a.hotkeyManager.RegisterHotkey(action.Hotkey, string(kind), func() {
+			hold(!a.dictation.Recording(kind))
+		})
+	}
 	a.reportBindingFailure(action.Hotkey, err)
 }
 
