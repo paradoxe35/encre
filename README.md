@@ -119,6 +119,7 @@ Transcription runs **locally by default** - audio never leaves your machine. The
 - Drop your own `.gguf` or `.bin` into `~/.encre/models` and it shows up in the list
 - Prefer a hosted service? Point Speech at OpenAI, Groq, or anything OpenAI-compatible
 - Optionally clean the transcript up with your AI provider before it's typed
+- Optionally lower other audio while you talk: each app's volume on Linux and Windows, the output volume on macOS
 
 ## Ask by Voice
 
