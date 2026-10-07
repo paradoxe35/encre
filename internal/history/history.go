@@ -18,6 +18,7 @@ const (
 	KindRevise    Kind = "revise"
 	KindTranslate Kind = "translate"
 	KindSpeech    Kind = "speech"
+	KindAsk       Kind = "ask"
 )
 
 const MaxEntries = 200

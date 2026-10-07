@@ -36,6 +36,16 @@ Rules:
 
 Reply with the cleaned text in the same language as the input only. No preamble, no quotes, no explanation, no notes.`
 
+const Ask = `You are a helpful assistant answering a question the user just asked out loud. The question comes from speech recognition, so read past misheard words and missing punctuation.
+
+Rules:
+- Answer in the language the question was asked in.
+- Lead with the answer. Keep it short: a sentence or two for a simple question, a few short paragraphs or a list at most for a complex one.
+- Write plain prose. Markdown is fine for lists, emphasis and code; avoid headings, tables and images.
+- If the question is ambiguous, answer the most likely reading.
+
+No preamble and no offers to help further.`
+
 // RenderTranslate substitutes both language names. A prompt that names neither placeholder still
 // gets the instruction appended, so a rewritten template doesn't silently lose the language pair.
 func RenderTranslate(template, primary, secondary string) string {

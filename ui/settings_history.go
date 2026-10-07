@@ -21,6 +21,7 @@ var historyFilters = []struct {
 	{"Revision", history.KindRevise},
 	{"Translation", history.KindTranslate},
 	{"Speech", history.KindSpeech},
+	{"Questions", history.KindAsk},
 }
 
 // Row text is formatted once here so the list update path never re-formats.
@@ -175,11 +176,14 @@ func historyDetail(entry history.Entry) string {
 
 func showHistoryDetail(window fyne.Window, entry history.Entry) {
 	var lines []string
-	if entry.FromLang != "" {
+	switch {
+	case entry.Kind == history.KindAsk:
+		lines = append(lines, "Question:", entry.Original, "", "Answer:", entry.Result)
+	case entry.FromLang != "":
 		lines = append(lines,
 			fmt.Sprintf("From (%s):", entry.FromLang), entry.Original, "",
 			fmt.Sprintf("To (%s):", entry.ToLang), entry.Result)
-	} else {
+	default:
 		lines = append(lines, "Result:", entry.Result)
 		if entry.Original != "" && entry.Original != entry.Result {
 			lines = append(lines, "", "Original:", entry.Original)
