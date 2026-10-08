@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-gl/glfw/v3.4/glfw"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 const (
@@ -26,9 +27,14 @@ const (
 
 	dwmwaWindowCornerPreference = 33
 	dwmwcpRound                 = 2
-	dwmwaSystemBackdropType     = 38
-	dwmsbtNone                  = 1
-	dwmsbtTransientWindow       = 3
+
+	smXVirtualScreen  = 76
+	smYVirtualScreen  = 77
+	smCxVirtualScreen = 78
+	smCyVirtualScreen = 79
+
+	srcCopy    = 0x00CC0020
+	captureBlt = 0x40000000
 )
 
 var (
@@ -41,19 +47,22 @@ var (
 	getCursorPos        = user32.NewProc("GetCursorPos")
 	showWindow          = user32.NewProc("ShowWindow")
 	isWindowVisible     = user32.NewProc("IsWindowVisible")
+	getSystemMetrics    = user32.NewProc("GetSystemMetrics")
+	getDC               = user32.NewProc("GetDC")
+	releaseDC           = user32.NewProc("ReleaseDC")
 
-	dwmapi                       = windows.NewLazySystemDLL("dwmapi.dll")
-	dwmSetWindowAttribute        = dwmapi.NewProc("DwmSetWindowAttribute")
-	dwmExtendFrameIntoClientArea = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
+	gdi32                 = windows.NewLazySystemDLL("gdi32.dll")
+	createCompatibleDC    = gdi32.NewProc("CreateCompatibleDC")
+	createDIBSection      = gdi32.NewProc("CreateDIBSection")
+	selectObject          = gdi32.NewProc("SelectObject")
+	bitBlt                = gdi32.NewProc("BitBlt")
+	deleteObject          = gdi32.NewProc("DeleteObject")
+	deleteDC              = gdi32.NewProc("DeleteDC")
+	dwmSetWindowAttribute = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
 )
 
-// Windows 11 rounds window corners from build 22000, and draws acrylic behind a window from 22621.
-const (
-	roundingBuild = 22000
-	acrylicBuild  = 22621
-)
-
-type winMargins struct{ left, right, top, bottom int32 }
+// Windows 11 rounds window corners from build 22000.
+const roundingBuild = 22000
 
 func windowsBuild() uint32 { return windows.RtlGetVersion().BuildNumber }
 
@@ -96,22 +105,7 @@ func Panel(window uintptr, frame image.Rectangle, look Look) {
 
 	corner := uint32(dwmwcpRound)
 	dwmSetWindowAttribute.Call(window, dwmwaWindowCornerPreference, uintptr(unsafe.Pointer(&corner)), unsafe.Sizeof(corner))
-	if windowsBuild() >= acrylicBuild {
-		acrylic(window, look.Glass)
-	}
 	setWindowPos.Call(window, 0, uintptr(frame.Min.X), uintptr(frame.Min.Y), 0, 0, swpNoSize|swpNoZOrder|swpNoActivate)
-}
-
-// acrylic draws the blurred backdrop of transient windows behind the whole window. A borderless
-// window has no frame for it to show in, so the frame is extended over the window while it is glass.
-func acrylic(window uintptr, on bool) {
-	backdrop, margin := uint32(dwmsbtNone), int32(0)
-	if on {
-		backdrop, margin = dwmsbtTransientWindow, -1
-	}
-	margins := winMargins{margin, margin, margin, margin}
-	dwmExtendFrameIntoClientArea.Call(window, uintptr(unsafe.Pointer(&margins)))
-	dwmSetWindowAttribute.Call(window, dwmwaSystemBackdropType, uintptr(unsafe.Pointer(&backdrop)), unsafe.Sizeof(backdrop))
 }
 
 // The taskbar only rereads the style when a window is shown, so a visible one is shown again.
@@ -131,12 +125,75 @@ func keepOffTaskbar(window uintptr) {
 	}
 }
 
-// GlassBackdrop is acrylic from Windows 11 22H2, and the desktop as it is before.
+// GlassBackdrop is the screen frosted by us: the acrylic Windows draws behind a window falls back to
+// a flat colour whenever the window loses the focus, and an OpenGL window is not reliably see-through.
+// It is opaque when the user turned transparency effects off.
 func GlassBackdrop() Backdrop {
-	if windowsBuild() >= acrylicBuild {
-		return BackdropBlurred
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
+	if err == nil {
+		defer key.Close()
+		if on, _, err := key.GetIntegerValue("EnableTransparency"); err == nil && on == 0 {
+			return BackdropNone
+		}
 	}
-	return BackdropSharp
+	return BackdropFrosted
+}
+
+type bitmapInfoHeader struct {
+	size                         uint32
+	width, height                int32
+	planes, bitCount             uint16
+	compression, sizeImage       uint32
+	xPelsPerMeter, yPelsPerMeter int32
+	colorsUsed, colorsImportant  uint32
+}
+
+// capture copies the screen inside area, clipped to the desktop, through GDI.
+func capture(area image.Rectangle) *image.RGBA {
+	metric := func(index uintptr) int {
+		v, _, _ := getSystemMetrics.Call(index)
+		return int(int32(v))
+	}
+	x, y := metric(smXVirtualScreen), metric(smYVirtualScreen)
+	desktop := image.Rect(x, y, x+metric(smCxVirtualScreen), y+metric(smCyVirtualScreen))
+	area = area.Intersect(desktop)
+	if area.Empty() {
+		return nil
+	}
+
+	screen, _, _ := getDC.Call(0)
+	if screen == 0 {
+		return nil
+	}
+	defer releaseDC.Call(0, screen)
+	memory, _, _ := createCompatibleDC.Call(screen)
+	if memory == 0 {
+		return nil
+	}
+	defer deleteDC.Call(memory)
+
+	header := bitmapInfoHeader{width: int32(area.Dx()), height: -int32(area.Dy()), planes: 1, bitCount: 32}
+	header.size = uint32(unsafe.Sizeof(header))
+	var bits unsafe.Pointer
+	bitmap, _, _ := createDIBSection.Call(memory, uintptr(unsafe.Pointer(&header)), 0, uintptr(unsafe.Pointer(&bits)), 0, 0)
+	if bitmap == 0 || bits == nil {
+		return nil
+	}
+	defer deleteObject.Call(bitmap)
+	previous, _, _ := selectObject.Call(memory, bitmap)
+	defer selectObject.Call(memory, previous)
+
+	ok, _, _ := bitBlt.Call(memory, 0, 0, uintptr(area.Dx()), uintptr(area.Dy()), screen,
+		uintptr(area.Min.X), uintptr(area.Min.Y), srcCopy|captureBlt)
+	if ok == 0 {
+		return nil
+	}
+	shot := image.NewRGBA(area)
+	bgra := unsafe.Slice((*byte)(bits), len(shot.Pix))
+	for i := 0; i < len(shot.Pix); i += 4 {
+		shot.Pix[i], shot.Pix[i+1], shot.Pix[i+2], shot.Pix[i+3] = bgra[i+2], bgra[i+1], bgra[i], 0xff
+	}
+	return shot
 }
 
 // Corner is the radius Windows gives a panel's corners: its own small one on Windows 11, none before.

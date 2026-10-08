@@ -19,4 +19,6 @@ func SetOpacity(uintptr, float64) {}
 
 func GlassBackdrop() Backdrop { return BackdropNone }
 
+func capture(image.Rectangle) *image.RGBA { return nil }
+
 func Corner(float32) float32 { return 0 }

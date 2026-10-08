@@ -41,4 +41,7 @@ const (
 	BackdropNone Backdrop = iota
 	BackdropSharp
 	BackdropBlurred
+	// BackdropFrosted is a desktop that cannot blur behind a window, but whose screen can be read:
+	// the panel stays opaque and draws the screen behind it blurred, from Frosted.
+	BackdropFrosted
 )

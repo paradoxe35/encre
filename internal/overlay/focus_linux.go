@@ -9,6 +9,7 @@ package overlay
 #include <X11/Xatom.h>
 #include <X11/extensions/shape.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // The window manager, not GLFW, decides who gets focus when a window appears. A
 // window that declares the "no input" model and calls itself a notification is
@@ -178,12 +179,70 @@ static int encre_overlay_locate(Display* display, int* x, int* y) {
     }
     return 0;
 }
+// Copies the screen inside the rectangle as RGBA, after clipping it to the root window, which
+// XGetImage requires. The clipped rectangle is written back; 0 if nothing could be read.
+static int encre_overlay_capture(Display* display, int* x, int* y, int* width, int* height, unsigned char** out) {
+    Window root = DefaultRootWindow(display);
+    int left = *x < 0 ? 0 : *x, top = *y < 0 ? 0 : *y;
+    int right = *x + *width, bottom = *y + *height;
+    int screenWidth = DisplayWidth(display, DefaultScreen(display));
+    int screenHeight = DisplayHeight(display, DefaultScreen(display));
+    if (right > screenWidth) right = screenWidth;
+    if (bottom > screenHeight) bottom = screenHeight;
+    if (right <= left || bottom <= top) {
+        return 0;
+    }
+
+    XSync(display, False);
+    XErrorHandler previous = XSetErrorHandler(encre_overlay_ignore_error);
+    XImage* image = XGetImage(display, root, left, top, right - left, bottom - top, AllPlanes, ZPixmap);
+    XSync(display, False);
+    XSetErrorHandler(previous);
+    if (image == NULL) {
+        return 0;
+    }
+    if (image->bits_per_pixel != 32) {
+        XDestroyImage(image);
+        return 0;
+    }
+
+    int shifts[3];
+    unsigned long masks[3] = {image->red_mask, image->green_mask, image->blue_mask};
+    for (int c = 0; c < 3; c++) {
+        shifts[c] = 0;
+        while (masks[c] != 0 && !((masks[c] >> shifts[c]) & 1)) {
+            shifts[c]++;
+        }
+    }
+    int w = right - left, h = bottom - top;
+    unsigned char* pixels = malloc((size_t)w * h * 4);
+    if (pixels == NULL) {
+        XDestroyImage(image);
+        return 0;
+    }
+    for (int row = 0; row < h; row++) {
+        unsigned int* line = (unsigned int*)(image->data + row * image->bytes_per_line);
+        for (int col = 0; col < w; col++) {
+            unsigned long p = line[col];
+            unsigned char* o = pixels + ((size_t)row * w + col) * 4;
+            for (int c = 0; c < 3; c++) {
+                o[c] = (p & masks[c]) >> shifts[c];
+            }
+            o[3] = 0xff;
+        }
+    }
+    XDestroyImage(image);
+    *x = left, *y = top, *width = w, *height = h;
+    *out = pixels;
+    return 1;
+}
 */
 import "C"
 
 import (
 	"image"
 	"math"
+	"os"
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.4/glfw"
@@ -220,7 +279,8 @@ func Panel(window uintptr, frame image.Rectangle, look Look) {
 	handle := C.Window(window)
 	C.encre_overlay_panel_state(display, handle)
 	C.XMoveWindow(display, handle, C.int(frame.Min.X), C.int(frame.Min.Y))
-	if look.Glass && C.encre_overlay_compositing(display) != 0 {
+	// A blur behind the window would show past smooth corners, so only plain glass goes unshaped.
+	if look.Glass && C.encre_overlay_compositing(display) != 0 && C.encre_overlay_blurs(display) == 0 {
 		C.encre_overlay_unshape(display, handle)
 	} else {
 		C.encre_overlay_round(display, handle, C.int(frame.Dx()), C.int(frame.Dy()), C.int(look.Radius))
@@ -232,19 +292,39 @@ func Panel(window uintptr, frame image.Rectangle, look Look) {
 // Corner is the radius a panel's corners are cut to, which is the one asked for.
 func Corner(radius float32) float32 { return radius }
 
-// GlassBackdrop is what the desktop shows through a glass panel now.
+// GlassBackdrop is KWin's blur where it offers one, and otherwise the screen frosted by us. Under
+// XWayland the screen of other apps cannot be read, so glass there is only see-through.
 func GlassBackdrop() Backdrop {
 	if glfw.GetPlatform() != glfw.PlatformX11 {
 		return BackdropNone
 	}
 	display := (*C.Display)(unsafe.Pointer(glfw.GetX11Display()))
+	compositing := C.encre_overlay_compositing(display) != 0
 	switch {
-	case C.encre_overlay_compositing(display) == 0:
-		return BackdropNone
-	case C.encre_overlay_blurs(display) != 0:
+	case compositing && C.encre_overlay_blurs(display) != 0:
 		return BackdropBlurred
+	case os.Getenv("WAYLAND_DISPLAY") == "":
+		return BackdropFrosted
+	case compositing:
+		return BackdropSharp
 	}
-	return BackdropSharp
+	return BackdropNone
+}
+
+func capture(area image.Rectangle) *image.RGBA {
+	if glfw.GetPlatform() != glfw.PlatformX11 {
+		return nil
+	}
+	display := (*C.Display)(unsafe.Pointer(glfw.GetX11Display()))
+	x, y, width, height := C.int(area.Min.X), C.int(area.Min.Y), C.int(area.Dx()), C.int(area.Dy())
+	var pixels *C.uchar
+	if C.encre_overlay_capture(display, &x, &y, &width, &height, &pixels) == 0 {
+		return nil
+	}
+	defer C.free(unsafe.Pointer(pixels))
+	shot := image.NewRGBA(image.Rect(int(x), int(y), int(x+width), int(y+height)))
+	copy(shot.Pix, unsafe.Slice((*byte)(unsafe.Pointer(pixels)), len(shot.Pix)))
+	return shot
 }
 
 // SetOpacity fades the whole window, where a compositor runs; 1 is opaque.

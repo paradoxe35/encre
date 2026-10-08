@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"image"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver"
 	"fyne.io/fyne/v2/driver/desktop"
@@ -44,6 +46,15 @@ type AnswerCard struct {
 	// restyle defers a change of style until the card is closed, since it needs a new window.
 	restyle bool
 	look    *container.ThemeOverride
+	// backdrop is what shows behind a glass card, found when its window is made.
+	backdrop overlay.Backdrop
+	fill     *themedFill
+	// frosted is the screen behind a glass card the desktop cannot blur, captured on opening; behind
+	// is where on the screen it was taken, in screen pixels.
+	frosted *canvas.Image
+	behind  image.Rectangle
+	// mapped is whether the native window is on screen, where a capture would catch it.
+	mapped  bool
 	opacity float64
 	fading  *fyne.Animation
 	fade    func(from, to float64, apply func(float64), done func()) *fyne.Animation
@@ -176,6 +187,9 @@ func (c *AnswerCard) show() {
 		c.onShow()
 	}
 	c.visible = true
+	if appearing && c.frosted != nil && !c.mapped {
+		c.frost()
+	}
 	// The first Show creates the native window, which the placement in render could not reach yet.
 	c.showWindow()
 	if appearing {
@@ -189,12 +203,38 @@ func (c *AnswerCard) show() {
 }
 
 func (c *AnswerCard) showWindow() {
-	if !c.created && designFor(c.style).glass && c.native() {
+	if !c.created && c.seeThrough() {
 		overlay.Transparent(c.window.Show)
 	} else {
 		c.window.Show()
 	}
-	c.created = true
+	c.created, c.mapped = true, true
+}
+
+// seeThrough is glass the desktop composes, rather than glass drawn over a frosted capture.
+func (c *AnswerCard) seeThrough() bool {
+	return designFor(c.style).glass && (c.backdrop == overlay.BackdropBlurred || c.backdrop == overlay.BackdropSharp)
+}
+
+// frost captures the screen the card may cover at its largest, before the card covers it. The
+// window may not know its screen's scale before it first shows, so the first capture allows for 2.
+func (c *AnswerCard) frost() {
+	c.fill.fill = colorNameCard
+	c.frosted.Hide()
+	if c.placed {
+		scale := c.window.Canvas().Scale()
+		if !c.created {
+			scale = max(scale, 2)
+		}
+		area := c.spot.Frame(int(maxAnswerWidth*scale), int(answerMaxHeight*scale))
+		if shot, behind, ok := overlay.Frosted(area); ok {
+			c.frosted.Image, c.behind = shot, behind
+			c.fill.fill = colorNameGlass
+			c.frosted.Show()
+			c.frosted.Refresh()
+		}
+	}
+	c.fill.Refresh()
 }
 
 func (c *AnswerCard) update(text string, done bool) {
@@ -294,6 +334,7 @@ func (c *AnswerCard) Hide() {
 			return
 		}
 		c.window.Hide()
+		c.mapped = false
 		if c.restyle {
 			c.discard()
 		}
@@ -347,7 +388,8 @@ func (c *AnswerCard) discard() {
 		}
 	}
 	c.window.Close()
-	c.window, c.created, c.restyle = nil, false, false
+	c.window, c.created, c.restyle, c.mapped = nil, false, false, false
+	c.frosted, c.fill = nil, nil
 }
 
 func (c *AnswerCard) Visible() bool { return c.visible }
@@ -443,19 +485,34 @@ func (c *AnswerCard) readingTheme() fyne.Theme {
 	return &scaledText{Theme: c.cardTheme(), scale: c.textScale}
 }
 
-// surface is the design's glow under its fill, and the edge over both. Only glass is drawn rounded:
-// any other card has its corners cut from the window, so its edge follows the cut the system makes.
+// surface is the design's glow, or the frosted screen, under its fill, and the edge over all. Only
+// see-through glass is drawn rounded: any other card has its corners cut from the window, so its
+// edge follows the cut the system makes.
 func (c *AnswerCard) surface() fyne.CanvasObject {
 	design := designFor(c.style)
+	c.backdrop, c.frosted = overlay.BackdropNone, nil
+	if design.glass && c.native() {
+		c.backdrop = overlay.GlassBackdrop()
+	}
+
 	var layers []fyne.CanvasObject
 	if design.glow != nil {
 		layers = design.glow()
 	}
-	fill, radius, edge := colorNameCard, float32(0), c.corner()
-	if design.glass {
-		fill, radius, edge = c.glassFill(), answerRadius, answerRadius
+	fill, radius := colorNameCard, float32(0)
+	switch {
+	case !design.glass:
+	case c.backdrop == overlay.BackdropBlurred:
+		fill, radius = colorNameGlass, c.corner()
+	case c.backdrop == overlay.BackdropSharp:
+		fill, radius = colorNameFrost, c.corner()
+	case c.backdrop == overlay.BackdropFrosted:
+		c.frosted = &canvas.Image{FillMode: canvas.ImageFillStretch, ScaleMode: canvas.ImageScaleSmooth}
+		c.frosted.Hide()
+		layers = append(layers, container.NewWithoutLayout(c.frosted))
 	}
-	layers = append(layers, newThemedFill(fill, "", radius), newThemedFill("", colorNameCardEdge, edge))
+	c.fill = newThemedFill(fill, "", radius)
+	layers = append(layers, c.fill, newThemedFill("", colorNameCardEdge, c.corner()))
 	return container.NewStack(layers...)
 }
 
@@ -464,20 +521,6 @@ func (c *AnswerCard) corner() float32 {
 		return answerRadius
 	}
 	return overlay.Corner(answerRadius)
-}
-
-// glassFill is see-through only as far as the text stays readable over what is behind it.
-func (c *AnswerCard) glassFill() fyne.ThemeColorName {
-	if !c.native() {
-		return colorNameCard
-	}
-	switch overlay.GlassBackdrop() {
-	case overlay.BackdropBlurred:
-		return colorNameGlass
-	case overlay.BackdropSharp:
-		return colorNameFrost
-	}
-	return colorNameCard
 }
 
 // resizeTo glides the card to a new size while it shows, and sets it at once while it does not.
@@ -573,8 +616,14 @@ func (c *AnswerCard) float() {
 	}
 	scale := c.window.Canvas().Scale()
 	frame := c.spot.Frame(int(c.size.Width*scale), int(c.size.Height*scale))
-	look := overlay.Look{Radius: int(answerRadius * scale), Glass: designFor(c.style).glass}
+	look := overlay.Look{Radius: int(answerRadius * scale), Glass: c.seeThrough()}
 	c.onNative(func(handle uintptr) { overlay.Panel(handle, frame, look) })
+
+	// The frosted screen stays where it was taken while the card grows and shrinks over it.
+	if c.frosted != nil && c.frosted.Visible() {
+		c.frosted.Move(fyne.NewPos(float32(c.behind.Min.X-frame.Min.X)/scale, float32(c.behind.Min.Y-frame.Min.Y)/scale))
+		c.frosted.Resize(fyne.NewSize(float32(c.behind.Dx())/scale, float32(c.behind.Dy())/scale))
+	}
 }
 
 func mutedStyle() widget.RichTextStyle {

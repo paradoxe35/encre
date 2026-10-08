@@ -53,6 +53,9 @@ func GlassBackdrop() Backdrop {
 	return Backdrop(C.encre_overlay_backdrop())
 }
 
+// The blur macOS draws makes reading the screen, and the permission it needs, unnecessary.
+func capture(image.Rectangle) *image.RGBA { return nil }
+
 // SetOpacity fades the whole window; 1 is opaque.
 func SetOpacity(window uintptr, opacity float64) {
 	if window == 0 {
