@@ -257,3 +257,11 @@ func TestAskListensAndUsesItsOwnPrompt(t *testing.T) {
 		t.Error("ask should default to the ask prompt")
 	}
 }
+
+func TestMemoryCountsTheQuestionAndStaysInRange(t *testing.T) {
+	for memory, want := range map[int]int{0: 0, 1: 0, 2: 1, 100: 99, 500: 99, -3: 0} {
+		if got := (OperationConfig{Memory: memory}).Remembered(); got != want {
+			t.Errorf("memory %d remembers %d earlier questions, want %d", memory, got, want)
+		}
+	}
+}

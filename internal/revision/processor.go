@@ -268,7 +268,7 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 		return reply{}, fmt.Errorf("nothing to work with - the selection is empty")
 	}
 
-	result, err := p.complete(context.Background(), cfg, kind.Operation(), mentioned, source, nil)
+	result, err := p.complete(context.Background(), cfg, kind.Operation(), mentioned, source, nil, nil)
 	if err != nil {
 		return reply{}, err
 	}
@@ -291,7 +291,8 @@ func (p *Processor) Ask(ctx context.Context, question string, onText func(string
 		return "", ErrNoSpeech
 	}
 
-	result, err := p.complete(ctx, p.currentConfig(), config.OpAsk, "", question, onText)
+	cfg := p.currentConfig()
+	result, err := p.complete(ctx, cfg, config.OpAsk, "", question, p.remembered(cfg), onText)
 	if err != nil {
 		return "", err
 	}
@@ -312,8 +313,9 @@ func (p *Processor) Ask(ctx context.Context, question string, onText func(string
 	return answer, nil
 }
 
-// complete streams to onText when it is given, and waits for the whole reply otherwise.
-func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.Operation, mentioned, text string, onText func(string)) (reply, error) {
+// complete streams to onText when it is given, and waits for the whole reply otherwise. The past turns
+// go before the text, as a conversation.
+func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.Operation, mentioned, text string, past []ai.Turn, onText func(string)) (reply, error) {
 	operation := cfg.Operation(op)
 	trimmed := strings.TrimSpace(text)
 
@@ -338,10 +340,11 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.
 		"provider", name,
 		"model", provider.Model(),
 		"characters", utf8.RuneCountInString(trimmed),
+		"remembered", len(past),
 		"streaming", onText != nil,
 	)
 
-	request := ai.Prompt{System: systemPrompt(cfg, op, operation), Text: trimmed}
+	request := ai.Prompt{System: systemPrompt(cfg, op, operation), History: past, Text: trimmed}
 	var answer string
 	if onText != nil {
 		answer, err = provider.Stream(ctx, request, func(text string) {

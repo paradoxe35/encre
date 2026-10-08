@@ -110,10 +110,16 @@ func (w *MainWindow) applyActionSettings() error {
 			return fmt.Errorf("%s: character limit must be between 1 and 100000", op.Label())
 		}
 
+		memory, err := editor.rememberedMessages()
+		if err != nil {
+			return fmt.Errorf("%s: remembered messages %w", op.Label(), err)
+		}
+
 		w.config.SetOperation(op, config.OperationConfig{
 			SystemPrompt:   editor.prompt.Text,
 			CharacterLimit: limit,
 			TimeoutSeconds: int(editor.timeout.Value),
+			Memory:         memory,
 			ProviderID:     providerID(editor.provider.Selected),
 		})
 	}

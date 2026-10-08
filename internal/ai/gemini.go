@@ -48,7 +48,7 @@ type geminiReply struct {
 func (generateContent) request(ctx context.Context, target endpoint, prompt Prompt, stream, lowReasoning bool) (*http.Request, error) {
 	body := geminiRequest{
 		SystemInstruction: &geminiContent{Parts: []geminiPart{{Text: prompt.System}}},
-		Contents:          []geminiContent{{Role: "user", Parts: []geminiPart{{Text: prompt.Text}}}},
+		Contents:          geminiContents(prompt.conversation("model")),
 		GenerationConfig:  geminiConfig{Temperature: target.temperature},
 	}
 	if lowReasoning {
@@ -61,6 +61,14 @@ func (generateContent) request(ctx context.Context, target endpoint, prompt Prom
 	}
 	url := target.baseURL + "/v1beta/models/" + target.model + method
 	return newJSONRequest(ctx, url, body, map[string]string{"x-goog-api-key": target.apiKey})
+}
+
+func geminiContents(messages []chatMessage) []geminiContent {
+	contents := make([]geminiContent, len(messages))
+	for i, message := range messages {
+		contents[i] = geminiContent{Role: message.Role, Parts: []geminiPart{{Text: message.Content}}}
+	}
+	return contents
 }
 
 // Gemini 2 takes a thinking budget and later models a level; each refuses the other's field.

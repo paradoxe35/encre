@@ -6,10 +6,28 @@ import (
 	"sync"
 )
 
-// Prompt is one request: the instructions, and the text they apply to.
+// Prompt is one request: the instructions, the earlier turns of the conversation, and the text.
 type Prompt struct {
-	System string
-	Text   string
+	System  string
+	History []Turn
+	Text    string
+}
+
+type Turn struct {
+	Question string
+	Answer   string
+}
+
+// conversation is the history then the text, with the replies under the role the protocol gives them.
+func (p Prompt) conversation(assistant string) []chatMessage {
+	messages := make([]chatMessage, 0, 2*len(p.History)+1)
+	for _, turn := range p.History {
+		messages = append(messages,
+			chatMessage{Role: "user", Content: turn.Question},
+			chatMessage{Role: assistant, Content: turn.Answer},
+		)
+	}
+	return append(messages, chatMessage{Role: "user", Content: p.Text})
 }
 
 type Provider interface {

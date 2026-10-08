@@ -139,3 +139,35 @@ func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+func TestSavingAsksMemoryKeepsTheNumberAndRefusesOneOutOfRange(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	utils.EnsureAppHomeDir()
+
+	cfg := config.Default()
+	w := &MainWindow{config: cfg}
+	editor := &operationEditor{
+		prompt:   widget.NewMultiLineEntry(),
+		limit:    widget.NewEntry(),
+		timeout:  widget.NewSlider(5, 300),
+		provider: widget.NewSelect(w.providerOptions(), nil),
+		memory:   widget.NewEntry(),
+	}
+	editor.limit.SetText("1000")
+	editor.timeout.SetValue(30)
+	editor.provider.SetSelected(providerDefaultOption)
+	w.operationEditors = map[config.Operation]*operationEditor{config.OpAsk: editor}
+
+	editor.memory.SetText("5")
+	if err := w.applyActionSettings(); err != nil {
+		t.Fatalf("saving 5 remembered messages: %v", err)
+	}
+	if got := cfg.Operation(config.OpAsk).Remembered(); got != 4 {
+		t.Fatalf("5 remembered messages send %d earlier questions, want 4", got)
+	}
+
+	editor.memory.SetText("101")
+	if err := w.applyActionSettings(); err == nil {
+		t.Fatal("101 remembered messages saved, past the maximum of 100")
+	}
+}

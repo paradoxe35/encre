@@ -130,7 +130,9 @@ Ask the AI without leaving what you're doing. The answer streams into a small ca
 - **By voice**: hold the ask hotkey, say your question, release. It uses the same speech model as dictation.
 - **By typing**: press the type hotkey and the card opens with the keyboard in its input. `Enter` sends, `Shift+Enter` adds a line.
 
-A typed question keeps the input open for the next one; on a spoken answer, press the type hotkey to follow up. Copy an answer with the button, and close the card with `Esc`, from whichever window you are in. The prompt, provider, timeout and answer text size live under Settings > Actions > Ask; the timeout counts silence, so a long answer is never cut off while it is still being written.
+A typed question keeps the input open for the next one; on a spoken answer, press the type hotkey to follow up. Copy an answer with the button, and close the card with `Esc`, from whichever window you are in. The prompt, provider, timeout, card style and answer text size live under Settings > Actions > Ask; the timeout counts silence, so a long answer is never cut off while it is still being written.
+
+Ask forgets by default. Raise **Remembered messages** to send earlier questions and their answers along with a new one, so it can follow up: 2 adds the previous exchange, up to 100. The oldest are left out once they would pass about 24,000 characters, and Clear history in the History tab makes it forget.
 
 ## History
 

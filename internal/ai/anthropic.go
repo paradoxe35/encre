@@ -49,7 +49,7 @@ func (messages) request(ctx context.Context, target endpoint, prompt Prompt, str
 		Model:       target.model,
 		MaxTokens:   anthropicMaxTokens,
 		System:      prompt.System,
-		Messages:    []chatMessage{{Role: "user", Content: prompt.Text}},
+		Messages:    prompt.conversation("assistant"),
 		Temperature: target.temperature,
 		Stream:      stream,
 	}

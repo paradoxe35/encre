@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +20,8 @@ type operationEditor struct {
 	limit    *widget.Entry
 	timeout  *widget.Slider
 	provider *widget.Select
+	// memory is Ask's alone; nil for the other operations.
+	memory *widget.Entry
 }
 
 func (w *MainWindow) createActionsSection() fyne.CanvasObject {
@@ -73,6 +76,12 @@ func (w *MainWindow) newOperationEditor(op config.Operation) *operationEditor {
 	editor.timeout.SetValue(float64(operation.TimeoutSeconds))
 
 	editor.provider.SetSelected(providerLabel(operation.ProviderID))
+
+	if op == config.OpAsk {
+		editor.memory = w.dirtyEntry()
+		editor.memory.SetText(strconv.Itoa(operation.Remembered() + 1))
+		editor.memory.Validator = validateMemory
+	}
 	return editor
 }
 
@@ -90,6 +99,11 @@ func (e *operationEditor) content(w *MainWindow, op config.Operation) fyne.Canva
 		widget.NewFormItem("Timeout", container.NewBorder(nil, nil, nil, timeoutValue, e.timeout)),
 	)
 	if op == config.OpAsk {
+		form.AppendItem(&widget.FormItem{
+			Text:     "Remembered messages",
+			Widget:   e.memory,
+			HintText: "1 sends only the question; 2 adds the previous exchange",
+		})
 		form.Append("Card style", w.answerCardStyleSelect())
 		form.Append("Answer text size", w.answerTextSizeSelect())
 	}
@@ -110,6 +124,17 @@ func (e *operationEditor) content(w *MainWindow, op config.Operation) fyne.Canva
 	)
 
 	return container.NewPadded(container.NewVBox(rows...))
+}
+
+// rememberedMessages is the memory field's number, or 0 where there is none or it is blank.
+func (e *operationEditor) rememberedMessages() (int, error) {
+	if e.memory == nil || e.memory.Text == "" {
+		return 0, nil
+	}
+	if err := validateMemory(e.memory.Text); err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(e.memory.Text)
 }
 
 func syncTimeoutLabel(label *widget.Label, value float64) {
@@ -147,17 +172,21 @@ func providerID(label string) string {
 	return label
 }
 
-func validateCharacterLimit(value string) error {
+// The upper bound catches typos; too high a floor would make an existing smaller limit unsavable.
+func validateCharacterLimit(value string) error { return validateNumber(value, 1, 100000) }
+
+func validateMemory(value string) error { return validateNumber(value, 1, config.MaxMemory) }
+
+func validateNumber(value string, low, high int) error {
 	if value == "" {
 		return nil
 	}
-	limit, err := strconv.Atoi(value)
+	number, err := strconv.Atoi(value)
 	if err != nil {
 		return errors.New("must be a number")
 	}
-	// Upper bound catches typos; too high a floor would make an existing smaller limit unsavable.
-	if limit < 1 || limit > 100000 {
-		return errors.New("must be between 1 and 100000")
+	if number < low || number > high {
+		return fmt.Errorf("must be between %d and %d", low, high)
 	}
 	return nil
 }

@@ -103,9 +103,18 @@ type OperationConfig struct {
 	SystemPrompt   string `json:"system_prompt,omitempty"`
 	CharacterLimit int    `json:"character_limit,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+	// Memory is how many messages Ask sends, the question included; unset is 1, which remembers nothing.
+	Memory int `json:"memory,omitempty"`
 
 	// Empty means the default provider, so changing the default carries every operation with it.
 	ProviderID string `json:"provider_id,omitempty"`
+}
+
+const MaxMemory = 100
+
+// Remembered is how many earlier questions and their answers go with a new one.
+func (o OperationConfig) Remembered() int {
+	return min(max(o.Memory, 1), MaxMemory) - 1
 }
 
 // A blank prompt means the built-in, so Reset is clearing the field.
