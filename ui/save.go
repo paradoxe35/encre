@@ -27,6 +27,7 @@ func (w *MainWindow) saveSettings() {
 		SecondaryLanguage: w.secondaryLanguage.Code(),
 	})
 	w.config.SetProviderMentionsEnabled(w.mentionsCheck.Checked)
+	w.config.SetAnswerCardSettings(w.answerCardSettings())
 	w.applySpeechSettings()
 
 	startMinimized, _ := w.startMinimizedBinding.Get()

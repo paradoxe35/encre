@@ -8,6 +8,7 @@ package overlay
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/extensions/shape.h>
+#include <stdio.h>
 
 // The window manager, not GLFW, decides who gets focus when a window appears. A
 // window that declares the "no input" model and calls itself a notification is
@@ -80,6 +81,54 @@ static void encre_overlay_round(Display* display, Window window, int width, int 
     XFreePixmap(display, mask);
 }
 
+// A compositor is running when one owns this screen's selection; without one, transparency shows black.
+static int encre_overlay_compositing(Display* display) {
+    char name[32];
+    snprintf(name, sizeof(name), "_NET_WM_CM_S%d", DefaultScreen(display));
+    return XGetSelectionOwner(display, XInternAtom(display, name, False)) != None;
+}
+
+// KWin blurs behind a window that asks; an empty region means the whole window.
+static void encre_overlay_blur(Display* display, Window window, int on) {
+    Atom blur = XInternAtom(display, "_KDE_NET_WM_BLUR_BEHIND_REGION", False);
+    if (on) {
+        XChangeProperty(display, window, blur, XA_CARDINAL, 32, PropModeReplace, NULL, 0);
+    } else {
+        XDeleteProperty(display, window, blur);
+    }
+}
+
+// KWin's blur effect, while on, announces itself as a property of the root window.
+static int encre_overlay_blurs(Display* display) {
+    Atom blur = XInternAtom(display, "_KDE_NET_WM_BLUR_BEHIND_REGION", True);
+    if (blur == None) {
+        return 0;
+    }
+    int count = 0, found = 0;
+    Atom* properties = XListProperties(display, DefaultRootWindow(display), &count);
+    for (int i = 0; i < count; i++) {
+        found |= properties[i] == blur;
+    }
+    if (properties != NULL) {
+        XFree(properties);
+    }
+    return found;
+}
+
+static void encre_overlay_unshape(Display* display, Window window) {
+    XShapeCombineMask(display, window, ShapeBounding, 0, 0, None, ShapeSet);
+}
+
+static void encre_overlay_opacity(Display* display, Window window, unsigned long opacity) {
+    Atom property = XInternAtom(display, "_NET_WM_WINDOW_OPACITY", False);
+    if (opacity == 0xffffffffUL) {
+        XDeleteProperty(display, window, property);
+    } else {
+        XChangeProperty(display, window, property, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&opacity, 1);
+    }
+    XFlush(display);
+}
+
 // The active window can vanish between two calls; Xlib's default handler would
 // then end the whole process, so errors are swallowed while we look.
 static int encre_overlay_locate(Display* display, int* x, int* y);
@@ -134,6 +183,7 @@ import "C"
 
 import (
 	"image"
+	"math"
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.4/glfw"
@@ -160,13 +210,55 @@ func noFocus(window *glfw.Window) {
 }
 
 // Panel makes a focusable window float like the indicator, rounded and placed in the frame.
-func Panel(window uintptr, frame image.Rectangle, radius int) {
+// A glass panel draws its own smooth corners once a compositor shows its transparency; otherwise
+// the corners are cut from the window.
+func Panel(window uintptr, frame image.Rectangle, look Look) {
 	if window == 0 || glfw.GetPlatform() != glfw.PlatformX11 {
 		return
 	}
 	display := (*C.Display)(unsafe.Pointer(glfw.GetX11Display()))
-	C.encre_overlay_panel_state(display, C.Window(window))
-	C.XMoveWindow(display, C.Window(window), C.int(frame.Min.X), C.int(frame.Min.Y))
-	C.encre_overlay_round(display, C.Window(window), C.int(frame.Dx()), C.int(frame.Dy()), C.int(radius))
+	handle := C.Window(window)
+	C.encre_overlay_panel_state(display, handle)
+	C.XMoveWindow(display, handle, C.int(frame.Min.X), C.int(frame.Min.Y))
+	if look.Glass && C.encre_overlay_compositing(display) != 0 {
+		C.encre_overlay_unshape(display, handle)
+	} else {
+		C.encre_overlay_round(display, handle, C.int(frame.Dx()), C.int(frame.Dy()), C.int(look.Radius))
+	}
+	C.encre_overlay_blur(display, handle, boolInt(look.Glass))
 	C.XFlush(display)
+}
+
+// Corner is the radius a panel's corners are cut to, which is the one asked for.
+func Corner(radius float32) float32 { return radius }
+
+// GlassBackdrop is what the desktop shows through a glass panel now.
+func GlassBackdrop() Backdrop {
+	if glfw.GetPlatform() != glfw.PlatformX11 {
+		return BackdropNone
+	}
+	display := (*C.Display)(unsafe.Pointer(glfw.GetX11Display()))
+	switch {
+	case C.encre_overlay_compositing(display) == 0:
+		return BackdropNone
+	case C.encre_overlay_blurs(display) != 0:
+		return BackdropBlurred
+	}
+	return BackdropSharp
+}
+
+// SetOpacity fades the whole window, where a compositor runs; 1 is opaque.
+func SetOpacity(window uintptr, opacity float64) {
+	if window == 0 || glfw.GetPlatform() != glfw.PlatformX11 {
+		return
+	}
+	display := (*C.Display)(unsafe.Pointer(glfw.GetX11Display()))
+	C.encre_overlay_opacity(display, C.Window(window), C.ulong(math.Round(clamp01(opacity)*0xffffffff)))
+}
+
+func boolInt(b bool) C.int {
+	if b {
+		return 1
+	}
+	return 0
 }

@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <objc/runtime.h>
+#include <dlfcn.h>
 
 static BOOL encre_overlay_never_key(id self, SEL _cmd) {
     return NO;
@@ -29,8 +30,42 @@ void encre_overlay_no_focus(void* window) {
         | NSWindowCollectionBehaviorFullScreenAuxiliary];
 }
 
+// The blur behind a window is private API that Terminal, iTerm2 and others use. It is looked up at run
+// time, so a macOS without it only loses the blur.
+typedef void* (*connection_fn)(void);
+typedef int32_t (*blur_fn)(void*, NSInteger, int32_t);
+static connection_fn connection = NULL;
+static blur_fn blur = NULL;
+
+static int encre_overlay_can_blur(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        connection = (connection_fn)dlsym(RTLD_DEFAULT, "CGSDefaultConnectionForThread");
+        blur = (blur_fn)dlsym(RTLD_DEFAULT, "CGSSetWindowBackgroundBlurRadius");
+    });
+    return connection != NULL && blur != NULL;
+}
+
+static void encre_overlay_blur(NSWindow* window, int radius) {
+    if (encre_overlay_can_blur()) {
+        blur(connection(), [window windowNumber], radius);
+    }
+}
+
+// Matches the Backdrop constants in overlay.go.
+int encre_overlay_backdrop(void) {
+    if ([[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceTransparency]) {
+        return 0;
+    }
+    return encre_overlay_can_blur() ? 2 : 1;
+}
+
+void encre_overlay_opacity(uintptr_t window, double opacity) {
+    [(__bridge NSWindow*)(void*)window setAlphaValue:opacity];
+}
+
 // GLFW places windows from the top left of the primary screen, Cocoa from its bottom left.
-void encre_overlay_panel(uintptr_t window, int x, int y, int radius) {
+void encre_overlay_panel(uintptr_t window, int x, int y, int radius, int glass) {
     NSWindow* w = (__bridge NSWindow*)(void*)window;
     [w setCollectionBehavior:[w collectionBehavior]
         | NSWindowCollectionBehaviorCanJoinAllSpaces
@@ -46,6 +81,9 @@ void encre_overlay_panel(uintptr_t window, int x, int y, int radius) {
     [view setWantsLayer:YES];
     [[view layer] setCornerRadius:radius];
     [[view layer] setMasksToBounds:YES];
+    if (glass) {
+        encre_overlay_blur(w, 24);
+    }
     [w invalidateShadow];
 }
 

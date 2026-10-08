@@ -26,6 +26,9 @@ const (
 
 	dwmwaWindowCornerPreference = 33
 	dwmwcpRound                 = 2
+	dwmwaSystemBackdropType     = 38
+	dwmsbtNone                  = 1
+	dwmsbtTransientWindow       = 3
 )
 
 var (
@@ -39,8 +42,20 @@ var (
 	showWindow          = user32.NewProc("ShowWindow")
 	isWindowVisible     = user32.NewProc("IsWindowVisible")
 
-	dwmSetWindowAttribute = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
+	dwmapi                       = windows.NewLazySystemDLL("dwmapi.dll")
+	dwmSetWindowAttribute        = dwmapi.NewProc("DwmSetWindowAttribute")
+	dwmExtendFrameIntoClientArea = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
 )
+
+// Windows 11 rounds window corners from build 22000, and draws acrylic behind a window from 22621.
+const (
+	roundingBuild = 22000
+	acrylicBuild  = 22621
+)
+
+type winMargins struct{ left, right, top, bottom int32 }
+
+func windowsBuild() uint32 { return windows.RtlGetVersion().BuildNumber }
 
 type winRect struct{ left, top, right, bottom int32 }
 
@@ -73,7 +88,7 @@ func focusPoint() (image.Point, bool) {
 }
 
 // Panel makes a focusable window float like the indicator, placed in the frame. Only Windows 11 rounds it.
-func Panel(window uintptr, frame image.Rectangle, _ int) {
+func Panel(window uintptr, frame image.Rectangle, look Look) {
 	if window == 0 {
 		return
 	}
@@ -81,7 +96,22 @@ func Panel(window uintptr, frame image.Rectangle, _ int) {
 
 	corner := uint32(dwmwcpRound)
 	dwmSetWindowAttribute.Call(window, dwmwaWindowCornerPreference, uintptr(unsafe.Pointer(&corner)), unsafe.Sizeof(corner))
+	if windowsBuild() >= acrylicBuild {
+		acrylic(window, look.Glass)
+	}
 	setWindowPos.Call(window, 0, uintptr(frame.Min.X), uintptr(frame.Min.Y), 0, 0, swpNoSize|swpNoZOrder|swpNoActivate)
+}
+
+// acrylic draws the blurred backdrop of transient windows behind the whole window. A borderless
+// window has no frame for it to show in, so the frame is extended over the window while it is glass.
+func acrylic(window uintptr, on bool) {
+	backdrop, margin := uint32(dwmsbtNone), int32(0)
+	if on {
+		backdrop, margin = dwmsbtTransientWindow, -1
+	}
+	margins := winMargins{margin, margin, margin, margin}
+	dwmExtendFrameIntoClientArea.Call(window, uintptr(unsafe.Pointer(&margins)))
+	dwmSetWindowAttribute.Call(window, dwmwaSystemBackdropType, uintptr(unsafe.Pointer(&backdrop)), unsafe.Sizeof(backdrop))
 }
 
 // The taskbar only rereads the style when a window is shown, so a visible one is shown again.
@@ -100,3 +130,23 @@ func keepOffTaskbar(window uintptr) {
 		showWindow.Call(window, swShow)
 	}
 }
+
+// GlassBackdrop is acrylic from Windows 11 22H2, and the desktop as it is before.
+func GlassBackdrop() Backdrop {
+	if windowsBuild() >= acrylicBuild {
+		return BackdropBlurred
+	}
+	return BackdropSharp
+}
+
+// Corner is the radius Windows gives a panel's corners: its own small one on Windows 11, none before.
+func Corner(float32) float32 {
+	if windowsBuild() >= roundingBuild {
+		return 8
+	}
+	return 0
+}
+
+// SetOpacity does nothing on Windows: fading a window means making it layered, which its OpenGL
+// surface does not survive.
+func SetOpacity(uintptr, float64) {}

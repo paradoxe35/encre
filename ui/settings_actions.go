@@ -84,14 +84,16 @@ func (e *operationEditor) content(w *MainWindow, op config.Operation) fyne.Canva
 		w.markDirty()
 	}
 
-	rows := []fyne.CanvasObject{
-		boundBy(op),
-		widget.NewForm(
-			widget.NewFormItem("Provider", e.provider),
-			widget.NewFormItem("Character limit", e.limit),
-			widget.NewFormItem("Timeout", container.NewBorder(nil, nil, nil, timeoutValue, e.timeout)),
-		),
+	form := widget.NewForm(
+		widget.NewFormItem("Provider", e.provider),
+		widget.NewFormItem("Character limit", e.limit),
+		widget.NewFormItem("Timeout", container.NewBorder(nil, nil, nil, timeoutValue, e.timeout)),
+	)
+	if op == config.OpAsk {
+		form.Append("Card style", w.answerCardStyleSelect())
+		form.Append("Answer text size", w.answerTextSizeSelect())
 	}
+	rows := []fyne.CanvasObject{boundBy(op), form}
 
 	if op == config.OpTranslate {
 		rows = append(rows, widget.NewSeparator(), w.translateLanguages())

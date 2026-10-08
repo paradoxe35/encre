@@ -94,6 +94,8 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 		application.unbindEscape()
 		restoreFrontmostApp()
 	})
+	application.answers.SetTextSize(cfg.AnswerCardSettings().TextSize)
+	application.answers.SetStyle(cfg.AnswerCardSettings().Style)
 	application.answers.SetOnAsk(func(question string) {
 		go processor.AnswerTyped(application.answers, question)
 	})
@@ -125,6 +127,8 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 		application.setConfig(newCfg)
 		application.reloadHotkeysFromConfig()
 		application.applyOverlay(newCfg)
+		application.answers.SetTextSize(newCfg.AnswerCardSettings().TextSize)
+		application.answers.SetStyle(newCfg.AnswerCardSettings().Style)
 	})
 
 	mainWindow.SetShowHideCallbacks(func() {

@@ -6,24 +6,27 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/overlay"
 )
 
 const (
 	answerWidth     = 480
+	maxAnswerWidth  = 640
 	answerMaxHeight = 440
 	answerInset     = 12
 	answerRadius    = 14
 	maxInputRows    = 4
 	copiedFor       = 1500 * time.Millisecond
 	renderEvery     = 50 * time.Millisecond
+	resizeFor       = 140 * time.Millisecond
+	fadeFor         = 120 * time.Millisecond
 )
 
 // AnswerCard shows answers where the indicator was, as they are written, and takes typed questions.
@@ -34,6 +37,16 @@ type AnswerCard struct {
 	visible bool
 	typing  bool
 	onAsk   func(question string)
+
+	style config.CardStyle
+	// created is whether the native window exists: a glass one must be made transparent from the start.
+	created bool
+	// restyle defers a change of style until the card is closed, since it needs a new window.
+	restyle bool
+	look    *container.ThemeOverride
+	opacity float64
+	fading  *fyne.Animation
+	fade    func(from, to float64, apply func(float64), done func()) *fyne.Animation
 
 	sessions atomic.Uint64
 	session  uint64
@@ -46,29 +59,40 @@ type AnswerCard struct {
 	spot     overlay.Spot
 	placed   bool
 	size     fyne.Size
+	target   fyne.Size
+	resizing *fyne.Animation
+	animate  func(from, to fyne.Size, apply func(fyne.Size)) *fyne.Animation
 	rendered time.Time
 	pending  bool
 	later    func(time.Duration, func())
 
 	content *widget.RichText
 	scroll  *container.Scroll
-	footer  fyne.CanvasObject
-	input   *questionEntry
-	rows    int
-	send    *widget.Button
-	copy    *widget.Button
+	// reading holds the question and answer at the text size chosen for reading.
+	reading   *container.ThemeOverride
+	textScale float32
+	footer    fyne.CanvasObject
+	input     *questionEntry
+	rows      int
+	send      *widget.Button
+	copy      *widget.Button
 
 	onShow func()
 	onHide func()
 }
 
 func NewAnswerCard(app fyne.App) *AnswerCard {
-	return &AnswerCard{
-		app: app,
+	c := &AnswerCard{
+		app:       app,
+		textScale: 1,
 		later: func(wait time.Duration, run func()) {
 			time.AfterFunc(wait, func() { fyne.Do(run) })
 		},
+		animate: glide,
+		fade:    fadeWindow,
 	}
+	app.Settings().AddListener(func(fyne.Settings) { fyne.Do(c.retheme) })
+	return c
 }
 
 func (c *AnswerCard) SetShowHideCallbacks(onShow, onHide func()) {
@@ -141,20 +165,36 @@ func (c *AnswerCard) open(id uint64, question string, stop func()) {
 }
 
 func (c *AnswerCard) show() {
-	if !c.visible {
+	appearing := !c.visible
+	if appearing {
 		c.spot, c.placed = c.findSpot()
-		c.size = fyne.Size{}
+		c.size, c.target = fyne.Size{}, fyne.Size{}
 	}
 	c.render()
 
-	if !c.visible && c.onShow != nil {
+	if appearing && c.onShow != nil {
 		c.onShow()
 	}
 	c.visible = true
 	// The first Show creates the native window, which the placement in render could not reach yet.
-	c.window.Show()
+	c.showWindow()
+	if appearing {
+		c.setOpacity(0)
+	}
 	c.float()
 	c.window.RequestFocus()
+	if appearing {
+		c.fadeTo(1, nil)
+	}
+}
+
+func (c *AnswerCard) showWindow() {
+	if !c.created && designFor(c.style).glass && c.native() {
+		overlay.Transparent(c.window.Show)
+	} else {
+		c.window.Show()
+	}
+	c.created = true
 }
 
 func (c *AnswerCard) update(text string, done bool) {
@@ -194,18 +234,16 @@ func (c *AnswerCard) render() {
 	c.content.Segments = c.segments()
 	c.content.Refresh()
 	if len(c.content.Segments) == 0 {
-		c.scroll.Hide()
+		c.reading.Hide()
 	} else {
-		c.scroll.Show()
+		c.reading.Show()
 	}
 	setVisible(c.copy, c.text != "")
 	setVisible(c.input, c.typing)
 	setVisible(c.send, c.typing)
 
-	if size := c.fit(); size != c.size {
-		c.size = size
-		c.window.Resize(size)
-		c.float()
+	if size := c.fit(); size != c.target {
+		c.resizeTo(size)
 	}
 	if following {
 		c.scroll.ScrollToBottom()
@@ -223,7 +261,7 @@ func (c *AnswerCard) segments() []widget.RichTextSegment {
 	}
 	switch {
 	case c.text != "":
-		segments = append(segments, widget.NewRichTextFromMarkdown(c.text).Segments...)
+		segments = append(segments, adopt(c.content, widget.NewRichTextFromMarkdown(c.text).Segments)...)
 	case !c.done && c.question != "":
 		segments = append(segments, &widget.TextSegment{Text: "Thinking…", Style: mutedStyle()})
 	}
@@ -232,6 +270,9 @@ func (c *AnswerCard) segments() []widget.RichTextSegment {
 			Text:  c.failure,
 			Style: widget.RichTextStyle{ColorName: theme.ColorNameError},
 		})
+	}
+	if designFor(c.style).monospace {
+		eachText(segments, func(text *widget.TextSegment) { text.Style.TextStyle.Monospace = true })
 	}
 	return segments
 }
@@ -245,10 +286,68 @@ func (c *AnswerCard) Hide() {
 		c.stop()
 	}
 	c.stop = nil
-	c.window.Hide()
 	if c.onHide != nil {
 		c.onHide()
 	}
+	c.fadeTo(0, func() {
+		if c.visible {
+			return
+		}
+		c.window.Hide()
+		if c.restyle {
+			c.discard()
+		}
+	})
+}
+
+// fadeTo replaces any fade under way with one from the current opacity; done runs only if it finishes.
+func (c *AnswerCard) fadeTo(opacity float64, done func()) {
+	if c.fading != nil {
+		c.fading.Stop()
+	}
+	c.fading = c.fade(c.opacity, opacity, func(o float64) {
+		c.opacity = o
+		c.setOpacity(o)
+	}, done)
+}
+
+func fadeWindow(from, to float64, apply func(float64), done func()) *fyne.Animation {
+	animation := fyne.NewAnimation(fadeFor, func(progress float32) {
+		apply(from + (to-from)*float64(progress))
+		if progress == 1 && done != nil {
+			done()
+		}
+	})
+	animation.Start()
+	return animation
+}
+
+// SetStyle switches between the solid and the glass card. It may be called from any goroutine.
+func (c *AnswerCard) SetStyle(style config.CardStyle) {
+	fyne.Do(func() {
+		if style == c.style {
+			return
+		}
+		c.style = style
+		switch {
+		case c.window == nil:
+		case c.visible:
+			c.restyle = true
+		default:
+			c.discard()
+		}
+	})
+}
+
+// discard drops the window, so the next one is made in the current style.
+func (c *AnswerCard) discard() {
+	for _, animation := range []*fyne.Animation{c.resizing, c.fading} {
+		if animation != nil {
+			animation.Stop()
+		}
+	}
+	c.window.Close()
+	c.window, c.created, c.restyle = nil, false, false
 }
 
 func (c *AnswerCard) Visible() bool { return c.visible }
@@ -269,8 +368,10 @@ func (c *AnswerCard) build() {
 	c.content = widget.NewRichText()
 	c.content.Wrapping = fyne.TextWrapWord
 	c.scroll = container.NewVScroll(c.content)
+	c.reading = container.NewThemeOverride(c.scroll, c.readingTheme())
 
 	c.input = newQuestionEntry(c.submit, c.Hide)
+	c.input.TextStyle.Monospace = designFor(c.style).monospace
 	c.input.SetPlaceHolder("Ask anything")
 	c.input.OnChanged = c.inputChanged
 	c.rows = 1
@@ -279,12 +380,10 @@ func (c *AnswerCard) build() {
 	actions := container.NewHBox(c.send, c.copy, iconButton(theme.CancelIcon(), c.Hide))
 	c.footer = container.NewBorder(nil, nil, nil, actions, c.input)
 
-	body := container.New(&answerLayout{scroll: c.scroll, footer: c.footer}, c.scroll, c.footer)
+	body := container.New(&answerLayout{scroll: c.reading, footer: c.footer}, c.reading, c.footer)
 	inset := container.New(layout.NewCustomPaddedLayout(answerInset, answerInset, answerInset, answerInset), body)
-	c.window.SetContent(container.NewStack(
-		canvas.NewRectangle(overlay.Surface),
-		container.NewThemeOverride(inset, &fixedVariant{theme.VariantDark}),
-	))
+	c.look = container.NewThemeOverride(container.NewStack(c.surface(), inset), c.cardTheme())
+	c.window.SetContent(container.New(&sizeWatch{onSize: c.laidOut}, c.look))
 
 	c.window.SetCloseIntercept(c.Hide)
 	c.window.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
@@ -298,11 +397,124 @@ func (c *AnswerCard) build() {
 // fit is the layout's own minimum, grown by whatever the answer needs beyond the scroll's, up to the cap.
 func (c *AnswerCard) fit() fyne.Size {
 	height := c.window.Content().MinSize().Height
-	if c.scroll.Visible() {
-		c.content.Resize(fyne.NewSize(answerWidth-2*answerInset, 0))
+	width := c.width()
+	if c.reading.Visible() {
+		c.content.Resize(fyne.NewSize(width-2*answerInset, 0))
 		height += max(c.content.MinSize().Height-c.scroll.MinSize().Height, 0)
 	}
-	return fyne.NewSize(answerWidth, min(height, answerMaxHeight))
+	return fyne.NewSize(width, min(height, answerMaxHeight))
+}
+
+// width widens the card with larger text, so a line keeps a comfortable number of words.
+func (c *AnswerCard) width() float32 {
+	return min(answerWidth*max(c.textScale, 1), maxAnswerWidth)
+}
+
+// SetTextSize sets the size the question and answer are read at. It may be called from any goroutine.
+func (c *AnswerCard) SetTextSize(size config.TextSize) {
+	fyne.Do(func() {
+		c.textScale = textScales[size]
+		c.retheme()
+	})
+}
+
+// retheme follows the app's theme, and the text size, into a card already built.
+func (c *AnswerCard) retheme() {
+	if c.window == nil {
+		return
+	}
+	c.look.Theme = c.cardTheme()
+	c.reading.Theme = c.readingTheme()
+	c.look.Refresh()
+	if c.visible {
+		c.render()
+	}
+}
+
+func (c *AnswerCard) cardTheme() fyne.Theme {
+	app, ok := c.app.Settings().Theme().(*appTheme)
+	if !ok {
+		app = newAppTheme(nil)
+	}
+	return newCardTheme(app, designFor(c.style))
+}
+
+func (c *AnswerCard) readingTheme() fyne.Theme {
+	return &scaledText{Theme: c.cardTheme(), scale: c.textScale}
+}
+
+// surface is the design's glow under its fill, and the edge over both. Only glass is drawn rounded:
+// any other card has its corners cut from the window, so its edge follows the cut the system makes.
+func (c *AnswerCard) surface() fyne.CanvasObject {
+	design := designFor(c.style)
+	var layers []fyne.CanvasObject
+	if design.glow != nil {
+		layers = design.glow()
+	}
+	fill, radius, edge := colorNameCard, float32(0), c.corner()
+	if design.glass {
+		fill, radius, edge = c.glassFill(), answerRadius, answerRadius
+	}
+	layers = append(layers, newThemedFill(fill, "", radius), newThemedFill("", colorNameCardEdge, edge))
+	return container.NewStack(layers...)
+}
+
+func (c *AnswerCard) corner() float32 {
+	if !c.native() {
+		return answerRadius
+	}
+	return overlay.Corner(answerRadius)
+}
+
+// glassFill is see-through only as far as the text stays readable over what is behind it.
+func (c *AnswerCard) glassFill() fyne.ThemeColorName {
+	if !c.native() {
+		return colorNameCard
+	}
+	switch overlay.GlassBackdrop() {
+	case overlay.BackdropBlurred:
+		return colorNameGlass
+	case overlay.BackdropSharp:
+		return colorNameFrost
+	}
+	return colorNameCard
+}
+
+// resizeTo glides the card to a new size while it shows, and sets it at once while it does not.
+func (c *AnswerCard) resizeTo(size fyne.Size) {
+	c.target = size
+	// Refits the window's minimum to the content first: a window manager refuses a size below
+	// the minimum it was last given, which would leave the window taller than its frame.
+	c.window.SetFixedSize(false)
+	if c.resizing != nil {
+		c.resizing.Stop()
+		c.resizing = nil
+	}
+	if !c.visible || c.size.IsZero() {
+		c.size = size
+		c.window.Resize(size)
+		c.float()
+		return
+	}
+	c.resizing = c.animate(c.size, size, c.window.Resize)
+}
+
+func glide(from, to fyne.Size, apply func(fyne.Size)) *fyne.Animation {
+	animation := fyne.NewAnimation(resizeFor, func(progress float32) {
+		apply(fyne.NewSize(from.Width+(to.Width-from.Width)*progress, from.Height+(to.Height-from.Height)*progress))
+	})
+	animation.Curve = fyne.AnimationEaseOut
+	animation.Start()
+	return animation
+}
+
+// laidOut follows the size the window was actually given, so the frame always matches what is drawn.
+func (c *AnswerCard) laidOut(size fyne.Size) {
+	if !c.visible || size == c.size {
+		return
+	}
+	c.size = size
+	c.float()
 }
 
 func (c *AnswerCard) inputChanged(text string) {
@@ -322,33 +534,47 @@ func (c *AnswerCard) copyAnswer() {
 	c.later(copiedFor, func() { c.copy.SetIcon(theme.ContentCopyIcon()) })
 }
 
+func (c *AnswerCard) native() bool {
+	_, ok := c.window.(driver.NativeWindow)
+	return ok
+}
+
 func (c *AnswerCard) findSpot() (overlay.Spot, bool) {
-	if _, ok := c.window.(driver.NativeWindow); !ok {
+	if !c.native() {
 		return overlay.Spot{}, false
 	}
 	return overlay.FindSpot()
+}
+
+func (c *AnswerCard) setOpacity(opacity float64) {
+	c.onNative(func(handle uintptr) { overlay.SetOpacity(handle, opacity) })
+}
+
+func (c *AnswerCard) onNative(run func(handle uintptr)) {
+	native, ok := c.window.(driver.NativeWindow)
+	if !ok {
+		return
+	}
+	native.RunNative(func(context any) {
+		switch window := context.(type) {
+		case driver.X11WindowContext:
+			run(window.WindowHandle)
+		case driver.WindowsWindowContext:
+			run(window.HWND)
+		case driver.MacWindowContext:
+			run(window.NSWindow)
+		}
+	})
 }
 
 func (c *AnswerCard) float() {
 	if !c.placed {
 		return
 	}
-	native := c.window.(driver.NativeWindow)
-
 	scale := c.window.Canvas().Scale()
 	frame := c.spot.Frame(int(c.size.Width*scale), int(c.size.Height*scale))
-	radius := int(answerRadius * scale)
-
-	native.RunNative(func(context any) {
-		switch window := context.(type) {
-		case driver.X11WindowContext:
-			overlay.Panel(window.WindowHandle, frame, radius)
-		case driver.WindowsWindowContext:
-			overlay.Panel(window.HWND, frame, radius)
-		case driver.MacWindowContext:
-			overlay.Panel(window.NSWindow, frame, radius)
-		}
-	})
+	look := overlay.Look{Radius: int(answerRadius * scale), Glass: designFor(c.style).glass}
+	c.onNative(func(handle uintptr) { overlay.Panel(handle, frame, look) })
 }
 
 func mutedStyle() widget.RichTextStyle {
@@ -379,6 +605,44 @@ func (l *answerLayout) Layout(_ []fyne.CanvasObject, size fyne.Size) {
 	l.footer.Move(fyne.NewPos(0, size.Height-footer))
 	l.scroll.Resize(fyne.NewSize(size.Width, size.Height-footer-theme.Padding()))
 	l.scroll.Move(fyne.NewPos(0, 0))
+}
+
+var textScales = map[config.TextSize]float32{
+	config.TextSizeSmall:   0.9,
+	config.TextSizeDefault: 1,
+	config.TextSizeLarge:   1.15,
+	config.TextSizeLarger:  1.3,
+}
+
+// scaledText is a theme with its text sizes multiplied.
+type scaledText struct {
+	fyne.Theme
+	scale float32
+}
+
+func (t *scaledText) Size(name fyne.ThemeSizeName) float32 {
+	size := t.Theme.Size(name)
+	switch name {
+	case theme.SizeNameText, theme.SizeNameHeadingText, theme.SizeNameSubHeadingText,
+		theme.SizeNameCaptionText, theme.SizeNameInlineIcon:
+		return size * t.scale
+	}
+	return size
+}
+
+// sizeWatch lays its one child over the whole window and reports the size it was given.
+type sizeWatch struct {
+	onSize func(fyne.Size)
+}
+
+func (w *sizeWatch) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	return objects[0].MinSize()
+}
+
+func (w *sizeWatch) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	objects[0].Resize(size)
+	objects[0].Move(fyne.NewPos(0, 0))
+	w.onSize(size)
 }
 
 // questionEntry sends on Enter and breaks the line on Shift+Enter, as chat inputs do.
@@ -470,7 +734,9 @@ func iconButton(icon fyne.Resource, tapped func()) *widget.Button {
 func borderlessWindow(app fyne.App) fyne.Window {
 	drv, ok := app.Driver().(desktop.Driver)
 	if !ok {
-		return app.NewWindow("Encre")
+		window := app.NewWindow("Encre")
+		window.SetPadded(false)
+		return window
 	}
 	window := drv.CreateSplashWindow()
 	if floating, ok := window.(desktop.Window); ok {

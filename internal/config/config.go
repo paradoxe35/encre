@@ -36,6 +36,7 @@ type Config struct {
 	Translate  TranslateConfig               `json:"translate"`
 	Speech     SpeechConfig                  `json:"speech"`
 	Appearance AppearanceConfig              `json:"appearance"`
+	AnswerCard AnswerCardConfig              `json:"answer_card"`
 	Meta       MetaConfig                    `json:"meta"`
 
 	// EnableProviderMentions lets a selection opt into a provider by starting

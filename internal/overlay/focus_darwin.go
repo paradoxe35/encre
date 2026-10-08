@@ -5,7 +5,9 @@ package overlay
 #include <stdint.h>
 void encre_overlay_no_focus(void* window);
 int encre_overlay_focus_point(int* x, int* y);
-void encre_overlay_panel(uintptr_t window, int x, int y, int radius);
+void encre_overlay_panel(uintptr_t window, int x, int y, int radius, int glass);
+void encre_overlay_opacity(uintptr_t window, double opacity);
+int encre_overlay_backdrop(void);
 */
 import "C"
 
@@ -32,9 +34,29 @@ func noFocus(window *glfw.Window) {
 }
 
 // Panel makes a focusable window float like the indicator, rounded and placed in the frame.
-func Panel(window uintptr, frame image.Rectangle, radius int) {
+func Panel(window uintptr, frame image.Rectangle, look Look) {
 	if window == 0 {
 		return
 	}
-	C.encre_overlay_panel(C.uintptr_t(window), C.int(frame.Min.X), C.int(frame.Min.Y), C.int(radius))
+	glass := 0
+	if look.Glass {
+		glass = 1
+	}
+	C.encre_overlay_panel(C.uintptr_t(window), C.int(frame.Min.X), C.int(frame.Min.Y), C.int(look.Radius), C.int(glass))
+}
+
+// Corner is the radius a panel's corners are cut to, which is the one asked for.
+func Corner(radius float32) float32 { return radius }
+
+// GlassBackdrop is blurred, unless the user asked macOS to reduce transparency.
+func GlassBackdrop() Backdrop {
+	return Backdrop(C.encre_overlay_backdrop())
+}
+
+// SetOpacity fades the whole window; 1 is opaque.
+func SetOpacity(window uintptr, opacity float64) {
+	if window == 0 {
+		return
+	}
+	C.encre_overlay_opacity(C.uintptr_t(window), C.double(clamp01(opacity)))
 }

@@ -112,14 +112,21 @@ func (w *MainWindow) createPasteShortcutControls() fyne.CanvasObject {
 }
 
 func (w *MainWindow) applyTheme(themeName string) {
+	w.app.Settings().SetTheme(newAppTheme(themeVariant(themeName)))
+}
+
+// themeVariant is the variant a theme setting pins, or nil when it follows the system.
+func themeVariant(themeName string) *fyne.ThemeVariant {
+	var variant fyne.ThemeVariant
 	switch themeName {
 	case "light":
-		w.app.Settings().SetTheme(&fixedVariant{theme.VariantLight})
+		variant = theme.VariantLight
 	case "dark":
-		w.app.Settings().SetTheme(&fixedVariant{theme.VariantDark})
-	case "auto":
-		w.app.Settings().SetTheme(theme.DefaultTheme())
+		variant = theme.VariantDark
+	default:
+		return nil
 	}
+	return &variant
 }
 
 func (w *MainWindow) applyAutoStartSetting(enabled bool) {

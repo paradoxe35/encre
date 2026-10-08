@@ -6,9 +6,12 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/paradoxe35/encre/internal/config"
 )
 
 // newCard batches nothing behind the test's back: a batch only runs when a test calls it.
@@ -17,6 +20,17 @@ func newCard(t *testing.T) (*AnswerCard, fyne.App) {
 	app := test.NewTempApp(t)
 	card := NewAnswerCard(app)
 	card.later = func(time.Duration, func()) {}
+	card.animate = func(_, to fyne.Size, apply func(fyne.Size)) *fyne.Animation {
+		apply(to)
+		return nil
+	}
+	card.fade = func(_, to float64, apply func(float64), done func()) *fyne.Animation {
+		apply(to)
+		if done != nil {
+			done()
+		}
+		return nil
+	}
 	return card, app
 }
 
@@ -222,7 +236,7 @@ func TestAnEmptyCardIsOnlyItsInput(t *testing.T) {
 	card, _ := newCard(t)
 	card.Prompt()
 	empty := card.size.Height
-	if card.scroll.Visible() || empty < card.footer.MinSize().Height {
+	if card.reading.Visible() || empty < card.footer.MinSize().Height {
 		t.Fatalf("an empty card of %v hides its input, or shows an empty scroll", empty)
 	}
 
@@ -342,4 +356,128 @@ func closeButton(t *testing.T, card *AnswerCard) *widget.Button {
 	}
 	t.Fatal("no close button in the footer")
 	return nil
+}
+
+func TestLargerTextGrowsTheAnswerAndWidensTheCard(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", strings.Repeat("A sentence to read. ", 12))
+	before := card.size
+	footer := card.footer.MinSize().Height
+
+	card.SetTextSize(config.TextSizeLarger)
+	if card.size.Width <= before.Width || card.size.Width > maxAnswerWidth {
+		t.Fatalf("width %v after %v, cap %v", card.size.Width, before.Width, maxAnswerWidth)
+	}
+	if card.reading.Theme.Size(theme.SizeNameText) <= theme.DefaultTheme().Size(theme.SizeNameText) {
+		t.Fatal("the answer text did not grow")
+	}
+	if card.footer.MinSize().Height != footer {
+		t.Fatal("the input grew with the answer text")
+	}
+
+	card.SetTextSize(config.TextSizeSmall)
+	if card.size.Width != answerWidth {
+		t.Fatalf("small text widened the card to %v", card.size.Width)
+	}
+}
+
+func TestASizeChangeGlidesWhileTheCardShows(t *testing.T) {
+	card, _ := newCard(t)
+	var glides []fyne.Size
+	card.animate = func(from, to fyne.Size, apply func(fyne.Size)) *fyne.Animation {
+		glides = append(glides, from, to)
+		apply(to)
+		return nil
+	}
+
+	answered(card, "q", "short")
+	if len(glides) != 0 {
+		t.Fatalf("the card glided open from nothing: %v", glides)
+	}
+	answered(card, "q", strings.Repeat("A longer answer that wraps. ", 10))
+	if len(glides) != 2 || glides[1].Height <= glides[0].Height {
+		t.Fatalf("growing did not glide from the old height to the new: %v", glides)
+	}
+}
+
+func TestAStyleChangeWaitsForTheCardToClose(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "Q", "A")
+	shown := card.window
+
+	card.SetStyle(config.CardStyleGlass)
+	if card.window != shown {
+		t.Fatal("the card was rebuilt while it showed")
+	}
+
+	card.Hide()
+	answered(card, "Q", "A")
+	if card.window == shown {
+		t.Fatal("the card kept its old window after closing")
+	}
+}
+
+func TestTheGlassCardFollowsTheAppVariant(t *testing.T) {
+	card, app := newCard(t)
+	variant := theme.VariantLight
+	app.Settings().SetTheme(newAppTheme(&variant))
+
+	card.SetStyle(config.CardStyleGlass)
+	glass := card.cardTheme().Color(colorNameCard, theme.VariantDark)
+	card.SetStyle(config.CardStyleSolid)
+	solid := card.cardTheme().Color(colorNameCard, theme.VariantLight)
+
+	if glass == solid {
+		t.Fatal("the glass card took the solid card's dark colours in a light app")
+	}
+}
+
+func TestListItemsTakeTheCardsTextSizeAndColours(t *testing.T) {
+	card, app := newCard(t)
+	variant := theme.VariantLight
+	app.Settings().SetTheme(newAppTheme(&variant))
+	card.SetTextSize(config.TextSizeLarger)
+	answered(card, "Q", "Intro\n\n- first item\n- second item")
+
+	reading := card.readingTheme()
+	for _, text := range []string{"Intro", "first item", "• "} {
+		segment := findText(card.content.Segments, text)
+		if segment == nil {
+			t.Fatalf("no text %q in the answer", text)
+		}
+		visual := segment.Visual().(*canvas.Text)
+		if want := reading.Size(theme.SizeNameText); visual.TextSize != want {
+			t.Fatalf("%q is %v points, want the card's %v", text, visual.TextSize, want)
+		}
+		if want := reading.Color(theme.ColorNameForeground, variant); visual.Color != want {
+			t.Fatalf("%q is drawn in %v, want the dark card's %v", text, visual.Color, want)
+		}
+	}
+}
+
+func findText(segments []widget.RichTextSegment, text string) *widget.TextSegment {
+	for _, segment := range segments {
+		switch segment := segment.(type) {
+		case *widget.TextSegment:
+			if strings.HasPrefix(segment.Text, text) {
+				return segment
+			}
+		case widget.RichTextBlock:
+			if found := findText(segment.Segments(), text); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
+}
+
+func TestEveryCardStyleHasADesignAndAName(t *testing.T) {
+	for _, style := range config.CardStyles {
+		if _, ok := cardDesigns[style]; !ok {
+			t.Errorf("style %q has no design", style)
+		}
+		if cardStyleLabels[style] == "" {
+			t.Errorf("style %q has no name in settings", style)
+		}
+	}
 }

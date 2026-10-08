@@ -181,3 +181,12 @@ func (s *glfwSurface) Present(frame *image.RGBA) {
 func (s *glfwSurface) Close() {
 	s.window.Destroy()
 }
+
+// Transparent runs create, which makes a window, with a framebuffer that keeps its alpha, so a
+// compositor can show the desktop through it. The hint is reset at once: Fyne never resets hints,
+// so it would otherwise reach every window made afterwards.
+func Transparent(create func()) {
+	glfw.WindowHint(glfw.TransparentFramebuffer, glfw.True)
+	defer glfw.WindowHint(glfw.TransparentFramebuffer, glfw.False)
+	create()
+}

@@ -55,6 +55,8 @@ type MainWindow struct {
 	primaryLanguage   *LanguagePicker
 	secondaryLanguage *LanguagePicker
 	mentionsCheck     *widget.Check
+	answerTextSize    *widget.Select
+	answerCardStyle   *widget.Select
 
 	speechModels        *ModelList
 	speechStoreRef      *stt.Store
@@ -125,7 +127,9 @@ func NewMainWindow(app fyne.App, cfg *config.Config, hotkeyManager *input.FFIHot
 
 	mw.mainContent = mw.createContent()
 	mw.rootContainer = container.NewStack(mw.mainContent, prompt.root)
-	window.SetContent(mw.rootContainer)
+	// The window paints its own background, padding included, since the theme's is see-through.
+	window.SetPadded(false)
+	window.SetContent(container.NewStack(newThemedFill(colorNameWindow, "", 0), container.NewPadded(mw.rootContainer)))
 	mw.initializing = false
 
 	return mw
