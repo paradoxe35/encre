@@ -5,26 +5,39 @@
 
 A simple tool that fixes, translates and types your text with AI, anywhere on your computer.
 
-## Why I Built This
+## Table of contents
 
-English isn't my first language. Every time I write an email, a message, or some documentation, I end up with grammar mistakes or typos. I got tired of copying text to ChatGPT, waiting for a response, then copying it back.
+- [Why I built this](#why-i-built-this)
+- [Demo](#demo)
+- [Features](#features)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Hotkeys](#hotkeys)
+- [AI providers](#ai-providers)
+- [Dictation](#dictation)
+- [Ask](#ask)
+- [Configuration](#configuration)
+- [Building from source](#building-from-source)
+- [Troubleshooting](#troubleshooting)
+- [Screenshots](#screenshots)
+- [License](#license)
 
-I wanted something simpler: press a hotkey, and my text gets fixed. No switching apps, no copy-paste dance. Just write, press a key, done.
+## Why I built this
 
-That's Encre. It sits in your system tray, listens for a hotkey, grabs your text, sends it to an AI, and replaces it with the corrected version. All in a few seconds.
-
-It also translates, and it types what I say out loud. Same deal every time: one hotkey, no app switching.
+English isn't my first language, and I got tired of copying text into a chatbot and back just to fix a typo. Encre sits in your system tray: select text, press a hotkey, and it comes back corrected, right where you wrote it. It translates, takes dictation and answers questions the same way. One hotkey, no app switching.
 
 ## Demo
 
-![Encre Demo](assets/demo.gif)
+![Revise, translate and ask, each with one hotkey](assets/demo.gif)
 
-## What It Does
+More demos: [Revise](assets/demos/revise.gif) · [Translate both ways](assets/demos/translate.gif) · [Ask and follow up](assets/demos/ask.gif) · [Card styles](assets/demos/card-styles.gif)
+
+## Features
 
 | Action              | What happens                                                          |
 | ------------------- | --------------------------------------------------------------------- |
 | Revise selection    | Select text, press the hotkey, it comes back corrected                |
-| Revise everything   | Same thing, but it selects the whole field first                      |
+| Revise everything   | Same, for the whole field                                             |
 | Translate selection | Translates between your two languages, choosing the direction for you |
 | Dictate             | Hold the hotkey, talk, and your words are typed where the cursor is   |
 | Ask by voice        | Hold the hotkey, ask a question, and the answer appears in a card     |
@@ -32,51 +45,37 @@ It also translates, and it types what I say out loud. Same deal every time: one 
 
 Text is replaced in place, and your clipboard is put back the way you left it.
 
-## How It Works
-
-1. You're writing somewhere (email, browser, notes, anywhere)
-2. Select your text (or use the "revise everything" hotkey)
-3. Press the hotkey
-4. Your text gets replaced with the AI-improved version
-
-That's it.
-
-## Installation
+## Install
 
 Download the [latest release](https://github.com/paradoxe35/encre/releases/latest) for your system:
 
-- **Windows**: Run the installer or extract the portable ZIP
-- **macOS**: Open the DMG (or unzip the ZIP), drag to Applications. First launch: right-click > Open. If macOS still refuses it, use System Settings > Privacy & Security > Open Anyway, or run `xattr -cr /Applications/Encre.app`
-- **Linux**: Use the .deb, .rpm or Arch package, the AppImage, or the portable archive
+- **Windows**: run the installer, or extract the portable ZIP
+- **macOS**: open the DMG (or unzip the ZIP) and drag Encre to Applications. On first launch, right-click > Open. If macOS still refuses it, use System Settings > Privacy & Security > Open Anyway, or run `xattr -cr /Applications/Encre.app`
+- **Linux**: use the .deb, .rpm or Arch package, the AppImage, or the portable archive
 
-On first launch, grant accessibility/input permissions when prompted - this is needed for global hotkeys to work.
+Grant the accessibility/input permission when asked: global hotkeys need it.
 
-### Linux Users
-
-**Wayland users only**: You need to be in the `input` group for hotkeys to work:
+**Linux on Wayland** needs your user in the `input` group (X11 works out of the box):
 
 ```bash
-sudo usermod -aG input $USER
-# Then log out and log back in
+sudo usermod -aG input $USER   # then log out and back in
 ```
 
-X11 users don't need this - hotkeys work out of the box.
-
-**Required packages** (Debian/Ubuntu - the .deb installs these automatically):
+**Linux packages**, if you don't use the .deb (which installs them for you):
 
 ```bash
 sudo apt install libgl1 libx11-6 libxext6 libxcb1 libxinerama1 libxtst6 libxdo3 libxkbcommon0 libxi6 libxcursor1 libxrandr2 libxrender1 libxfixes3 libxxf86vm1 libasound2
 ```
 
-## Quick Start
+## Quick start
 
-1. Launch Encre (it appears in your system tray)
+1. Launch Encre; it appears in your system tray
 2. Right-click the tray icon > Settings
-3. Under **AI**, add your API key for OpenAI, Claude, Gemini, or OpenRouter
+3. Under **AI**, add an API key for OpenAI, Claude, Gemini or OpenRouter
 4. For dictation, switch it on under **Hotkeys**, then download a model under **Speech**
-5. Start writing somewhere, select text, press the hotkey
+5. Select some text anywhere and press the hotkey
 
-## Default Hotkeys
+## Hotkeys
 
 | Action              | Linux              | Windows            | macOS               |
 | ------------------- | ------------------ | ------------------ | ------------------- |
@@ -87,58 +86,47 @@ sudo apt install libgl1 libx11-6 libxext6 libxcb1 libxinerama1 libxtst6 libxdo3 
 | Ask by voice        | `Ctrl+Alt+A`       | `Ctrl+Alt+A`       | `Ctrl+Option+A`     |
 | Ask by typing       | `Ctrl+Alt+K`       | `Ctrl+Alt+K`       | `Ctrl+Option+K`     |
 
-Change them in Settings > Hotkeys. Translate, dictate and ask ship switched off - turn them on there when you want them.
+Only the two revise actions are on at first. Switch the others on, or change any hotkey, under Settings > Hotkeys.
 
-## Supported AI Providers
+## AI providers
 
-| Provider   | Default Model         | Other Examples                          |
+| Provider   | Default model         | Other examples                          |
 | ---------- | --------------------- | --------------------------------------- |
 | OpenAI     | gpt-6-luna            | gpt-6-sol, gpt-5-nano                   |
 | Claude     | claude-haiku-4-5      | claude-sonnet-5                         |
 | Gemini     | gemini-3.1-flash-lite | gemini-3.5-flash, gemini-2.5-flash-lite |
 | OpenRouter | openai/gpt-6-luna     | any model it serves                     |
 
-You can also add custom OpenAI-compatible providers (local LLMs, Together AI) with their own base URL, and mark them as needing no API key.
-
-A few things worth knowing:
-
-- Each action can use a different provider, or just follow the default
-- Start a selection with `@name` to send that one request to a specific provider
-
-## Prompts
-
-Each action has its own prompt, editable under Settings > Actions. Leave one empty to use the built-in.
-
-Translation works from a language pair you pick (88 languages). It detects which of the two you wrote in and translates to the other, so one hotkey covers both directions.
+- Add any OpenAI-compatible provider (a local LLM, Together AI) with its own base URL, with or without an API key
+- Each action can use its own provider, and starting a selection with `@name` sends that one request to a specific provider
+- Each action's prompt is editable under Settings > Actions; leave it empty to use the built-in
+- Translation works between a language pair you pick (88 languages), detecting which of the two you wrote in
 
 ## Dictation
 
-Hold the dictate hotkey, talk, release. The transcript is typed at your cursor. You can switch it to toggle mode if you prefer press-to-start, press-to-stop.
+Hold the dictate hotkey, talk, release: the transcript is typed at your cursor. Prefer press-to-start, press-to-stop? Switch it to toggle mode.
 
-Transcription runs **locally by default** - audio never leaves your machine. There are 69 models to choose from (Whisper, Parakeet, Moonshine, Voxtral and others), listed fastest-on-your-machine first.
-
-- Some models transcribe while you speak, so the text is ready as soon as you release the key
+- Runs **locally by default**, so audio never leaves your machine. Choose from 70+ models (Whisper, Parakeet, Moonshine, Voxtral and others), fastest on your machine first; some transcribe while you speak
 - Drop your own `.gguf` or `.bin` into `~/.encre/models` and it shows up in the list
-- Prefer a hosted service? Point Speech at OpenAI, Groq, or anything OpenAI-compatible
+- Or use a hosted service: OpenAI, Groq, or anything OpenAI-compatible
 - Optionally clean the transcript up with your AI provider before it's typed
-- Other audio fades down while you talk and back up after: each app's volume on Linux and Windows, the output volume on macOS. Switch it off under Speech options
+- Other audio fades down while you talk and back up after; switch it off under Speech
 
 ## Ask
 
-Ask the AI without leaving what you're doing. The answer streams into a small card where the indicator shows; nothing is typed into your app.
+Ask the AI without leaving what you're doing. The answer streams into a small card; nothing is typed into your app.
 
-- **By voice**: hold the ask hotkey, say your question, release. It uses the same speech model as dictation.
-- **By typing**: press the type hotkey and the card opens with the keyboard in its input. `Enter` sends, `Shift+Enter` adds a line.
+- **By voice**: hold the ask hotkey, say your question, release. It uses the dictation model
+- **By typing**: press the type hotkey and type. `Enter` sends, `Shift+Enter` adds a line
+- Follow up from the card's input, copy an answer with its button, and close it with `Esc` from any window
+- **Remembered messages**: Ask forgets by default. Set it to 2 to send the previous question and answer along with a new one, up to 100. The oldest drop out past about 24,000 characters, and Clear history in the History tab makes it forget
+- **Card style**: Solid, Glass, Graphite, Midnight, Aurora, Paper or Terminal, in four text sizes
 
-A typed question keeps the input open for the next one; on a spoken answer, press the type hotkey to follow up. Copy an answer with the button, and close the card with `Esc`, from whichever window you are in. The prompt, provider, timeout, card style and answer text size live under Settings > Actions > Ask; the timeout counts silence, so a long answer is never cut off while it is still being written.
-
-Ask forgets by default. Raise **Remembered messages** to send earlier questions and their answers along with a new one, so it can follow up: 2 adds the previous exchange, up to 100. The oldest are left out once they would pass about 24,000 characters, and Clear history in the History tab makes it forget.
-
-## History
-
-Settings > History keeps the last 200 actions - what you sent, what came back, which model handled it. It's a local file; nothing is uploaded.
+All of it lives under Settings > Actions > Ask. The timeout counts silence, so a long answer is never cut off while it's still being written.
 
 ## Configuration
+
+Settings > History keeps your last 200 actions (what you sent, what came back, which model answered) in a local file; nothing is uploaded.
 
 Everything lives in one folder, created on first run:
 
@@ -147,43 +135,44 @@ Everything lives in one folder, created on first run:
 | Linux / macOS | `~/.encre/`             |
 | Windows       | `%USERPROFILE%\.encre\` |
 
-It holds your settings and API keys (`config.json`), downloaded speech models (`models/`), recent actions and logs.
+It holds your settings and API keys (`config.json`), speech models (`models/`), history and logs.
 
-## Building From Source
+## Building from source
 
-You'll need:
-
-- Go 1.26+ with `CGO_ENABLED=1`
-- Rust toolchain (stable)
-- CMake
-- Platform dependencies (see `rust-ffi/README.md`)
+You'll need Go 1.26+ with `CGO_ENABLED=1`, a stable Rust toolchain, CMake, and the platform dependencies listed in `rust-ffi/README.md`.
 
 ```bash
-make build    # Build for current platform
-make run      # Run locally
-make test     # Run tests
+make build    # build for the current platform
+make run      # run locally
+make test     # run the tests
 ```
 
-The app is a Go frontend (Fyne UI) over a Rust core that handles hotkeys, clipboard, key simulation and speech.
+Encre is a Go frontend (Fyne) over a Rust core that handles hotkeys, the clipboard, key simulation and speech.
 
 ## Troubleshooting
 
-**Hotkeys not working?**
+**Hotkeys not working?** Check only one Encre is running (look in the tray). On macOS, grant Accessibility in System Settings; on Linux Wayland, join the `input` group.
 
-- Check that only one instance is running (look in system tray)
-- On macOS: grant Accessibility permissions in System Settings
-- On Linux Wayland: make sure you're in the `input` group (X11 doesn't need this)
+**Revisions failing?** Check your API key, then the logs in `~/.encre/logs/`.
 
-**Revisions failing?**
+**Dictation not working?** Make sure a model is downloaded and the right microphone selected under Settings > Speech. On Linux, install `libasound2` if it's missing.
 
-- Check your API key is valid
-- Look at logs in `~/.encre/logs/`
+## Screenshots
 
-**Dictation not working?**
-
-- Make sure a model is downloaded in Settings > Speech
-- Check the right microphone is selected there
-- On Linux, install `libasound2` if it's missing
+<table>
+  <tr>
+    <td align="center"><img src="assets/screenshots/ai.png" width="400" alt="AI provider settings"><br><sub>AI provider and model</sub></td>
+    <td align="center"><img src="assets/screenshots/hotkeys.png" width="400" alt="Hotkey settings"><br><sub>Hotkeys, each switchable</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/ask.png" width="400" alt="Ask settings"><br><sub>Ask: memory, card style, text size</sub></td>
+    <td align="center"><img src="assets/screenshots/speech.png" width="400" alt="Speech settings"><br><sub>Local speech models</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/history.png" width="400" alt="History"><br><sub>History of recent actions</sub></td>
+    <td align="center"><img src="assets/screenshots/system.png" width="400" alt="System settings"><br><sub>Theme, startup and paste shortcut</sub></td>
+  </tr>
+</table>
 
 ## License
 
