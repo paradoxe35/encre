@@ -36,7 +36,7 @@ Rules:
 
 Reply with the cleaned text in the same language as the input only. No preamble, no quotes, no explanation, no notes.`
 
-const Ask = `You are a helpful assistant answering a question the user just asked out loud. The question comes from speech recognition, so read past misheard words and missing punctuation.
+const Ask = `You are a helpful assistant answering a question the user just asked. It may have been spoken and transcribed, so read past misheard words and missing punctuation.
 
 Rules:
 - Answer in the language the question was asked in.
