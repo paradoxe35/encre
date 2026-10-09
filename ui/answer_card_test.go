@@ -174,6 +174,36 @@ func TestTheWheelScrollsAnAnswerThatOutgrewTheCard(t *testing.T) {
 	}
 }
 
+// streamInto opens a card and returns a way to send it more of a long answer, rendered at once.
+func streamInto(t *testing.T) (*AnswerCard, func(paragraphs int, done bool)) {
+	t.Helper()
+	card, _ := newCard(t)
+	var batch func()
+	card.later = func(_ time.Duration, run func()) { batch = run }
+	update, _, _ := card.Open("q", func() {})
+	return card, func(paragraphs int, done bool) {
+		update(strings.Repeat("A long paragraph that keeps going. ", paragraphs), done)
+		if !done {
+			batch()
+		}
+	}
+}
+
+// A reader who scrolled is left where they are while the answer keeps coming.
+func TestAReaderKeepsTheirPlaceWhileTheAnswerGrows(t *testing.T) {
+	card, stream := streamInto(t)
+	stream(100, false)
+	stream(200, false)
+	card.scroll.ScrollToTop()
+
+	card.scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.NewDelta(0, -120)})
+	reading := card.scroll.Offset.Y
+	stream(400, true)
+	if card.scroll.Offset.Y != reading {
+		t.Fatalf("the answer moved the reader from %v to %v", reading, card.scroll.Offset.Y)
+	}
+}
+
 func TestPromptPutsTheKeyboardInTheInput(t *testing.T) {
 	card, _ := newCard(t)
 

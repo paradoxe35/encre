@@ -476,10 +476,13 @@ func (c *AnswerCard) fit() fyne.Size {
 	width := c.width()
 	if c.reading.Visible() {
 		// Measuring resizes the answer; left so, the scroll would see nothing to scroll once the card
-		// stops growing, and ignore the wheel until the pointer moved over it.
+		// stops growing, and ignore the wheel until the pointer moved over it. Laying it out again
+		// clamps the scroll to that empty answer first, so the reader's place is put back after.
+		reading := c.scroll.Offset
 		c.content.Resize(fyne.NewSize(width-2*answerInset, 0))
 		height += max(c.content.MinSize().Height-c.scroll.MinSize().Height, 0)
 		c.scroll.Refresh()
+		c.scroll.ScrollToOffset(reading)
 	}
 	return fyne.NewSize(width, min(height, answerMaxHeight))
 }
