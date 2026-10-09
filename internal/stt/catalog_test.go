@@ -172,7 +172,7 @@ func TestCatalogLanguagesAllNamed(t *testing.T) {
 	}
 }
 
-// The parsed catalog slice has spare capacity; appending in place would scribble into memory the catalog still owns.
+// Appending in place would write into spare capacity the catalog still owns.
 func TestCatalogueDoesNotAliasTheCatalog(t *testing.T) {
 	published := Models().Models
 	if cap(published) == len(published) {

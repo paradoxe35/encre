@@ -10,8 +10,7 @@ import (
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
-// Saving with a built-in provider on the AI tab must keep its BaseURL, or
-// GetConfiguredProviderNames drops it and any operation override silently resets.
+// Without its BaseURL, GetConfiguredProviderNames drops the provider and resets any override.
 func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	utils.EnsureAppHomeDir()
@@ -70,8 +69,7 @@ func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 	}
 }
 
-// Publishing before applyActionSettings writes the hotkey flags would make
-// listeners re-register shortcuts from a config that still says this one is off.
+// Publishing early would re-register shortcuts from a config that still says this one is off.
 func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	utils.EnsureAppHomeDir()

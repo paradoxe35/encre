@@ -23,8 +23,7 @@ func encreNotificationAuthorization(granted C.bool, reason *C.char) {
 	logger.Warn("Notification permission unavailable: notifications fall back to AppleScript", "reason", C.GoString(reason))
 }
 
-// Asked at launch rather than with the first notification, which macOS refuses while its
-// permission prompt is still up, and a refusal recorded once suppresses the prompt for good.
+// Asked at launch: macOS drops notifications while its prompt is up, and a refusal sticks.
 func prepareNotifications() {
 	C.EncreRequestNotificationAuthorization()
 }

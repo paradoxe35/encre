@@ -2,8 +2,7 @@ package ai
 
 import "strings"
 
-// Strips a code fence or quote pair wrapping the whole reply, since it is pasted straight into
-// the user's text. Delimiters inside longer prose are content and stay.
+// The reply is pasted into the user's text, so a fence or quotes wrapping all of it are stripped.
 func CleanResponse(raw string) string {
 	text := strings.TrimSpace(raw)
 	if text == "" {

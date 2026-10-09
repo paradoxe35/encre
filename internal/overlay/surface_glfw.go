@@ -17,8 +17,7 @@ import (
 // Distance from the bottom edge of the work area.
 const bottomMargin = 48
 
-// Supported reports whether this session can float a window. Wayland offers no way to
-// place one or keep it above the others without a protocol most desktops lack.
+// Wayland offers no way to place a window or keep it on top without a rarely supported protocol.
 func Supported() bool {
 	return glfw.GetPlatform() != glfw.PlatformWayland
 }
@@ -26,8 +25,7 @@ func Supported() bool {
 // The GL function table is process-wide and shared with Fyne's painter.
 var initGL sync.Once
 
-// glfwSurface rides on the GLFW instance Fyne already runs: the window is created on
-// Fyne's main thread and shown without focus, above everything, letting clicks through.
+// Rides on Fyne's GLFW: made on Fyne's main thread, unfocused, on top, letting clicks through.
 type glfwSurface struct {
 	window *glfw.Window
 	width  int
@@ -58,8 +56,7 @@ func openSurface() (surface, error) {
 		logger.Warn("Indicator window cannot be transparent here; is a compositor running?")
 	}
 
-	// GLFW's hints stop it asking for focus; the window system has its own ideas
-	// about new windows, so each platform tells it not to.
+	// GLFW's hints stop it asking for focus; the window system must be told separately.
 	noFocus(window)
 
 	focus, known := focusPoint()
@@ -143,8 +140,7 @@ func setHints() {
 	glfw.WindowHint(glfw.ContextVersionMinor, 1)
 }
 
-// Fyne sets the hints it cares about before each window, but not these; left
-// behind they would make the settings window float and ignore the mouse.
+// Fyne does not set these; left behind they would make the settings window float and ignore clicks.
 func resetHints() {
 	glfw.WindowHint(glfw.Visible, glfw.True)
 	glfw.WindowHint(glfw.Decorated, glfw.True)
@@ -182,9 +178,7 @@ func (s *glfwSurface) Close() {
 	s.window.Destroy()
 }
 
-// Transparent runs create, which makes a window, with a framebuffer that keeps its alpha, so a
-// compositor can show the desktop through it. The hint is reset at once: Fyne never resets hints,
-// so it would otherwise reach every window made afterwards.
+// The alpha framebuffer hint is reset at once: Fyne never resets hints, so it would leak.
 func Transparent(create func()) {
 	glfw.WindowHint(glfw.TransparentFramebuffer, glfw.True)
 	defer glfw.WindowHint(glfw.TransparentFramebuffer, glfw.False)

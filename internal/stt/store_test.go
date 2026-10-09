@@ -29,7 +29,7 @@ func digest(body []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// serve honours Range so resume can be exercised; ignoreRange reproduces a server that always answers 200.
+// ignoreRange reproduces a server that always answers 200.
 func serve(t *testing.T, body []byte, ignoreRange bool) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

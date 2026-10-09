@@ -2,8 +2,7 @@ package stt
 
 import "fmt"
 
-// Model mirrors one entry of models.json; field order is the file's key
-// order so the generator writes the same shape it reads.
+// Field order is models.json's key order so the generator writes the shape it reads.
 type Model struct {
 	ID          string `json:"id"`
 	Slug        string `json:"slug"`
@@ -24,8 +23,7 @@ type Model struct {
 	Streaming      bool     `json:"streaming"`
 	LanguageDetect bool     `json:"language_detect"`
 
-	// WordErrorRate is a percentage, as published: 7.53 means 7.53%. Nil when
-	// the card publishes none, which is not the same as a perfect zero.
+	// A published percentage (7.53 means 7.53%); nil when unpublished, which is not zero.
 	WordErrorRate  *float64 `json:"word_error_rate"`
 	RealtimeFactor float64  `json:"realtime_factor"`
 	SpeedScore     float64  `json:"speed_score"`

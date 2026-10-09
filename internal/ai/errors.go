@@ -8,8 +8,7 @@ import (
 	"strings"
 )
 
-// APIError carries the status alongside the message, so a caller can react to a 400 without
-// matching on wording that every provider spells differently.
+// APIError keeps the status so callers can react to a 400 without matching provider wording.
 type APIError struct {
 	StatusCode int
 	Message    string

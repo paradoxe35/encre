@@ -14,7 +14,6 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-// ForwardNativeLogs sends what the Rust library and the speech engine report into the app log.
 func ForwardNativeLogs() {
 	C.encre_log_set_callback(C.encre_LogCallback(C.nativeLogGateway))
 }

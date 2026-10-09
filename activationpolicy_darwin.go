@@ -12,8 +12,7 @@ void SetActivationPolicyRegular(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-        // Activate on the next run-loop turn: switching policy and activating in one turn
-        // leaves the window behind whatever was in front.
+        // Activate next run-loop turn: doing both in one turn leaves the window behind the front app.
         dispatch_async(dispatch_get_main_queue(), ^{
             [NSApp activateIgnoringOtherApps:YES];
         });

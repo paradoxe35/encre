@@ -1,12 +1,10 @@
-// Package overlay shows a small floating indicator while dictating. It never takes
-// keyboard focus: the words being dictated must keep landing in the user's app.
+// Package overlay floats a dictation indicator that never takes keyboard focus.
 package overlay
 
 type Phase int
 
 const (
-	// Listening shows the voice, Transcribing that speech is being turned into
-	// text, Thinking that a provider is rewriting text.
+	// Thinking means a provider is rewriting text.
 	Listening Phase = iota
 	Transcribing
 	Thinking

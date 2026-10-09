@@ -1,5 +1,4 @@
-//! Hands every diagnostic from this crate, transcribe-cpp and ggml to the host, so they
-//! land in the application's log instead of a stderr nobody reads.
+//! Routes diagnostics from this crate, transcribe-cpp and ggml into the host's log.
 
 use std::ffi::CString;
 use std::io;
@@ -21,7 +20,7 @@ pub enum LogLevel {
     Error = 3,
 }
 
-/// Receives one message at a time, from any thread. The string is only valid during the call.
+/// Called from any thread; the string is only valid during the call.
 pub type LogCallback = extern "C" fn(level: c_int, message: *const c_char);
 
 static CALLBACK: Mutex<Option<LogCallback>> = Mutex::new(None);
@@ -31,8 +30,7 @@ pub extern "C" fn encre_log_set_callback(callback: LogCallback) {
     *CALLBACK.lock() = Some(callback);
 }
 
-/// Routes `tracing`, `log` and the native speech library into the callback. Safe to call
-/// more than once; only the first installs.
+/// Idempotent; only the first call installs.
 pub fn install() {
     let installed = tracing_subscriber::registry()
         .with(LevelFilter::INFO)
@@ -44,7 +42,7 @@ pub fn install() {
     }
 }
 
-/// The message and its fields on one line; the level travels separately.
+/// The level travels separately from the line.
 fn layer<S>() -> impl tracing_subscriber::Layer<S>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
@@ -92,7 +90,7 @@ impl<'a> MakeWriter<'a> for ToCallback {
     }
 }
 
-/// One writer per event: the formatter writes the line, the drop delivers it.
+/// The formatter writes the line; the drop delivers it.
 pub struct LineWriter {
     level: LogLevel,
     line: Vec<u8>,

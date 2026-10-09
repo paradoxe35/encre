@@ -13,8 +13,7 @@ const maxEventSize = 1 << 20
 
 type activityKey struct{}
 
-// WithActivity has onEvent called for every event a streamed reply sends, thinking included, so
-// a caller can time silence: a reasoning model can think for a minute before it writes a word.
+// Thinking events count too: a reasoning model can think for a minute before it writes a word.
 func WithActivity(ctx context.Context, onEvent func()) context.Context {
 	return context.WithValue(ctx, activityKey{}, onEvent)
 }
@@ -39,8 +38,6 @@ func (p *prefix) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-// readEvents hands the data of each server-sent event to handle, until handle reports the stream
-// done or the body ends. Comments and fields other than data are skipped.
 func readEvents(body io.Reader, handle func(data []byte) (done bool, err error)) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxEventSize)

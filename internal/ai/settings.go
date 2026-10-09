@@ -24,7 +24,7 @@ var builtIns = map[string]builtIn{
 
 const defaultTemperature = 1.0
 
-// FromSettings builds the provider configured under name. A custom provider speaks the OpenAI protocol.
+// A custom provider speaks the OpenAI protocol.
 func FromSettings(name string, settings config.ProviderSettings, apiKey string, custom bool) (Provider, error) {
 	target := endpoint{
 		apiKey:      apiKey,
@@ -62,8 +62,7 @@ func FromSettings(name string, settings config.ProviderSettings, apiKey string, 
 	}, nil
 }
 
-// The OpenAI-compatible servers people run (Ollama, LM Studio, llama.cpp, vLLM) all serve under /v1,
-// so a bare address gets it rather than failing with a 404 or 405.
+// Local OpenAI-compatible servers (Ollama, LM Studio, llama.cpp, vLLM) all serve under /v1.
 func withAPIVersion(baseURL string) string {
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Host == "" || strings.Trim(parsed.Path, "/") != "" {

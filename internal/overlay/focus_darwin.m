@@ -6,9 +6,7 @@ static BOOL encre_overlay_never_key(id self, SEL _cmd) {
     return NO;
 }
 
-// GLFW's window class answers YES to becoming key so borderless windows can take
-// input; this one must never, or an activation of the app could hand it the
-// keyboard. A runtime subclass answering NO is swapped in before the window shows.
+// GLFW's class lets borderless windows become key; a runtime subclass answering NO is swapped in.
 static void encre_overlay_refuse_key(NSWindow* window) {
     static Class refusing = Nil;
     if (refusing == Nil) {
@@ -30,8 +28,7 @@ void encre_overlay_no_focus(void* window) {
         | NSWindowCollectionBehaviorFullScreenAuxiliary];
 }
 
-// The blur behind a window is private API that Terminal, iTerm2 and others use. It is looked up at run
-// time, so a macOS without it only loses the blur.
+// Private API (Terminal, iTerm2 use it) looked up at run time; without it only the blur is lost.
 typedef void* (*connection_fn)(void);
 typedef int32_t (*blur_fn)(void*, NSInteger, int32_t);
 static connection_fn connection = NULL;

@@ -96,8 +96,7 @@ func TestGeminiTranscribeRequest(t *testing.T) {
 	}
 }
 
-// Gemini 3.1 Pro refuses the "minimal" level, and an older model refuses a level
-// outright. Either way the take must still be transcribed rather than lost.
+// Gemini 3.1 Pro refuses "minimal" and older models refuse a level; the take must survive.
 func TestGeminiRetriesWithoutThinkingConfig(t *testing.T) {
 	var attempts int
 	var sentBudget []bool
@@ -191,9 +190,7 @@ func TestParseGeminiResponseEmpty(t *testing.T) {
 	}
 }
 
-// Gemini 3 takes a level and Gemini 2.5 a budget; sending both is rejected, and
-// sending the wrong one is accepted and ignored, which is worse - it looks like
-// it worked while the model thinks at full depth.
+// Both fields is rejected; the wrong one is silently ignored, which is worse.
 func TestThinkingConfigMatchesModelGeneration(t *testing.T) {
 	cases := []struct {
 		model      string
@@ -279,8 +276,7 @@ func TestGeminiRequestSendsOneThinkingField(t *testing.T) {
 	}
 }
 
-// A blocked or truncated answer is a normal 200 holding no text; dictating into
-// silence would otherwise look like the hotkey never fired.
+// A blocked or truncated answer is an empty 200; silence would look like a dead hotkey.
 func TestGeminiReportsAnEmptyAnswer(t *testing.T) {
 	cases := []struct {
 		name string
@@ -335,8 +331,7 @@ func TestGeminiSkipsThoughtParts(t *testing.T) {
 	}
 }
 
-// gemini-3.5-transcribe is a speech model on its own endpoint: no prompt, and
-// the language is a field rather than a sentence.
+// gemini-3.5-transcribe has its own endpoint: no prompt, language as a field.
 func TestGeminiTranscribeModelUsesInteractions(t *testing.T) {
 	var gotPath string
 	var sent interactionsRequest
@@ -439,8 +434,7 @@ func TestParseInteractionsResponseJoinsTextContent(t *testing.T) {
 	}
 }
 
-// The -live twin needs a websocket this code does not open; the error should name the
-// model that does work rather than relay the endpoint's confusing one.
+// The -live twin needs a websocket; the error should name the model that works.
 func TestGeminiLiveModelIsRefusedWithAdvice(t *testing.T) {
 	var called bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

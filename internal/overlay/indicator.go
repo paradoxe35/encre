@@ -28,9 +28,7 @@ type surface interface {
 	Close()
 }
 
-// Indicator is the shared window. Each feature drives it through its own Owner, so
-// one feature ending never hides what another is still showing. It animates on its
-// own goroutine while visible and holds no window at all while it is not.
+// Each feature drives it through its own Owner, so one ending never hides another's.
 type Indicator struct {
 	runOnMain func(func())
 	open      func() (surface, error)
@@ -48,8 +46,7 @@ type Indicator struct {
 	failedAt time.Time
 }
 
-// New returns an indicator drawing on the platform surface. runOnMain must run its
-// argument on the UI thread and wait for it.
+// runOnMain must run its argument on the UI thread and wait for it.
 func New(runOnMain func(func())) *Indicator {
 	return newIndicator(runOnMain, openSurface, time.Now, frameInterval)
 }
@@ -105,8 +102,7 @@ func (i *Indicator) Level(rms float32) {
 	i.level = loudness(rms)
 }
 
-// Close takes the window down at once and waits for it to be gone; nothing is
-// shown again afterwards. Called before the window system goes away.
+// Waits for the window to be gone; call before the window system goes away.
 func (i *Indicator) Close() {
 	i.mu.Lock()
 	i.closing = true
@@ -204,8 +200,7 @@ func advance(trace [traceLen]float32, level float32) [traceLen]float32 {
 	return trace
 }
 
-// Speech RMS lives a few percent above silence, so a straight meter would barely
-// move; mapping decibels from -45 (quiet) to -12 (loud) onto 0..1 gives it life.
+// Speech RMS sits barely above silence, so -45..-12 dB is mapped onto 0..1.
 func loudness(rms float32) float32 {
 	if rms <= 0 {
 		return 0

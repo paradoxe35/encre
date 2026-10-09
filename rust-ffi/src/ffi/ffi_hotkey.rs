@@ -8,8 +8,7 @@ use parking_lot::Mutex;
 use rdev::Event;
 use rdev::{EventType, Key};
 
-// Wayland needs rdev's evdev grab (user in the `input` group); X11 and Windows work through
-// listen() with no special permissions. macOS has its own tap, see tap_macos.
+// Wayland needs rdev's evdev grab (user in `input` group); macOS uses tap_macos.
 #[cfg(target_os = "windows")]
 use rdev::listen;
 #[cfg(target_os = "linux")]
@@ -33,7 +32,6 @@ fn is_wayland() -> bool {
     std::env::var("WAYLAND_DISPLAY").is_ok()
 }
 
-/// Receives the action string the binding was registered with.
 pub type HotkeyCallback = extern "C" fn(*const c_char);
 
 /// Receives the action string and 1 on key down, 0 on key up.
@@ -69,8 +67,7 @@ impl Modifier {
     }
 }
 
-/// Resolved once at registration rather than re-derived from strings on every key press, since
-/// matching runs inside the system's own event callback.
+/// Resolved at registration since matching runs inside the system's event callback.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct Modifiers {
     ctrl: bool,
@@ -111,7 +108,6 @@ impl Modifiers {
         }
     }
 
-    /// From a macOS event's flags, which name the modifiers down as the event was made.
     #[cfg(any(test, target_os = "macos"))]
     fn from_flags(flags: u64) -> Self {
         Self {
@@ -131,8 +127,7 @@ const MODIFIERS: [Modifier; 4] = [
     Modifier::Meta,
 ];
 
-/// One table for both directions, so a name the recorder emits but the listener cannot match
-/// fails at registration instead of saving as a binding that silently never fires.
+/// One table both ways, so a name the listener cannot match fails at registration.
 const KEYS: &[(Key, &str)] = &[
     (Key::KeyA, "a"),
     (Key::KeyB, "b"),
@@ -212,10 +207,9 @@ fn canonical_key_name(name: &str) -> Option<&'static str> {
         .map(|(_, name)| *name)
 }
 
-/// Esc is the one key bound alone: it only closes what Encre shows, and is bound only while it shows.
+/// Bound only while Encre shows something Esc can close.
 const STANDALONE_KEY: &str = "escape";
 
-/// A binding is modifiers, then optionally one key: `ctrl+alt+space`, or `ctrl+cmd` on its own.
 /// A modifier is required, or the binding would fire on ordinary typing.
 fn parse_binding(binding: &str) -> Result<(Modifiers, Option<&'static str>), String> {
     let parts: Vec<&str> = binding
@@ -260,7 +254,6 @@ struct HotkeyBinding {
     action: String,
     trigger: Trigger,
     modifiers: Modifiers,
-    /// `None` for a modifier-only binding such as `ctrl+cmd`.
     key: Option<&'static str>,
 }
 
@@ -291,18 +284,15 @@ fn fire(binding: &HotkeyBinding, down: bool) {
     }
 }
 
-/// A modifier-only binding fires on release, and only if nothing else happened while it was held;
-/// firing on press would trigger `ctrl+cmd` on the way to `ctrl+cmd+space`.
+/// Modifier-only bindings fire on release so `ctrl+cmd` does not fire on the way to `ctrl+cmd+space`.
 #[derive(Default)]
 struct ListenerState {
     held: Modifiers,
     /// The largest modifier set held since the last time every modifier was up.
     chord: Modifiers,
-    /// Something beyond the chord's own modifiers happened while it was held.
     interrupted: bool,
-    /// The non-modifier key currently down, so auto-repeat is not read as a second press.
+    /// Tracked so auto-repeat is not read as a second press.
     held_key: Option<&'static str>,
-    /// The key that started a push-to-talk hold, so the up edge is only sent for a hold that began.
     holding: Option<&'static str>,
     delivery_announced: bool,
     unmatched_announced: Vec<&'static str>,
@@ -318,8 +308,7 @@ impl ListenerState {
         }
     }
 
-    /// macOS: state follows each event's modifier flags rather than press/release edges,
-    /// which our own posted key-ups would skew. Modifier changes arrive without a key.
+    /// Follows each event's flags, not edges, which our own posted key-ups would skew.
     #[cfg(any(test, target_os = "macos"))]
     fn observe(
         &mut self,
@@ -346,7 +335,6 @@ impl ListenerState {
         if self.held.get(modifier) {
             return;
         }
-        // The first modifier down begins a chord, whatever was typed before it.
         if self.held.is_empty() {
             self.chord = Modifiers::default();
             self.interrupted = false;
@@ -362,7 +350,7 @@ impl ListenerState {
         let before = self.held;
         self.held.set(modifier, false);
 
-        // The first modifier to come up ends the chord; releasing the rest must not fire again.
+        // Releasing the remaining modifiers must not fire again.
         if !self.interrupted && before == self.chord {
             for binding in bindings.lock().iter() {
                 if binding.key.is_none() && binding.modifiers == before {
@@ -388,7 +376,7 @@ impl ListenerState {
         self.held_key = Some(name);
         self.interrupted = true;
 
-        // Logged once, without naming the key: proof that key events arrive at all.
+        // Logged once, without naming the key, to prove key events arrive at all.
         if !self.delivery_announced {
             self.delivery_announced = true;
             tracing::info!("The system is delivering key events to Encre");
@@ -416,7 +404,7 @@ impl ListenerState {
             if self.held_key == name {
                 self.held_key = None;
             }
-            // Only the named key ends a hold; a modifier released first is a slipped finger.
+            // A modifier released first is a slipped finger, not the end of the hold.
             if let (Some(name), Some(holding)) = (name, self.holding)
                 && name == holding
             {
@@ -432,8 +420,7 @@ impl ListenerState {
         self.modifier_up(modifier, bindings);
     }
 
-    /// Logged once per key; it tells a wrong binding apart from a listener the system never
-    /// delivers to.
+    /// Tells a wrong binding apart from a listener the system never delivers to.
     fn note_unmatched(&mut self, name: &'static str, bindings: &[HotkeyBinding]) {
         if self.held.is_empty() || self.unmatched_announced.contains(&name) {
             return;
@@ -458,8 +445,7 @@ pub struct SimpleHotkeyManager {
     bindings: Arc<Mutex<Vec<HotkeyBinding>>>,
     listener_handle: Option<thread::JoinHandle<()>>,
     active: Arc<Mutex<bool>>,
-    /// The listener fails on its own thread and a macOS .app bundle discards stdout, so the
-    /// error is surfaced here instead of the shortcut going dead without a trace.
+    /// The listener fails on its own thread and a macOS .app discards stdout.
     listen_error: Arc<Mutex<Option<String>>>,
 }
 
@@ -523,8 +509,7 @@ impl SimpleHotkeyManager {
         *active = true;
         drop(active);
 
-        // rdev cannot stop a listener, so resume reuses this thread; a second one would fire
-        // every action twice.
+        // rdev cannot stop a listener; a second thread would fire every action twice.
         if self.listener_handle.is_some() {
             return Ok(());
         }
@@ -539,7 +524,7 @@ impl SimpleHotkeyManager {
             #[cfg(target_os = "macos")]
             {
                 let result = tap_macos::listen(move |tap| {
-                    // A panic here would unwind into the system's callback; caught so the listener lives on.
+                    // A panic must not unwind into the system's callback.
                     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         if tap.synthetic || !*active_flag.lock() {
                             return;
@@ -711,7 +696,6 @@ pub unsafe extern "C" fn encre_hotkey_register(
     }
 }
 
-/// Push-to-talk: the callback receives 1 on key down and 0 on key up.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_register_hold(
     handle: HotkeyManagerHandle,
@@ -756,7 +740,7 @@ pub unsafe extern "C" fn encre_hotkey_stop(handle: HotkeyManagerHandle) -> c_int
     }
 }
 
-/// Null when the listener is running. The caller frees the string with `encre_free_string`.
+/// Null when the listener is running. Free with `encre_free_string`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_listen_error(handle: HotkeyManagerHandle) -> *mut c_char {
     if handle.is_null() {
@@ -931,8 +915,7 @@ mod tests {
         assert_eq!(actions, vec!["revise_selection"]);
     }
 
-    /// ctrl+cmd+space opens the macOS emoji picker; the modifier-only binding must not fire on
-    /// the way there.
+    /// ctrl+cmd+space opens the macOS emoji picker.
     #[test]
     fn ctrl_cmd_space_leaves_the_selection_alone() {
         let actions = fired(
@@ -1062,7 +1045,6 @@ mod tests {
         assert_eq!(actions, vec!["revise_selection", "revise_selection"]);
     }
 
-    /// Auto-repeat redelivers the key press while the shortcut is held.
     #[test]
     fn holding_a_shortcut_runs_the_action_once() {
         let actions = fired(
@@ -1228,7 +1210,7 @@ mod tests {
         }
     }
 
-    /// The list mirrors what `keyNameToString` in ui/hotkey_capture.go can produce.
+    /// Mirrors what `keyNameToString` in ui/hotkey_capture.go can produce.
     #[test]
     fn every_name_the_recorder_can_produce_is_a_key_the_listener_knows() {
         let recorded = [
@@ -1263,9 +1245,7 @@ mod tests {
         }
     }
 
-    /// A Mac's event stream: every event carries the flags in force as it was made. rdev labels a
-    /// FlagsChanged press or release by comparing its flags with the previous one's, whoever
-    /// posted that one.
+    /// rdev labels a FlagsChanged by comparing its flags with the previous event's, whoever posted it.
     mod mac {
         use super::*;
 
@@ -1278,10 +1258,8 @@ mod tests {
         pub enum Step {
             Press(Key),
             Release(Key),
-            /// A press the listener is never shown.
             Unseen(Key),
-            /// A FlagsChanged the listener drops as synthetic; rdev has still taken its flags
-            /// as the next baseline.
+            /// Dropped as synthetic, but rdev still takes its flags as the next baseline.
             Dropped(u64),
         }
 
@@ -1313,7 +1291,6 @@ mod tests {
                 }
             }
 
-            /// Each delivered event with the flags it carries.
             fn run(script: &[Step]) -> Vec<(EventType, u64)> {
                 let mut mac = Mac {
                     physical: Modifiers::default(),
@@ -1344,8 +1321,7 @@ mod tests {
             }
         }
 
-        /// `from_flags` is the macOS listener, reading each event's flags; without it the state
-        /// trusts rdev's labels.
+        /// `from_flags` mimics the macOS listener; without it the state trusts rdev's labels.
         pub fn fired(bindings: &[(&str, &str)], script: &[Step], from_flags: bool) -> Vec<String> {
             let _serial = SERIAL.lock();
             FIRED.lock().clear();
@@ -1363,7 +1339,6 @@ mod tests {
                     state.process(event, &manager.bindings);
                     continue;
                 }
-                // The tap reports a modifier change on its own, with no key.
                 let key = match event {
                     EventType::KeyPress(key) | EventType::KeyRelease(key)
                         if Modifier::from_key(&key).is_some() =>
@@ -1377,8 +1352,7 @@ mod tests {
             FIRED.lock().clone()
         }
 
-        /// Three ctrl+option+space presses; the first one's action leaves a synthetic
-        /// FlagsChanged in rdev's baseline.
+        /// The first press's action leaves a synthetic FlagsChanged in rdev's baseline.
         pub fn three_presses_around_an_action() -> Vec<Step> {
             let mut script = Vec::new();
             for press in 0..3 {
@@ -1398,8 +1372,7 @@ mod tests {
         }
     }
 
-    /// rdev hands the second press's ctrl down over as a release; that press's own releases
-    /// bring the baseline back down, so the third fires.
+    /// rdev reports the second press's ctrl down as a release; the third must still fire.
     #[test]
     fn mislabelled_edges_drop_every_other_press() {
         let actions = mac::fired(MAC, &mac::three_presses_around_an_action(), false);

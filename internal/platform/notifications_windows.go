@@ -16,8 +16,7 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-// Toasts are posted under the app ID. Windows takes the header name and icon from a Start
-// menu shortcut that carries the ID as System.AppUserModel.ID; without one it prints the ID.
+// Windows takes the toast header and icon from a Start menu shortcut carrying the app ID.
 func RegisterNotifier(id, name string) {
 	exe, err := os.Executable()
 	if err != nil {

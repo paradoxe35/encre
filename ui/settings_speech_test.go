@@ -122,8 +122,7 @@ func TestSavedLanguageRestoredInServiceForm(t *testing.T) {
 	}
 }
 
-// Changing service is a switch like picking another local model; every hosted engine detects.
-// Matches Model.LanguageAfterSwitch.
+// Every hosted engine detects; matches Model.LanguageAfterSwitch.
 func TestServiceSwitchFallsBackToDetect(t *testing.T) {
 	w := newLanguageWindow("Google Gemini", "gemini-3.5-transcribe", "fr")
 	w.refreshLanguages(config.SpeechRemote)

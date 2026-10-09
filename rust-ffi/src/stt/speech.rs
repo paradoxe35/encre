@@ -2,14 +2,13 @@ use super::audio::SAMPLE_RATE;
 
 /// How far before a forced cut to look for a quiet moment.
 const SEARCH_WINDOW: usize = 3 * SAMPLE_RATE as usize;
-/// Loudness is judged over slices this long, stepped half a slice at a time.
+/// Stepped half a slice at a time.
 const SLICE: usize = SAMPLE_RATE as usize / 50;
 
-/// Speech kept from a take at 16 kHz, with the offsets where a pause split it into phrases.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Speech {
     pub samples: Vec<f32>,
-    /// Ascending sample offsets at which a phrase starts after a pause.
+    /// Sample offsets at which a phrase starts after a pause, ascending.
     pub pauses: Vec<usize>,
 }
 
@@ -22,7 +21,7 @@ impl Speech {
         std::mem::take(self)
     }
 
-    /// Drops the oldest samples so at most `max` remain; returns how many went.
+    /// Returns how many samples went.
     pub fn trim_to(&mut self, max: usize) -> usize {
         let dropped = self.samples.len().saturating_sub(max);
         if dropped == 0 {
@@ -43,9 +42,7 @@ impl Speech {
         self.samples.extend(burst.samples);
     }
 
-    /// Splits into pieces of at most `max` samples, cutting at pauses. Phrases are packed
-    /// together while they fit; a single phrase longer than `max` is cut into near-equal
-    /// parts, each cut at the quietest moment before its target so it falls between words.
+    /// A phrase longer than `max` is cut at quiet moments so cuts fall between words.
     pub fn pieces(&self, max: usize) -> Vec<&[f32]> {
         let len = self.samples.len();
         if len == 0 {
@@ -79,8 +76,7 @@ impl Speech {
         pieces
     }
 
-    /// Where each phrase ends, in order, with the recording's end last. Pauses out of
-    /// order or out of range are ignored rather than trusted.
+    /// Pauses out of order or out of range are ignored rather than trusted.
     fn phrase_ends(&self) -> Vec<usize> {
         let len = self.samples.len();
         let mut ends = Vec::with_capacity(self.pauses.len() + 1);
@@ -105,8 +101,7 @@ impl From<Vec<f32>> for Speech {
     }
 }
 
-/// Near-equal parts no longer than `max`, so a long stretch never leaves a tiny tail. Each
-/// cut moves back from its target to the quietest moment within reach.
+/// Near-equal parts, so a long stretch never leaves a tiny tail.
 fn quiet_cuts(samples: &[f32], max: usize) -> Vec<&[f32]> {
     let mut pieces = Vec::new();
     let mut rest = samples;
@@ -123,9 +118,7 @@ fn quiet_cuts(samples: &[f32], max: usize) -> Vec<&[f32]> {
     pieces
 }
 
-/// The middle of the quietest slice in the window ending at `target`, or `target` itself
-/// when the window is too short to judge.
-/// Splits at the quietest moment before the middle, so the second half does not start mid-word.
+/// So the second half does not start mid-word.
 pub(super) fn halves(samples: &[f32]) -> [&[f32]; 2] {
     let (first, second) = samples.split_at(quietest_before(samples, samples.len() / 2));
     [first, second]
@@ -193,7 +186,7 @@ mod tests {
         (n * SAMPLE_RATE as f32) as usize
     }
 
-    /// A steady tone: no slice is quieter than another by more than rounding.
+    /// No slice is quieter than another by more than rounding.
     fn tone(secs: f32) -> Speech {
         let samples: Vec<f32> = (0..seconds(secs))
             .map(|i| (i as f32 * 200.0 * std::f32::consts::TAU / SAMPLE_RATE as f32).sin() * 0.5)

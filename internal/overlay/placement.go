@@ -2,15 +2,13 @@ package overlay
 
 import "image"
 
-// screen is one monitor in the virtual desktop: its full bounds and the work area
-// left once panels are excluded. The first screen is the primary.
+// The work area excludes panels; the first screen is the primary.
 type screen struct {
 	bounds   image.Rectangle
 	workarea image.Rectangle
 }
 
-// workareaFor picks the screen holding the point the user is working at, or the
-// primary when the point is unknown or falls between screens.
+// Falls back to the primary when the point is unknown or between screens.
 func workareaFor(screens []screen, focus image.Point, known bool) image.Rectangle {
 	if len(screens) == 0 {
 		return image.Rectangle{}

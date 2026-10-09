@@ -18,8 +18,7 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-// Under X11 a held key repeats as release/press pairs. Releases are deferred this long and
-// cancelled by a matching press, so auto-repeat doesn't read as the user letting go.
+// X11 auto-repeat sends release/press pairs; releases wait this long for a cancelling press.
 const releaseGrace = 50 * time.Millisecond
 
 type HoldHandler func(down bool)
@@ -81,7 +80,7 @@ func rememberHold(action string, handler HoldHandler) {
 	holdBindings[action] = &holdBinding{handler: handler}
 }
 
-// forgetHold drops the binding. A hold still in progress is released first: no up edge will come for it.
+// A hold in progress is released first: no up edge will come for it.
 func forgetHold(action string) {
 	holdMu.Lock()
 	binding, ok := holdBindings[action]

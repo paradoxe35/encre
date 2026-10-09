@@ -17,8 +17,7 @@ import (
 	"github.com/go-gl/glfw/v3.4/glfw"
 )
 
-// Centre of the focused window through accessibility, which hotkeys already
-// require, else the pointer. Both are in the top-left coordinates GLFW uses.
+// Via accessibility (hotkeys already need it), else the pointer; top-left coordinates as in GLFW.
 func focusPoint() (image.Point, bool) {
 	var x, y C.int
 	if C.encre_overlay_focus_point(&x, &y) == 0 {
@@ -27,8 +26,7 @@ func focusPoint() (image.Point, bool) {
 	return image.Pt(int(x), int(y)), true
 }
 
-// A window that refuses to become key, at status level and on every space, so the
-// app the user was typing in keeps the keyboard.
+// Never becomes key, so the app the user is typing in keeps the keyboard.
 func noFocus(window *glfw.Window) {
 	C.encre_overlay_no_focus(window.GetCocoaWindow())
 }

@@ -198,8 +198,7 @@ func (p *Processor) Run(kind config.ActionKind) error {
 		return err
 	}
 
-	// Select again: a field can drop its selection while the model is working, and pasting
-	// without one inserts the result beside the original instead of replacing it.
+	// Reselect: a field can drop its selection meanwhile, and pasting then inserts beside the original.
 	if selectAll {
 		if err := input.FFISimulateSelectAll(); err != nil {
 			p.clipboardManager.Abandon()
@@ -279,8 +278,7 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 		return reply{}, fmt.Errorf("the model returned an empty result")
 	}
 
-	// The reply replaces the selection as it was, so the selection's own edges go back on. Without
-	// them "word " returns as "word" and runs into the next one.
+	// Restore the selection's edge whitespace, or "word " comes back as "word" and joins the next.
 	result.text = leadingWhitespace(source) + result.text + trailingWhitespace(source)
 	return result, nil
 }
@@ -374,8 +372,7 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, req reques
 	return reply{text: answer, provider: name, model: provider.Model()}, nil
 }
 
-// untilSilent ends ctx with errTimedOut once a reply has sent nothing for timeout: one that keeps
-// coming, thinking included, is given as long as it needs. keepAlive restarts the count.
+// untilSilent times out only on silence, so a reply still streaming (thinking too) is never cut.
 func untilSilent(ctx context.Context, timeout time.Duration) (_ context.Context, keepAlive, stop func()) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	silence := time.AfterFunc(timeout, func() { cancel(errTimedOut) })
@@ -408,8 +405,7 @@ func systemPrompt(cfg *config.Config, op config.Operation, operation config.Oper
 	)
 }
 
-// resolveProvider prefers an @mention, then the action's own override, then the
-// default. A failed mention falls back rather than aborting the run.
+// A failed @mention falls back to the action's override, then the default, rather than aborting.
 func (p *Processor) resolveProvider(cfg *config.Config, op config.Operation, mentioned string) (string, ai.Provider, error) {
 	if mentioned != "" {
 		provider, err := p.providerNamed(mentioned)
@@ -469,8 +465,7 @@ func findProvider(cfg *config.Config, name string) (string, bool) {
 	return "", false
 }
 
-// Counts characters, not bytes: an accented letter is two bytes in UTF-8, and len() would
-// halve the limit for exactly the text this app corrects.
+// Counts runes, not bytes: len() would halve the limit for accented text.
 func checkCharacterLimit(text string, limit int) error {
 	if characters := utf8.RuneCountInString(text); characters > limit {
 		return fmt.Errorf("selection is %d characters, over the %d limit", characters, limit)
@@ -504,8 +499,7 @@ func (p *Processor) InsertText(text string) error {
 	return p.clipboardManager.ReplaceSelectedText(text, p.currentConfig().PasteShortcut())
 }
 
-// Uses the dedicated dictation prompt rather than an editable action prompt, so unrelated
-// instructions cannot change the task.
+// The fixed dictation prompt keeps editable action instructions from changing the task.
 func (p *Processor) CleanTranscript(text string) (string, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {

@@ -104,8 +104,7 @@ type placeMatch struct {
 	Longitude   float64 `json:"longitude"`
 }
 
-// bestMatch is the first place in the region named after the comma, such as Texas in "Paris, Texas",
-// and otherwise the most prominent place of that name.
+// bestMatch prefers the region after the comma (Texas in "Paris, Texas"), else the most prominent.
 func bestMatch(places []placeMatch, region string) placeMatch {
 	region = strings.ToLower(strings.TrimSpace(region))
 	if region != "" {

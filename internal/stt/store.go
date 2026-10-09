@@ -62,7 +62,7 @@ type Store struct {
 func NewStore() *Store {
 	return &Store{
 		dir: utils.AppHomeDir("models"),
-		// No overall timeout: a large model on a slow line is not an error; the stall watchdog catches dead transfers.
+		// No overall timeout: a big model on a slow line is fine; the stall watchdog catches dead ones.
 		client:   &http.Client{},
 		urlFor:   Model.DownloadURL,
 		stall:    stallTimeout,
@@ -160,7 +160,7 @@ func (s *Store) fetch(ctx context.Context, model Model, partial string, report f
 		resumeFrom = info.Size()
 	}
 
-	// A partial already at full size needs verifying, not re-fetching, or a bad checksum loops forever.
+	// A full-size partial needs verifying, not re-fetching, or a bad checksum loops forever.
 	if resumeFrom == model.SizeBytes {
 		return nil
 	}
@@ -234,7 +234,7 @@ func (s *Store) copy(ctx context.Context, dst io.Writer, src io.Reader,
 
 		n, readErr := src.Read(buf)
 		if n > 0 {
-			// Refuse a server sending more than it promised, rather than growing the file past its declared size.
+			// Refuse a server sending more than it promised.
 			if model.SizeBytes > 0 && written+int64(n) > model.SizeBytes {
 				n = int(model.SizeBytes - written)
 			}

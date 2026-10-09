@@ -19,14 +19,12 @@ import (
 // Endpoint and model pairs that rejected the quiet request, so the re-upload is paid once.
 var geminiThinkingRefused sync.Map
 
-// Gemini counts the whole request, base64 included, against 20 MB. Staying under
-// it leaves room for the prompt; at 16 kHz mono that is still about six minutes.
+// Gemini caps the request, base64 included, at 20 MB; this leaves room for the prompt (~6 min).
 const geminiMaxRequestBytes = 18 * 1024 * 1024
 
 const geminiTranscribeBaseURL = "https://generativelanguage.googleapis.com"
 
-// A chat model will happily answer "Sure, here is the transcript:" unless told
-// not to, and that preamble would be typed into the user's document.
+// Otherwise a chat model prefixes "Sure, here is the transcript:", which would be typed out.
 const geminiTranscribePrompt = "Transcribe the speech in this audio verbatim. " +
 	"Reply with the transcript alone: no preamble, no explanation, no quotes, no markdown. " +
 	"If the audio contains no speech, reply with nothing at all."
@@ -55,8 +53,7 @@ type geminiGenerConfig struct {
 	ThinkingConfig *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
-// Gemini 3 takes a level, older models a token budget, and a request carrying both is
-// rejected. Exactly one field is ever set.
+// Gemini 3 takes a level, older models a budget; a request carrying both is rejected.
 type geminiThinkingConfig struct {
 	ThinkingLevel  string `json:"thinkingLevel,omitempty"`
 	ThinkingBudget *int   `json:"thinkingBudget,omitempty"`
@@ -76,13 +73,11 @@ type geminiResponse struct {
 
 type geminiResponsePart struct {
 	Text string `json:"text"`
-	// Set on a thought summary. Nothing here asks for those, so this is a guard
-	// against one arriving anyway and being typed out as if it were speech.
+	// Guards against a thought summary being typed out as speech.
 	Thought bool `json:"thought"`
 }
 
-// The least thinking the model allows: Gemini 3 takes a level, where "minimal" is the floor;
-// older models take a zero budget. The wrong one is ignored, not rejected, so a retry cannot fix it.
+// The wrong thinking field is ignored, not rejected, so a retry cannot fix it.
 func thinkingConfigFor(model string) *geminiThinkingConfig {
 	switch major := geminiMajorVersion(model); {
 	case major >= 3:
@@ -91,8 +86,7 @@ func thinkingConfigFor(model string) *geminiThinkingConfig {
 		budget := 0
 		return &geminiThinkingConfig{ThinkingBudget: &budget}
 	default:
-		// An unrecognised name: pay the default thinking rather than guess a
-		// parameter and spend a round trip having it refused.
+		// Unrecognised name: pay default thinking rather than a round trip on a refused parameter.
 		return nil
 	}
 }
@@ -119,11 +113,9 @@ func geminiMajorVersion(model string) int {
 	return major
 }
 
-// Gemini exposes no Whisper-style endpoint, so this goes through generateContent, which
-// Google recommends over the interactions API for production use.
+// No Whisper-style endpoint; generateContent is what Google recommends for production.
 func geminiTranscribe(ctx context.Context, cfg config.SpeechConfig, wav []byte) (string, error) {
-	// A speech model has its own endpoint; the chat models below are the fallback
-	// for anyone who points this at a flash model by hand.
+	// The chat models below are the fallback for a flash model configured by hand.
 	if IsGeminiTranscribeModel(cfg.RemoteModel) {
 		return geminiTranscribeSpeech(ctx, cfg, wav)
 	}
@@ -147,8 +139,7 @@ func geminiTranscribe(ctx context.Context, cfg config.SpeechConfig, wav []byte) 
 	_, refused := geminiThinkingRefused.Load(key)
 	quiet := !refused && thinkingConfigFor(cfg.RemoteModel) != nil
 
-	// Matched on status, never message text: providers word refusals differently.
-	// Remembered only once dropping the field is confirmed to fix it.
+	// Matched on status, not message text; remembered only once dropping the field fixes it.
 	text, err := sendGemini(ctx, cfg, request, quiet)
 	if quiet && isBadRequest(err) {
 		text, err = sendGemini(ctx, cfg, request, false)
@@ -192,8 +183,6 @@ func sendGemini(ctx context.Context, cfg config.SpeechConfig, request geminiRequ
 	return parseGeminiResponse(body)
 }
 
-// postGemini sends one JSON request and returns the body; a non-2xx status comes back as a
-// remoteStatusError so the caller can tell a rejected parameter from any other failure.
 func postGemini(ctx context.Context, cfg config.SpeechConfig, path string, request any) ([]byte, error) {
 	payload, err := json.Marshal(request)
 	if err != nil {
@@ -248,9 +237,7 @@ func parseGeminiResponse(body []byte) (string, error) {
 		text.WriteString(part.Text)
 	}
 
-	// Thinking can consume the whole output allowance, which arrives as a normal
-	// 200 holding nothing. Reported, because dictating into silence looks like
-	// the hotkey failed.
+	// Thinking can eat the whole output allowance as an empty 200; silence looks like a dead hotkey.
 	transcript := strings.TrimSpace(text.String())
 	if transcript == "" && candidate.FinishReason != "" && candidate.FinishReason != "STOP" {
 		return "", fmt.Errorf("Gemini returned no transcript (%s)", candidate.FinishReason)
@@ -259,8 +246,7 @@ func parseGeminiResponse(body []byte) (string, error) {
 	return transcript, nil
 }
 
-// remoteStatusError carries the status code so a rejected thinking budget can be
-// told apart from a failure worth surfacing.
+// Carries the status so a rejected thinking budget can be told apart from a real failure.
 type remoteStatusError struct {
 	status  int
 	message string

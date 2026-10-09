@@ -10,8 +10,7 @@ func TestBuild(t *testing.T) {
 	t.Log("Application compiles successfully")
 }
 
-// Listeners run on their own goroutine, so two saves close together reload at
-// once. Interleaved, one call's clear would drop what the other just registered.
+// Concurrent reloads must not let one's clear drop what the other just registered.
 func TestReloadIsSerialised(t *testing.T) {
 	app := &Application{}
 	app.reloadMutex.Lock()
@@ -37,8 +36,7 @@ func TestReloadIsSerialised(t *testing.T) {
 	}
 }
 
-// Every save reloads: none is deferred or dropped, so a shortcut enabled in one
-// is bound by the time it returns.
+// A shortcut enabled in a save is bound by the time it returns.
 func TestConcurrentReloadsAreSafe(t *testing.T) {
 	app := &Application{}
 

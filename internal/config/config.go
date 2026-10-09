@@ -39,8 +39,7 @@ type Config struct {
 	AnswerCard AnswerCardConfig              `json:"answer_card"`
 	Meta       MetaConfig                    `json:"meta"`
 
-	// EnableProviderMentions lets a selection opt into a provider by starting
-	// with "@name". Applies to every AI-backed action.
+	// A selection starting with "@name" picks that provider, in every AI-backed action.
 	EnableProviderMentions bool `json:"enable_provider_mentions"`
 
 	// Paste only matters on Linux: macOS always pastes with Cmd+V.
@@ -78,12 +77,11 @@ type AppearanceConfig struct {
 	Theme          string `json:"theme"` // "auto" | "light" | "dark"
 	StartMinimized bool   `json:"start_minimized"`
 	StartOnLogin   bool   `json:"start_on_login"`
-	// Indicators is absent from files written before it existed; absent means both on.
+	// Absent means both on.
 	Indicators *IndicatorsConfig `json:"indicators,omitempty"`
 }
 
-// IndicatorsConfig is the floating indicator: Voice while dictating or asking by voice, Text while
-// revising or translating. It is written whole, so a switch turned off stays off.
+// Written whole, so a switch turned off stays off.
 type IndicatorsConfig struct {
 	Voice bool `json:"voice"`
 	Text  bool `json:"text"`
@@ -127,8 +125,7 @@ func Default() *Config {
 	}
 }
 
-// The cheapest current model of each provider: a correction is a small job, and a
-// new user should not need to pick a model before the first hotkey works.
+// Cheapest models: a correction is a small job, and a new user should not have to pick one first.
 func defaultProviders() map[string]ProviderSettings {
 	return map[string]ProviderSettings{
 		"openai": {
@@ -280,8 +277,7 @@ func (c *Config) SetProviderSettings(provider string, settings ProviderSettings)
 	c.AIProvider.Providers[provider] = settings
 }
 
-// The value fields below are read from hotkey and dictation goroutines while the
-// UI writes them, so they go through the mutex the map fields already use.
+// The UI writes these while hotkey and dictation goroutines read them, hence the mutex.
 
 func (c *Config) Translation() TranslateConfig {
 	c.mu.RLock()
@@ -535,7 +531,7 @@ func osLocale() string {
 	return strings.ReplaceAll(tag, "_", "-")
 }
 
-// A hand-edited partial config still starts rather than booting with zero-valued hotkeys and limits.
+// A hand-edited partial config still starts, not with zero-valued hotkeys and limits.
 func (c *Config) applyDefaults() {
 	if c.Actions == nil {
 		c.Actions = DefaultActions()
@@ -575,9 +571,7 @@ func (c *Config) applyDefaults() {
 	c.normaliseProviders()
 }
 
-// normaliseProviders folds a built-in stored under another spelling, as OpenRouter was
-// when it could only be added by hand, into the built-in with its key and settings,
-// and makes references follow. Built-ins carry no protocol of their own.
+// normaliseProviders folds a built-in stored under another spelling into the built-in.
 func (c *Config) normaliseProviders() {
 	renamed := map[string]string{}
 	for name, settings := range c.AIProvider.Providers {

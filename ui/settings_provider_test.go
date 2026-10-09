@@ -12,7 +12,6 @@ import (
 	"github.com/paradoxe35/encre/internal/config"
 )
 
-// The connection test builds the provider from what is on screen, for every kind there is.
 func TestTheConnectionTestKnowsEveryProvider(t *testing.T) {
 	test.NewApp()
 	cfg := config.Default()
@@ -48,7 +47,6 @@ func connectionTo(t *testing.T, handler http.HandlerFunc) ai.Provider {
 	return provider
 }
 
-// A reasoning model can think for a minute before its first word; the test must not wait for it.
 func TestTheConnectionTestNeedsOnlyTheReplyToBegin(t *testing.T) {
 	provider := connectionTo(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

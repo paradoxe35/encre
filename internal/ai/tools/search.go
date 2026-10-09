@@ -122,7 +122,7 @@ func duckDuckGoResults(page []byte) []searchResult {
 	return results
 }
 
-// resultLink is the address a result leads to, unwrapped from DuckDuckGo's redirect; ads lead nowhere.
+// resultLink unwraps DuckDuckGo's redirect; ads lead nowhere.
 func resultLink(href string) string {
 	link, err := url.Parse(href)
 	if err != nil {

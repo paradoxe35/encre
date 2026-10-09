@@ -196,7 +196,6 @@ func TestAnnounceDoesNotInterruptRunningUpdate(t *testing.T) {
 	}
 }
 
-// A development build has no updater, and the tab says so instead of offering buttons that would fail.
 func TestUpdateControlsWithoutUpdaterShowHint(t *testing.T) {
 	test.NewApp()
 	w := &MainWindow{}
@@ -261,7 +260,6 @@ func (f foundUpdater) Update(context.Context, *updater.Release, ...updater.Optio
 	return nil
 }
 
-// A release found by clicking "Check for updates" must reach the tray like one the startup check found.
 func TestAManualCheckAnnouncesInTheTray(t *testing.T) {
 	test.NewApp()
 	w := &MainWindow{config: config.Default()}

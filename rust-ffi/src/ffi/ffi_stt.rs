@@ -11,7 +11,6 @@ use crate::ffi::ffi_types::{
 };
 use crate::stt::audio::{self, Recorder};
 
-/// Microphone RMS level while recording, for a meter.
 pub type LevelCallback = extern "C" fn(c_float);
 
 pub struct SpeechRecogniser {
@@ -130,7 +129,6 @@ pub unsafe extern "C" fn encre_stt_stop(handle: SttHandle) -> *mut c_char {
     match stopped.text {
         Ok(Some(text)) => string_to_c_str(text),
 
-        // Either nothing was heard, or streaming handed the audio back for a batch pass.
         Ok(None) => {
             if stopped.speech.is_empty() {
                 return string_to_c_str(String::new());
@@ -166,8 +164,7 @@ pub unsafe extern "C" fn encre_stt_cancel(handle: SttHandle) -> c_int {
     FFIErrorCode::Success as c_int
 }
 
-/// Stop is sent under the recording lock so no Start lands ahead of it; the wait
-/// happens outside it, so the next take is not blocked by transcription.
+/// Stop is sent under the lock so no Start overtakes it; the wait happens outside it.
 fn end_take(recogniser: &SpeechRecogniser) -> anyhow::Result<audio::Stopped> {
     let pending = {
         let mut recording = recogniser.recording.lock();
@@ -180,8 +177,6 @@ fn end_take(recogniser: &SpeechRecogniser) -> anyhow::Result<audio::Stopped> {
     Recorder::await_stop(pending)
 }
 
-/// Null and empty both read as `None`.
-///
 /// # Safety
 /// A non-null `ptr` must be a valid null-terminated C string.
 unsafe fn optional_string(ptr: *const c_char, what: &str) -> Result<Option<String>, c_int> {
@@ -227,8 +222,7 @@ pub unsafe extern "C" fn encre_stt_set_language(handle: SttHandle, code: *const 
     }
 }
 
-/// While on, a take never touches the engine: `encre_stt_stop` fails and audio is
-/// read back with `encre_stt_stop_pcm`. Takes effect on the next recording.
+/// While on, `encre_stt_stop` fails; read audio with `encre_stt_stop_pcm`. Applies next recording.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_stt_set_capture_only(handle: SttHandle, enabled: bool) -> c_int {
     let Some(recogniser) = recogniser(handle) else {
@@ -238,8 +232,7 @@ pub unsafe extern "C" fn encre_stt_set_capture_only(handle: SttHandle, enabled: 
     FFIErrorCode::Success as c_int
 }
 
-/// Headerless 16-bit signed little-endian mono PCM at `encre_SAMPLE_RATE`; free with
-/// `encre_stt_free_bytes`. Null on failure; a silent take is a valid zero-length buffer.
+/// 16-bit LE mono PCM at `encre_SAMPLE_RATE`; free with `encre_stt_free_bytes`. Null on failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_stt_stop_pcm(handle: SttHandle, out_len: *mut usize) -> *mut u8 {
     let Some(recogniser) = recogniser(handle) else {
@@ -288,7 +281,7 @@ fn pcm16_bytes(samples: &[f32]) -> Vec<u8> {
     bytes
 }
 
-/// Input device names, newline separated, the default marked with a leading '*'.
+/// Newline separated; the default is marked with a leading '*'. Free with `encre_free_string`.
 #[unsafe(no_mangle)]
 pub extern "C" fn encre_stt_devices() -> *mut c_char {
     let (devices, default) = audio::devices();

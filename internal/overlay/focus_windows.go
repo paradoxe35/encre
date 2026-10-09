@@ -70,9 +70,7 @@ type winRect struct{ left, top, right, bottom int32 }
 
 type winPoint struct{ x, y int32 }
 
-// A no-activate tool window is never brought to the foreground and never appears
-// in the taskbar; GLFW's app-window style would put it there, so it goes. The
-// frame-changed call is what makes a style change stick.
+// GLFW's app-window style would put it in the taskbar; the frame-changed call makes it stick.
 func noFocus(window *glfw.Window) {
 	hwnd := uintptr(unsafe.Pointer(window.GetWin32Window()))
 	style, _, _ := getWindowLongPtrW.Call(hwnd, gwlExStyle)
@@ -96,7 +94,7 @@ func focusPoint() (image.Point, bool) {
 	return image.Point{}, false
 }
 
-// Panel makes a focusable window float like the indicator, placed in the frame. Only Windows 11 rounds it.
+// Panel floats a focusable window like the indicator; only Windows 11 rounds it.
 func Panel(window uintptr, frame image.Rectangle, look Look) {
 	if window == 0 {
 		return
@@ -125,8 +123,7 @@ func keepOffTaskbar(window uintptr) {
 	}
 }
 
-// GlassBackdrop is frosted by Encre: Windows' acrylic falls back to a flat colour whenever the window
-// loses the focus, and an OpenGL window is not reliably see-through.
+// Frosted by Encre: acrylic goes flat on focus loss and OpenGL windows are not reliably see-through.
 func GlassBackdrop() Backdrop {
 	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
 	if err == nil {
@@ -202,6 +199,5 @@ func Corner(float32) float32 {
 	return 0
 }
 
-// SetOpacity does nothing on Windows: fading a window means making it layered, which its OpenGL
-// surface does not survive.
+// No-op: fading needs a layered window, which its OpenGL surface does not survive.
 func SetOpacity(uintptr, float64) {}

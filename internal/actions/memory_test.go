@@ -41,7 +41,6 @@ func TestRecallLeavesOutTheOldestPastTheBudget(t *testing.T) {
 	}
 }
 
-// recordingProvider answers with a canned reply and keeps every prompt it was sent.
 type recordingProvider struct {
 	prompts *[]ai.Prompt
 }

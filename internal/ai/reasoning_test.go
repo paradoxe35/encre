@@ -18,7 +18,6 @@ func clearReasoningCache() {
 	})
 }
 
-// recordingServer answers with replies in turn, the last one repeating, and keeps every request body.
 func recordingServer[T any](t *testing.T, replies ...http.HandlerFunc) (*httptest.Server, *[]T) {
 	t.Helper()
 	var seen []T
@@ -120,8 +119,7 @@ func TestARejectionIsRememberedForTheNextCall(t *testing.T) {
 	}
 }
 
-// A 400 has many causes. Caching on the status alone would switch reasoning off for the session on
-// a model that never objected to it.
+// Caching on a 400 alone would disable reasoning for a model that never objected.
 func TestAPersistentBadRequestIsReportedAndNotCached(t *testing.T) {
 	server, seen := recordingServer[chatRequest](t, badRequest)
 	if _, err := complete(t, build(t, config.BuiltInOpenAI, server.URL, true)); err == nil {

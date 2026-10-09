@@ -8,8 +8,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// MEMORYSTATUSEX from sysinfoapi.h. x/sys/windows does not wrap
-// GlobalMemoryStatusEx, so the struct and the call are declared here.
+// x/sys/windows does not wrap GlobalMemoryStatusEx, so MEMORYSTATUSEX is declared here.
 type memoryStatusEx struct {
 	Length               uint32
 	MemoryLoad           uint32

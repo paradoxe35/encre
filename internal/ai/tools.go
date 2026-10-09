@@ -44,11 +44,10 @@ func (c ToolCall) arguments() json.RawMessage {
 	return c.Arguments
 }
 
-// refusedTools remembers the models that refused tools, so the wasted request happens once per launch.
+// refusedTools makes the wasted request happen once per launch.
 var refusedTools sync.Map
 
-// withToolsFallback retries without tools only on a first request: once a tool has run, the model has
-// taken tools, and a later refusal has another cause.
+// Only a first request is retried: after a tool has run, a refusal has another cause.
 func withToolsFallback(endpoint, model string, prompt Prompt, send func(Prompt) (Reply, error)) (Reply, error) {
 	key := endpoint + "::" + model
 	if _, refused := refusedTools.Load(key); refused {

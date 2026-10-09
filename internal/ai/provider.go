@@ -6,8 +6,7 @@ import (
 	"sync"
 )
 
-// Prompt is one request. Context goes with the text, so the instructions stay the same from one
-// request to the next. NoMoreCalls asks for an answer without calling tools.
+// Context travels with the text, not the system prompt, so instructions stay identical per request.
 type Prompt struct {
 	System      string
 	History     []Turn
@@ -41,7 +40,7 @@ func (p Prompt) conversation(assistant string) []chatMessage {
 type Provider interface {
 	Name() string
 	Model() string
-	// Stream hands each piece of the reply to onText, if given, as it arrives, and returns the whole of it.
+	// Stream passes each piece to onText, if given, and returns the whole reply.
 	Stream(ctx context.Context, prompt Prompt, onText func(string)) (string, error)
 }
 
@@ -62,8 +61,7 @@ func (f *ProviderFactory) Register(name string, provider Provider) {
 	f.providers[name] = provider
 }
 
-// Settings changes invalidate every cached provider; a stale entry would keep an
-// outdated API key or model.
+// Settings changes invalidate the cache so no provider keeps a stale API key or model.
 func (f *ProviderFactory) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()

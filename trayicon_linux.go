@@ -8,8 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 )
 
-// systray corrupts translucent pixels and panels downscale with linear filtering, so the
-// tray gets a hard-edged 32 px image that halves cleanly. Rendered by scripts/generate_icons.py.
+// systray corrupts translucency and panels downscale linearly, so: hard-edged 32 px that halves.
 //
 //go:embed assets/tray.png
 var trayIconPNG []byte

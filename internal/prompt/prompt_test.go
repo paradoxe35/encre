@@ -58,7 +58,7 @@ func TestRenderTranslateHandlesOneSidedTemplate(t *testing.T) {
 	}
 }
 
-// The shipped revise prompt is pinned; changing it silently changes behaviour for everyone who never edited it.
+// Pinned: changing it silently changes behaviour for everyone who never edited it.
 func TestReviseIsTheShippedPrompt(t *testing.T) {
 	const shipped = "You are a multilingual text enhancer: fix errors, improve clarity and quality " +
 		"while preserving tone, context, and intent in the original language. " +

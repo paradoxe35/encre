@@ -14,8 +14,7 @@ import (
 	"github.com/paradoxe35/encre/internal/config"
 )
 
-// fakeEngine records every command in order, which is what the service's
-// contract with Rust is about.
+// Command order is the service's contract with Rust.
 type fakeEngine struct {
 	mu       sync.Mutex
 	log      []string

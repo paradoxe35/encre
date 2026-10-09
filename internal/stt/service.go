@@ -31,9 +31,7 @@ type speechEngine interface {
 	Close()
 }
 
-// The engine is created lazily so an app that never dictates never opens an audio device.
-// Rust owns what is loaded and runs commands in order; this side only remembers what it last
-// asked for and how many takes are in flight.
+// Lazy, so no audio device opens unless dictating; Rust owns what is loaded and orders commands.
 type Service struct {
 	store     *Store
 	newEngine func() (speechEngine, error)
@@ -297,8 +295,7 @@ func (s *Service) stopRemote(speech speechEngine, cfg config.SpeechConfig) (stri
 	return text, nil
 }
 
-// Unloads after the last take when the model is not kept. Sent under the lock, so a take
-// starting afterwards asks for the model again and its load queues behind the unload.
+// Sent under the lock so a later take's load queues behind the unload.
 func (s *Service) finishTake(speech speechEngine) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -327,8 +324,7 @@ func (s *Service) Cancel() {
 	}
 }
 
-// A take still transcribing holds the engine; closing would wait for it, and the
-// process is leaving anyway.
+// A take still transcribing holds the engine; closing would wait, and the process is leaving.
 func (s *Service) Close() {
 	s.mu.Lock()
 	speech, inFlight := s.speech, s.takes > 0

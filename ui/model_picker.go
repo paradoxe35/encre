@@ -91,8 +91,7 @@ func (w *MainWindow) showModelPicker(models []ai.ModelInfo, current string, appl
 	picker.Show()
 }
 
-// Blank when the name only repeats the id, as with every built-in provider;
-// a proxy like OpenRouter carries a name the id does not.
+// Blank when the name only repeats the id; proxies like OpenRouter carry a distinct name.
 func describeModel(model ai.ModelInfo) string {
 	if model.Name == "" || normalizeModelName(model.Name) == normalizeModelName(model.ID) {
 		return ""

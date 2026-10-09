@@ -13,15 +13,13 @@ use super::speech::Speech;
 
 const DRAIN_INTERVAL: Duration = Duration::from_millis(20);
 
-/// Backlog is fed a slice at a time, draining the microphone in between so its
-/// queue stays bounded.
+/// Drains the microphone between slices so its queue stays bounded.
 const BACKLOG_SLICE: usize = SAMPLE_RATE as usize;
 
-/// A toggle left running must not grow without bound; the batch fallback then covers
-/// the most recent half hour of speech.
+/// Bounds a toggle left running; the batch fallback covers the last half hour.
 const KEEP_AT_MOST: usize = 30 * 60 * SAMPLE_RATE as usize;
 
-/// Audio arriving from the microphone, so a take can run without a device in tests.
+/// Lets a take run without a device in tests.
 pub trait Source {
     fn rate(&self) -> u32;
     fn take(&self) -> Vec<f32>;
@@ -34,7 +32,7 @@ pub trait Live {
     fn abort(&mut self);
 }
 
-/// What a take needs from the engine, so it can be tested without a model.
+/// Lets a take be tested without a model.
 pub trait Recognizer {
     type Live<'a>: Live
     where
@@ -44,25 +42,21 @@ pub trait Recognizer {
     fn stream_begin(&mut self, language: Option<&str>) -> Result<Self::Live<'_>>;
 }
 
-/// The model a take should stream with as soon as the engine is free and holds it.
 pub struct Wanted<'a, E> {
     pub engine: &'a Arc<Mutex<E>>,
-    /// A take never claims the engine ahead of queued commands, or an earlier
-    /// take's transcription would wait for this one to end.
+    /// Streaming waits for zero so an earlier take's transcription is not blocked by this one.
     pub queued: &'a AtomicUsize,
     pub model: &'a Path,
 }
 
-/// Captures until the engine is idle with the wanted model, then streams. All audio
-/// is kept, so a broken stream or a model that never arrives still gets a batch pass.
+/// All audio is kept, so a broken stream or a model that never arrives still gets a batch pass.
 pub struct Take<S: Source> {
-    /// `Err` when the microphone could not be opened; reported at stop instead of
-    /// an empty transcript.
+    /// Reported at stop instead of an empty transcript.
     source: Result<S, String>,
     pipeline: Pipeline,
     spoken: Speech,
     keep_at_most: usize,
-    /// Samples dropped from the front of `spoken` so far; positions into it are relative to this.
+    /// Positions into `spoken` are relative to this.
     dropped: usize,
     language: Option<String>,
 }
@@ -74,7 +68,6 @@ enum Captured<'a, E> {
 
 enum Streamed {
     Ended(bool),
-    /// The stream broke; the take goes on capturing for a batch pass.
     Degraded,
 }
 
@@ -165,7 +158,7 @@ impl<S: Source> Take<S> {
     fn stream<L: Live>(&mut self, commands: &Receiver<Command>, live: L) -> Streamed {
         let mut live = Streaming::new(live);
 
-        // Absolute position, since a pull may drop audio from the front of the backlog.
+        // Absolute, since a pull may drop audio from the front of the backlog.
         let mut fed = self.dropped;
         loop {
             let start = fed.saturating_sub(self.dropped);
@@ -209,8 +202,7 @@ impl<S: Source> Take<S> {
         }
     }
 
-    /// Anything short of a transcript hands back the audio for a batch pass: a partial
-    /// or empty result is worse than none, since the host cannot tell what is missing.
+    /// A partial or empty result is worse than none; the host cannot tell what is missing.
     fn finish<L: Live>(&mut self, mut live: Streaming<L>) -> Stopped {
         if live.degraded || self.source.is_err() {
             live.abort();
@@ -251,7 +243,7 @@ impl<S: Source> Take<S> {
         self.keep(tail)
     }
 
-    /// Older speech makes room for the burst, which is kept whole so the stream hears all of it.
+    /// The burst is kept whole so the stream hears all of it.
     fn keep(&mut self, burst: Speech) -> &[f32] {
         let room = self.keep_at_most.saturating_sub(burst.samples.len());
         let dropped = self.spoken.trim_to(room);
@@ -278,7 +270,7 @@ impl<S: Source> Take<S> {
     }
 }
 
-/// After the first failure nothing more is fed; the take falls back to the audio it kept.
+/// After the first failure nothing more is fed.
 struct Streaming<L: Live> {
     inner: L,
     degraded: bool,
@@ -331,7 +323,7 @@ mod tests {
         aborted: bool,
     }
 
-    /// A streaming take holds the engine lock, so observations go through a lock of their own.
+    /// A streaming take holds the engine lock, so observations need their own lock.
     struct FakeEngine {
         resident: Option<PathBuf>,
         state: Arc<Mutex<FakeState>>,
@@ -400,7 +392,6 @@ mod tests {
         }
     }
 
-    /// A 200 Hz tone, which the voice detector keeps in full.
     fn tone(seconds: f32) -> Vec<f32> {
         let n = (seconds * SAMPLE_RATE as f32) as usize;
         (0..n)
@@ -482,7 +473,6 @@ mod tests {
             }
         }
 
-        /// Feeds audio and gives the take a few ticks to pull it.
         fn speak(&self, seconds: f32) {
             self.audio.send(tone(seconds)).unwrap();
             thread::sleep(DRAIN_INTERVAL * 3);

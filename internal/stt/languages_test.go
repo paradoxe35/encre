@@ -124,8 +124,7 @@ func TestLanguageSetsHaveNoDuplicateNames(t *testing.T) {
 	}
 }
 
-// LanguagesFor reads through LanguageSetName, so the two cannot disagree about
-// which models have a list.
+// LanguagesFor reads through LanguageSetName, so the two cannot disagree.
 func TestLanguageSetNameAgreesWithLanguagesFor(t *testing.T) {
 	cases := [][2]string{
 		{"openai", "whisper-1"}, {"openai", "gpt-transcribe"}, {"groq", "whisper-large-v3"},

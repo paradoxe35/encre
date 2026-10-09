@@ -162,8 +162,7 @@ func (w *MainWindow) localSpeechPane() *fyne.Container {
 	summary := widget.NewLabel(fmt.Sprintf("%d models", len(catalog.Models)))
 	summary.TextStyle.Italic = true
 
-	// The daily refresh and the button both land here; the widgets are only
-	// touched on Fyne's thread.
+	// The daily refresh and the button both land here; widgets are only touched on Fyne's thread.
 	stt.OnCatalogChanged(func() {
 		fyne.Do(func() {
 			w.speechModels.Reload()
@@ -181,8 +180,7 @@ func (w *MainWindow) localSpeechPane() *fyne.Container {
 	)
 }
 
-// Forces a rebuild from Hugging Face whatever the cache's age; the list
-// itself updates through the catalogue subscription.
+// Forces a rebuild whatever the cache's age; the list updates through the catalogue subscription.
 func (w *MainWindow) refreshCatalog() {
 	w.statusBinding.Set("Checking for new models…")
 
@@ -259,8 +257,7 @@ func (w *MainWindow) applyPreset(name string) {
 	w.refreshLanguages(config.SpeechRemote)
 }
 
-// Another service's model would be rejected, so it is swapped for the preset default;
-// a value belonging to no preset was typed by hand and is left alone.
+// A model of another preset is swapped for the default; one typed by hand is left alone.
 func (w *MainWindow) adoptPresetModel(preset stt.RemotePreset) {
 	if len(preset.Models) == 0 {
 		return
@@ -360,8 +357,7 @@ func (w *MainWindow) refreshLanguages(engine config.SpeechEngine) {
 	}
 }
 
-// Each hosted model accepts its own codes (whisper-1 ISO 639-1, Gemini BCP-47 locales);
-// an unknown model gets a typable box rather than a false list.
+// Each hosted model accepts its own codes; an unknown model gets a typable box, not a false list.
 func (w *MainWindow) refreshRemoteLanguages() {
 	if w.speechLanguage == nil {
 		return

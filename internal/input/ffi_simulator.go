@@ -93,8 +93,7 @@ func (s *FFIKeySimulator) PasteTerminal() error {
 	return nil
 }
 
-// Modifiers still held from the triggering hotkey would turn Ctrl+A into Ctrl+Alt+A. On macOS
-// it also waits for the keyboard to report the keys up, since a posted event merges with them.
+// Held hotkey modifiers would turn Ctrl+A into Ctrl+Alt+A; macOS also waits for the keys up.
 func (s *FFIKeySimulator) ReleaseModifiers() error {
 	if s.handle == nil {
 		return fmt.Errorf("key simulator not initialized")

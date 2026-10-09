@@ -9,8 +9,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// Fyne clears every window with the app theme's background, so that stays transparent for the glass
-// card, and windows paint colorNameWindow instead.
+// Fyne clears windows with the app background, kept transparent for glass; windows paint this instead.
 const colorNameWindow fyne.ThemeColorName = "encreWindow"
 
 // A nil variant follows the system.
@@ -53,8 +52,7 @@ func withAlpha(c color.Color, alpha float64) color.NRGBA {
 	return n
 }
 
-// themedFill takes its colours from the theme it is drawn in, so it follows a change of theme as
-// widgets do. An empty name leaves that part undrawn.
+// themedFill follows a change of theme as widgets do; an empty name leaves that part undrawn.
 type themedFill struct {
 	widget.BaseWidget
 	fill, edge   fyne.ThemeColorName

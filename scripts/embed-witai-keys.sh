@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Embeds Wit.ai keys from WITAI_KEYS into a generated Go source, so the keys
-# never touch the repo. A no-op when WITAI_KEYS is unset: the app then
-# compiles with zero keys and the Wit.ai engine option stays hidden.
+# Keeps Wit.ai keys out of the repo; without WITAI_KEYS the Wit.ai engine option stays hidden.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

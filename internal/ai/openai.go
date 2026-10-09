@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// chatCompletions is OpenAI's Chat Completions API, which OpenRouter and the local servers speak too.
+// OpenAI's Chat Completions API, which OpenRouter and local servers speak too.
 type chatCompletions struct{}
 
 type chatRequest struct {
@@ -48,7 +48,7 @@ type chatToolCall struct {
 	Function chatFunction `json:"function"`
 }
 
-// OpenRouter normalises reasoning across every model it serves, and refuses the OpenAI field beside it.
+// OpenRouter normalises reasoning across its models and refuses the OpenAI field beside it.
 type openRouterReasoning struct {
 	Effort  string `json:"effort"`
 	Exclude bool   `json:"exclude"`
@@ -156,8 +156,7 @@ func (chatCompletions) event(data []byte, reply *turn) (bool, error) {
 	return false, nil
 }
 
-// Some servers leave the index out: then a new ID starts a new call, and a piece without one
-// continues the last.
+// Without an index, a new ID starts a new call and a piece with no ID continues the last.
 func chatCallIndex(piece chatToolCall, reply *turn) int {
 	if piece.Index != nil {
 		return *piece.Index

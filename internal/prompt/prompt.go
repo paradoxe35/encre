@@ -46,8 +46,7 @@ Rules:
 
 No preamble and no offers to help further.`
 
-// RenderTranslate substitutes both language names. A prompt that names neither placeholder still
-// gets the instruction appended, so a rewritten template doesn't silently lose the language pair.
+// A template naming neither placeholder gets the instruction appended, so the pair is never lost.
 func RenderTranslate(template, primary, secondary string) string {
 	if strings.Contains(template, PlaceholderPrimary) || strings.Contains(template, PlaceholderSecondary) {
 		replacer := strings.NewReplacer(

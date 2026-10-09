@@ -9,7 +9,7 @@ pub struct KeySimulator {
     enigo: Enigo,
 }
 
-/// The one call a chord needs from the keyboard, so the ordering can be checked without one.
+/// Lets chord ordering be tested without a keyboard.
 #[cfg(not(target_os = "macos"))]
 trait KeyEvents {
     fn event(&mut self, key: Key, direction: Direction) -> Result<()>;
@@ -23,8 +23,7 @@ impl KeyEvents for Enigo {
     }
 }
 
-/// Presses the keys in order and releases them in reverse. Every key that went down comes
-/// back up even after a failure, or every keystroke that follows is a shortcut.
+/// Every key that went down comes back up even after a failure, or later keystrokes become shortcuts.
 #[cfg(not(target_os = "macos"))]
 fn press_chord(keyboard: &mut impl KeyEvents, keys: &[Key]) -> Result<()> {
     let mut outcome = Ok(());
@@ -46,8 +45,7 @@ fn press_chord(keyboard: &mut impl KeyEvents, keys: &[Key]) -> Result<()> {
     outcome
 }
 
-/// Stamped on every event the simulator posts, so the hotkey listener can tell them from the
-/// user's own keystrokes.
+/// Lets the hotkey listener tell posted events from the user's keystrokes.
 #[cfg(target_os = "macos")]
 pub const SYNTHETIC_TAG: i64 = 0x454E_4352;
 
@@ -63,7 +61,7 @@ mod macos_native {
     const KEY_C: u16 = 0x08;
     const KEY_V: u16 = 0x09;
 
-    /// Left and right of each modifier: the flags say a modifier is down, never which side.
+    /// Both sides: the flags say a modifier is down, never which side.
     const MODIFIER_KEYS: [u16; 8] = [
         0x37, // Command
         0x36, // Right Command
@@ -126,8 +124,7 @@ mod macos_native {
         MODIFIER_KEYS.iter().any(|key| key_down(*key))
     }
 
-    /// Hardware modifier state merges into posted events regardless of their flags, so a stray
-    /// Cmd+A is prevented by releasing and polling real key state, not by masking flags.
+    /// Hardware modifier state merges into posted events regardless of flags, so wait for real release.
     pub fn release_modifiers() -> Result<()> {
         debug!("Releasing held modifiers");
         for key in MODIFIER_KEYS {
@@ -174,7 +171,7 @@ impl KeySimulator {
         })
     }
 
-    /// Drops modifiers the triggering hotkey left down, so Ctrl+A does not arrive as Ctrl+Alt+A.
+    /// So Ctrl+A does not arrive as Ctrl+Alt+A.
     pub fn release_modifiers(&mut self) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
@@ -184,7 +181,7 @@ impl KeySimulator {
         #[cfg(not(target_os = "macos"))]
         {
             debug!("Releasing held modifiers");
-            // Best effort; a modifier that was never down releases harmlessly.
+            // A modifier that was never down releases harmlessly.
             for key in [Key::Control, Key::Alt, Key::Shift, Key::Meta] {
                 let _ = self.enigo.key(key, Direction::Release);
             }
@@ -234,7 +231,7 @@ impl KeySimulator {
         }
     }
 
-    /// Terminals bind Ctrl+Shift+V; macOS terminals take the same Cmd+V as everything else.
+    /// macOS terminals take the same Cmd+V as everything else.
     pub fn paste_terminal(&mut self) -> Result<()> {
         #[cfg(target_os = "macos")]
         {

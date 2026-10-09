@@ -2,15 +2,13 @@ package stt
 
 import "strings"
 
-// NamedLanguage is a language a picker offers: Code is sent to the service in
-// whatever form that service takes, Name is what appears on screen.
+// Code is in the form the service takes; Name is what appears on screen.
 type NamedLanguage struct {
 	Code string
 	Name string
 }
 
-// whisperLanguages is openai/whisper's own list, in ISO 639-1. Groq serves the
-// same weights, so it answers to exactly this.
+// openai/whisper's own ISO 639-1 list; Groq serves the same weights.
 var whisperLanguages = []NamedLanguage{
 	{Code: "af", Name: "Afrikaans"},
 	{Code: "sq", Name: "Albanian"},
@@ -114,8 +112,7 @@ var whisperLanguages = []NamedLanguage{
 	{Code: "yo", Name: "Yoruba"},
 }
 
-// gptTranscribeLanguages adds what OpenAI documents on top of 639-1 for its
-// gpt- transcribe models: selected 639-3 codes and regional zh locales.
+// OpenAI's gpt- transcribe extras over 639-1: selected 639-3 codes and regional zh.
 var gptTranscribeLanguages = []NamedLanguage{
 	{Code: "af", Name: "Afrikaans"},
 	{Code: "sq", Name: "Albanian"},
@@ -223,9 +220,7 @@ var gptTranscribeLanguages = []NamedLanguage{
 	{Code: "yo", Name: "Yoruba"},
 }
 
-// geminiTranscribeLanguages is BCP-47, the form gemini-3.5-transcribe takes in
-// transcription_config.language_codes. The region is part of the choice here
-// rather than something to strip: pt-BR and pt-PT are separate offers.
+// BCP-47 for transcription_config.language_codes; the region matters: pt-BR and pt-PT differ.
 var geminiTranscribeLanguages = []NamedLanguage{
 	{Code: "af-ZA", Name: "Afrikaans"},
 	{Code: "am-ET", Name: "Amharic"},
@@ -318,9 +313,7 @@ var languageSets = map[string][]NamedLanguage{
 	"gemini-transcribe": geminiTranscribeLanguages,
 }
 
-// Empty means no set is known: a custom endpoint runs whatever its owner installed, and a
-// Gemini chat model is told the language in prose. Callers compare names to tell a real change
-// of set from a model being typed one letter at a time, so LanguagesFor reads through this.
+// Empty means no known set; callers compare names to tell a set change from typing in progress.
 func LanguageSetName(presetID, model string) string {
 	model = strings.ToLower(strings.TrimSpace(model))
 
@@ -351,14 +344,12 @@ func IsGeminiTranscribeModel(model string) bool {
 	return strings.Contains(strings.ToLower(model), "transcribe")
 }
 
-// A custom OpenAI-compatible server is a Whisper server often enough for its list to beat an
-// empty dropdown, and the user can still type past it.
+// A custom OpenAI-compatible server is often Whisper; its list beats an empty dropdown.
 func SuggestedLanguages() []NamedLanguage {
 	return whisperLanguages
 }
 
-// The language subtag is what survives a change of service: Gemini's fr-FR and Groq's fr
-// are the same request.
+// The language subtag survives a service change: Gemini's fr-FR and Groq's fr are one request.
 func BaseLanguageCode(code string) string {
 	code = strings.ToLower(strings.TrimSpace(code))
 	if base, _, found := strings.Cut(code, "-"); found {
@@ -400,9 +391,7 @@ func MatchCode(codes []string, want string) string {
 	return ""
 }
 
-// Settles the language when moving between engines. An engine that detects is left to; one
-// that cannot is never left blank (it would silently assume English), so it keeps the previous
-// choice if servable, else the system language, else English, else the first listed.
+// A non-detecting engine is never left blank (it assumes English): previous, system, English, first.
 func SwitchLanguage(codes []string, detects bool, previous, system string) string {
 	if detects {
 		return ""

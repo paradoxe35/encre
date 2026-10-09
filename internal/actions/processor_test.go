@@ -184,8 +184,7 @@ func TestLeadingAndTrailingWhitespace(t *testing.T) {
 		wantTrailing string
 	}{
 		{"no whitespace", "hello", "", ""},
-		// Both halves claim the whole string: each is computed from its own side, and callers
-		// only reach the pair after transform's empty check.
+		// Both halves claim the whole string; callers only reach it after transform's empty check.
 		{"all whitespace", "   ", "   ", "   "},
 		{"empty string", "", "", ""},
 		{"leading and trailing", "  hello  ", "  ", "  "},
@@ -288,7 +287,6 @@ func TestTheReplyNamesTheProviderThatAnswered(t *testing.T) {
 	}
 }
 
-// silentProvider never answers, until cancelled.
 type silentProvider struct{}
 
 func (silentProvider) Stream(ctx context.Context, _ ai.Prompt, _ func(string)) (string, error) {

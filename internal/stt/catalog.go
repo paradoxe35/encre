@@ -17,8 +17,7 @@ import (
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
-// Shipped so the list renders offline and on first run; regenerate with
-// `go run ./cmd/gen-catalog`.
+// Regenerate with `go run ./cmd/gen-catalog`.
 //
 //go:embed models.json
 var embeddedCatalog []byte
@@ -27,8 +26,7 @@ const (
 	catalogMaxAge = 24 * time.Hour
 	catalogMaxLen = 8 << 20
 
-	// RefreshTimeout bounds one whole rebuild: ~150 hub requests at six in
-	// flight normally finish in well under a minute.
+	// ~150 hub requests at six in flight normally finish well under a minute.
 	RefreshTimeout       = 3 * time.Minute
 	refreshCheckInterval = 3 * time.Hour
 )
@@ -162,8 +160,7 @@ func stale() bool {
 
 var refreshMu sync.Mutex
 
-// Refresh ignores the cache's age. The result is parsed like the shipped file before it is
-// written, so a broken build never displaces a working list; calls are serialised.
+// Parsed before writing so a broken build never displaces a working list; calls are serialised.
 func Refresh(ctx context.Context) error {
 	refreshMu.Lock()
 	defer refreshMu.Unlock()
@@ -207,8 +204,7 @@ var (
 	nextListener int
 )
 
-// OnCatalogChanged registers fn to run after every successful refresh, on the
-// goroutine that refreshed. UI callers hand the work to their own thread.
+// fn runs on the refreshing goroutine; UI callers hand the work to their own thread.
 func OnCatalogChanged(fn func()) (unsubscribe func()) {
 	listenersMu.Lock()
 	id := nextListener
@@ -223,8 +219,7 @@ func OnCatalogChanged(fn func()) (unsubscribe func()) {
 	}
 }
 
-// Snapshotted so a listener that unsubscribes while being called does not
-// deadlock on the map.
+// Snapshotted so a listener unsubscribing during the call does not deadlock on the map.
 func notifyCatalogChanged() {
 	listenersMu.Lock()
 	current := make([]func(), 0, len(listeners))
@@ -244,8 +239,7 @@ var (
 	schedulerDone chan struct{}
 )
 
-// Keeps checking while the app runs so a machine left open for days still learns about new
-// models. Never blocks startup; failures are silent since the current list still works.
+// Keeps checking so a machine left open for days learns of new models; failures are silent.
 func StartRefreshing() {
 	startRefreshing(refreshCheckInterval)
 }
@@ -274,8 +268,7 @@ func startRefreshing(every time.Duration) {
 	}()
 }
 
-// StopRefreshing halts the scheduler and waits for any refresh it started to
-// abort, so shutdown does not race a cache write.
+// Waits for any started refresh to abort, so shutdown does not race a cache write.
 func StopRefreshing() {
 	schedulerMu.Lock()
 	stop, done := schedulerStop, schedulerDone
@@ -306,8 +299,7 @@ func refreshIfStale(stop <-chan struct{}) {
 	}
 }
 
-// Copies rather than appends in place: the parsed slice has spare capacity, and appending
-// would write into memory the catalog still owns.
+// The parsed slice has spare capacity; appending in place would write into memory it owns.
 func Catalogue() []Model {
 	published := Models().Models
 	custom := discoverCustom()

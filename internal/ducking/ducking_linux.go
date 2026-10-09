@@ -13,8 +13,7 @@ import (
 
 const requestTimeout = time.Second
 
-// pulseSession reaches each app's stream through the sound server, which PipeWire serves too, so any
-// player is turned down whether or not it answers to remote control.
+// Via the sound server (PipeWire too), so players are ducked without supporting remote control.
 type pulseSession struct {
 	client *pulse.Client
 	found  map[uint32]proto.ChannelVolumes
@@ -60,7 +59,7 @@ func (s *pulseSession) scale(share float64) error {
 
 func (s *pulseSession) close() { s.client.Close() }
 
-// The sound server's volumes are cubic, as a slider is, so an amplitude share is its cube root there.
+// The sound server's volumes are cubic, so an amplitude share is its cube root.
 func sliderShare(share float64) float64 { return math.Cbrt(share) }
 
 func scaled(volumes proto.ChannelVolumes, by float64) proto.ChannelVolumes {

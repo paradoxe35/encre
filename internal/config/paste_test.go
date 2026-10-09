@@ -11,7 +11,7 @@ func TestPasteShortcutDefaultsToStandard(t *testing.T) {
 	}
 }
 
-// A config written before the setting existed, or hand-edited to "", keeps pasting with Ctrl+V.
+// An empty setting keeps pasting with Ctrl+V.
 func TestPasteShortcutMissingOrEmptyReadsAsStandard(t *testing.T) {
 	cases := map[string]string{
 		"missing": `{}`,

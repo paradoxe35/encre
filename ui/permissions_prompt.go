@@ -83,7 +83,6 @@ func newPermissionPrompt() *permissionPrompt {
 		restartRow,
 	)
 
-	// Hidden until SetPermissionState finds something missing.
 	root := container.NewPadded(body)
 	root.Hide()
 

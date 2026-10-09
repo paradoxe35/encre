@@ -99,8 +99,7 @@ func (m *ModelList) apply() {
 	m.list.Refresh()
 }
 
-// Reload rebuilds the rows and the active label from the current catalogue,
-// for when it was replaced underneath the list.
+// Reload is for when the catalogue was replaced underneath the list.
 func (m *ModelList) Reload() {
 	m.apply()
 	if m.onActiveChanged != nil {

@@ -31,7 +31,6 @@ const (
 	kappa = 0.5523
 )
 
-// Surface is the indicator's colour.
 var Surface = color.NRGBA{R: 22, G: 22, B: 26, A: 255}
 
 type Frame struct {
@@ -78,8 +77,7 @@ func Paint(dst *image.RGBA, f Frame, scale float64) {
 	}
 }
 
-// Three dots rising and brightening one after another: the familiar sign that
-// something is being written for you.
+// Three dots rising one after another: the familiar sign of something being written.
 func paintDots(dst *image.RGBA, z *vector.Rasterizer, f Frame, scale float64) {
 	bounds := dst.Bounds()
 	w := float64(bounds.Dx())
@@ -98,8 +96,7 @@ func paintDots(dst *image.RGBA, z *vector.Rasterizer, f Frame, scale float64) {
 	}
 }
 
-// Listening bars replay the last few levels outward from the centre, so the
-// shape waves with the voice; transcribing bars ripple so a wait reads as progress.
+// Listening bars replay recent levels outward; transcribing bars ripple so a wait reads as progress.
 func barHeight(f Frame, i int) float64 {
 	switch f.Phase {
 	case Transcribing:

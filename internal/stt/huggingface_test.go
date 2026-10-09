@@ -283,8 +283,7 @@ func TestPickQuantFallsBackUnderTheCap(t *testing.T) {
 		t.Errorf("nothing under the cap should yield nothing, got %s", quant)
 	}
 
-	// The plain size is the LFS pointer's, so the LFS size wins when present;
-	// a file with neither size is not excluded, matching the script.
+	// The LFS size wins; a file with neither size is not excluded, matching the script.
 	sized := []treeEntry{{Path: "x-Q8_0.gguf", Size: 134, LFS: lfs("e", 5<<30)}, {Path: "x-F16.gguf", Size: 0}}
 	if quant, _ := pickQuant(sized, maxModelBytes); quant != "F16" {
 		t.Errorf("LFS size should exclude Q8_0 and the unsized F16 should pass, got %s", quant)
@@ -316,7 +315,7 @@ func TestScoreMath(t *testing.T) {
 		{wer(0), 1},
 		{wer(3.99), 0.867},
 		{wer(15), 0.5},
-		{wer(62.2), 0.5}, // past the limit the script's `or 0.5` turns 0 into the unmeasured default
+		{wer(62.2), 0.5}, // the script's `or 0.5` turns 0 into the unmeasured default
 		{nil, 0.5},
 	}
 	for _, c := range cases {
@@ -345,8 +344,7 @@ func TestBestWERPrefersTheChosenQuantThenTheFirstFigure(t *testing.T) {
 	if got := bestWER(meta, "Q5_K_M"); got == nil || *got != 63.1 {
 		t.Errorf("chosen quant's figure = %v, want 63.1", got)
 	}
-	// The first table wins even when it lacks the quant: the script read the
-	// card in order, and the shipped file was built that way.
+	// The first table wins even without the quant, as the shipped file was built.
 	if got := bestWER(meta, "Q6_K"); got == nil || *got != 62.2 {
 		t.Errorf("first figure fallback = %v, want 62.2", got)
 	}
@@ -466,8 +464,7 @@ func resetCatalog() {
 	catalogMu.Unlock()
 }
 
-// useTempHome caches into a scratch directory so Refresh never touches the
-// real home, and restores the embedded list for the tests that follow.
+// Keeps Refresh off the real home and restores the embedded list afterwards.
 func useTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

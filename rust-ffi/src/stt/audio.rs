@@ -27,39 +27,34 @@ pub enum Command {
 /// Read at the start of each take; a change mid-take applies to the next one.
 #[derive(Clone, Default)]
 struct Settings {
-    /// None means the system default.
     device: Option<String>,
-    /// None asks the model to detect.
     language: Option<String>,
-    /// Capture without the engine, for a remote service that transcribes the audio itself.
+    /// For a remote service that transcribes the audio itself.
     capture_only: bool,
-    /// Streaming waits until this model is resident; until then a take is captured
-    /// and transcribed behind the load.
+    /// Streaming waits until this model is resident; until then the take is batch-transcribed.
     model: Option<PathBuf>,
 }
 
 /// Handled on their own thread, so a load or transcription overlaps the next take's capture.
 pub enum EngineCommand {
-    /// A failure is kept by the engine and reported by the transcription that needed it.
+    /// A failure is reported by the transcription that needed it.
     Load(PathBuf),
     Unload,
     Transcribe(Speech, Option<String>, Sender<Result<String>>),
     Shutdown,
 }
 
-/// `speech` is empty when `text` carries a transcript; otherwise it holds what
-/// was heard, for the host to batch-transcribe.
+/// `speech` is empty when `text` carries a transcript; otherwise the host batch-transcribes it.
 pub struct Stopped {
     pub speech: Speech,
     pub text: Result<Option<String>, String>,
-    /// The language in force when the take was recorded, for the batch pass.
     pub language: Option<String>,
 }
 
 pub struct Recorder {
     commands: Sender<Command>,
     engine_commands: Sender<EngineCommand>,
-    /// Unfinished engine commands; a take only claims the engine for streaming at zero.
+    /// A take only claims the engine for streaming at zero.
     queued: Arc<AtomicUsize>,
     settings: Arc<Mutex<Settings>>,
 }
@@ -120,7 +115,7 @@ impl Recorder {
         self.settings().capture_only = enabled;
     }
 
-    /// Returns at once; anything queued after, such as a take's batch pass, runs behind the load.
+    /// Returns at once; anything queued after runs behind the load.
     pub fn use_model(&self, path: PathBuf) {
         self.settings().model = Some(path.clone());
         let _ = self.queue(EngineCommand::Load(path));
@@ -131,8 +126,6 @@ impl Recorder {
         let _ = self.queue(EngineCommand::Unload);
     }
 
-    /// Queued behind any load in progress, so a take captured during a load is
-    /// transcribed once the model is there.
     pub fn transcribe(&self, speech: Speech, language: Option<String>) -> Result<String> {
         let (tx, rx) = channel();
         self.queue(EngineCommand::Transcribe(speech, language, tx))?;
@@ -154,8 +147,7 @@ impl Recorder {
         let _ = self.engine_commands.send(EngineCommand::Shutdown);
     }
 
-    /// Split from `await_stop` so a caller can send under its own lock without holding
-    /// it through transcription.
+    /// Split from `await_stop` so a caller need not hold its lock through transcription.
     pub fn begin_stop(&self) -> Result<Receiver<Stopped>> {
         let (tx, rx) = channel();
         self.commands
@@ -176,8 +168,7 @@ enum Flow {
     Stop,
 }
 
-/// Runs a worker's command loop through a panic: each worker is the only one of its
-/// kind, and losing it would leave dictation dead until the app restarts.
+/// Survives panics: each worker is unique and losing it kills dictation until restart.
 fn serve<T>(commands: Receiver<T>, mut handle: impl FnMut(&Receiver<T>, T) -> Flow) {
     while let Ok(command) = commands.recv() {
         match catch_unwind(AssertUnwindSafe(|| handle(&commands, command))) {
@@ -188,7 +179,7 @@ fn serve<T>(commands: Receiver<T>, mut handle: impl FnMut(&Receiver<T>, T) -> Fl
     }
 }
 
-/// Decrements `queued` when dropped, so a command that panics is still counted as done.
+/// So a command that panics is still counted as done.
 struct Done<'a>(&'a AtomicUsize);
 
 impl Drop for Done<'_> {
@@ -374,8 +365,7 @@ pub fn devices() -> (Vec<String>, Option<String>) {
 }
 
 fn host() -> cpal::Host {
-    // ALSA over cpal's default: PulseAudio and PipeWire both expose an ALSA
-    // interface, and going direct avoids a resampling hop.
+    // ALSA directly: PulseAudio and PipeWire expose it, and it avoids a resampling hop.
     #[cfg(target_os = "linux")]
     {
         cpal::host_from_id(cpal::HostId::Alsa).unwrap_or_else(|_| cpal::default_host())
@@ -386,14 +376,12 @@ fn host() -> cpal::Host {
     }
 }
 
-/// Uses the device's own rate: forcing 16 kHz can drop Bluetooth headsets into
-/// headset profile or make ALSA refuse the stream.
+/// Forcing 16 kHz can drop Bluetooth headsets into headset profile or make ALSA refuse.
 fn preferred_config(device: &Device) -> Result<SelectedConfig> {
     let default = device.default_input_config()?;
     let rate = default.sample_rate();
 
-    // Only ALSA offers a channel choice worth making; on Windows enumerating configs
-    // probes dozens of formats at ~10 ms each and the channel count is fixed anyway.
+    // On Windows enumerating configs costs ~10 ms per format and channels are fixed anyway.
     #[cfg(target_os = "linux")]
     if let Some(range) = choose_config(device.supported_input_configs()?, rate) {
         return Ok(SelectedConfig {
@@ -409,9 +397,7 @@ fn preferred_config(device: &Device) -> Result<SelectedConfig> {
 }
 
 #[cfg(target_os = "linux")]
-/// Fewest channels first, then the cheapest format. ALSA plugin devices (PipeWire,
-/// PulseAudio) advertise up to 64 channels, and opening the widest makes the sound
-/// server upmix ~12 MB/s in its realtime thread, which froze a modest desktop.
+/// Fewest channels: ALSA plugin devices offer 64, and upmixing to them froze a desktop.
 fn choose_config(
     ranges: impl IntoIterator<Item = SupportedStreamConfigRange>,
     rate: u32,
@@ -425,7 +411,7 @@ fn choose_config(
 }
 
 #[cfg(target_os = "linux")]
-/// Formats `build_stream` can open, cheapest first; `None` is unsupported.
+/// Cheapest first; `None` is unsupported.
 fn format_cost(format: SampleFormat) -> Option<u8> {
     match format {
         SampleFormat::F32 => Some(0),
@@ -565,7 +551,6 @@ mod channel_tests {
 mod tests {
     use super::*;
 
-    /// The error names the reason, not a bare "no model loaded".
     #[test]
     fn load_failure_reaches_the_transcription() {
         let (levels, _level_rx) = channel();

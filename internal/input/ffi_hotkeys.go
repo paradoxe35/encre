@@ -30,8 +30,7 @@ import (
 )
 
 type FFIHotkeyManager struct {
-	// ffiMu guards handle for its whole read-then-call-C sequence in every method, so a freed
-	// handle can never reach Rust.
+	// Held across every read-then-call-C sequence so a freed handle never reaches Rust.
 	ffiMu  sync.Mutex
 	handle C.encre_HotkeyManagerHandle
 
@@ -140,8 +139,7 @@ func (h *FFIHotkeyManager) UnregisterHotkey(action string) error {
 	return nil
 }
 
-// ListenError reports why the listener is not running, or "" when it is. Start only spawns the
-// thread; the system refuses the key tap afterwards, so a successful start proves nothing.
+// "" when running; Start only spawns the thread and the OS may refuse the key tap later.
 func (h *FFIHotkeyManager) ListenError() string {
 	h.ffiMu.Lock()
 	defer h.ffiMu.Unlock()
@@ -262,8 +260,7 @@ func hotkeyCallbackGateway(action *C.char) {
 	if action == nil {
 		return
 	}
-	// Lent for the duration of this call, not handed over: Rust frees it when the callback
-	// returns, so this copies and must not free it.
+	// Lent, not owned: Rust frees it when the callback returns, so copy and never free.
 	actionStr := C.GoString(action)
 
 	globalFFIMu.Lock()

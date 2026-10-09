@@ -19,8 +19,7 @@ type ModelInfo struct {
 	Name string
 }
 
-// modelsEndpoint is one provider's catalogue: everything is a GET returning a
-// list, so only the path and the auth header differ.
+// Every catalogue is a GET returning a list; only the path and auth header differ.
 type modelsEndpoint struct {
 	url     string
 	headers map[string]string
@@ -42,8 +41,7 @@ func endpointFor(provider, apiKey, baseURL string) modelsEndpoint {
 	}
 }
 
-// A local OpenAI-compatible server takes no key; an empty Bearer makes some of
-// them reject the call outright.
+// Local servers take no key, and some reject an empty Bearer outright.
 func bearerEndpoint(base, apiKey string) modelsEndpoint {
 	endpoint := modelsEndpoint{url: base + "/models", headers: map[string]string{}}
 	if apiKey != "" {
@@ -86,8 +84,7 @@ func ListModels(ctx context.Context, provider, apiKey, baseURL string) ([]ModelI
 	return models, nil
 }
 
-// decodeModels reads both list shapes in use: OpenAI and Anthropic answer with
-// "data", Gemini with "models" and a "models/" prefix on every id.
+// OpenAI and Anthropic list under "data"; Gemini under "models" with a "models/" id prefix.
 func decodeModels(r io.Reader) ([]ModelInfo, error) {
 	var payload struct {
 		Data []struct {

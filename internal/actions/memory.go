@@ -9,8 +9,7 @@ import (
 	"github.com/paradoxe35/encre/internal/history"
 )
 
-// memoryBudget caps the characters of earlier turns sent with a question, so a long memory cannot
-// outgrow a small model's context.
+// memoryBudget keeps earlier turns from outgrowing a small model's context.
 const memoryBudget = 24000
 
 func (p *Processor) remembered(cfg *config.Config) []ai.Turn {
@@ -21,8 +20,7 @@ func (p *Processor) remembered(cfg *config.Config) []ai.Turn {
 	return recall(p.history.Recent(history.KindAsk), turns)
 }
 
-// recall takes the asked questions newest first and returns them oldest first, leaving out the oldest
-// once the budget is spent.
+// recall takes questions newest first and returns them oldest first, within the budget.
 func recall(asked []history.Entry, turns int) []ai.Turn {
 	var recalled []ai.Turn
 	spent := 0

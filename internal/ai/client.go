@@ -122,12 +122,12 @@ func (p *provider) open(ctx context.Context, prompt Prompt, lowReasoning bool) (
 	return resp, err
 }
 
-// Matched on wording as well as status: a 400 has many causes, and only this one is cured by not streaming.
+// Matched on wording too: a 400 has many causes, and only this one is cured by not streaming.
 func streamingRefused(err error) bool {
 	return refusedRequest(err) && strings.Contains(strings.ToLower(err.Error()), "stream")
 }
 
-// send returns the response only once it is known to be a success, so a stream never starts on an error.
+// Returns only a successful response, so a stream never starts on an error.
 func (p *provider) send(ctx context.Context, prompt Prompt, stream, lowReasoning bool) (*http.Response, error) {
 	req, err := p.protocol.request(ctx, p.endpoint, prompt, stream, lowReasoning)
 	if err != nil {

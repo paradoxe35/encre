@@ -24,7 +24,7 @@ pub unsafe extern "C" fn encre_clipboard_new() -> ClipboardHandle {
     }
 }
 
-/// Null when the clipboard holds no text, including when it holds an image.
+/// Null when the clipboard holds no text, including an image. Free with `encre_free_string`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_get_text(handle: ClipboardHandle) -> *mut c_char {
     let Some(clipboard) = clipboard(handle) else {
@@ -62,7 +62,7 @@ pub unsafe extern "C" fn encre_clipboard_set_text(
     }
 }
 
-/// Empties the clipboard, so a following simulated copy landing becomes observable.
+/// Lets the host observe when a following simulated copy lands.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_clear(handle: ClipboardHandle) -> c_int {
     let Some(clipboard) = clipboard(handle) else {
@@ -80,7 +80,7 @@ pub unsafe extern "C" fn encre_clipboard_save(handle: ClipboardHandle) -> c_int 
     FFIErrorCode::Success as c_int
 }
 
-/// Puts back what save found, text or image, unless something new was copied meanwhile.
+/// Skipped if something new was copied meanwhile.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_restore(handle: ClipboardHandle) -> c_int {
     let Some(clipboard) = clipboard(handle) else {

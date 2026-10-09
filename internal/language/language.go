@@ -158,7 +158,7 @@ func Search(query string) []Language {
 	return append(prefix, contains...)
 }
 
-// The secondary is whichever of English or French the primary is not, so the pair is never degenerate.
+// The secondary is English or French, whichever the primary is not.
 func Defaults(localeTag string) (primary, secondary string) {
 	primary = "en"
 	if IsKnown(localeTag) {

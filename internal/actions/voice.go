@@ -60,8 +60,7 @@ type sequence struct {
 	last chan struct{}
 }
 
-// claim returns the gate for the take before this one, and the release for this
-// one. A nil gate means nothing is ahead.
+// claim returns the previous take's gate (nil if none) and this take's release.
 func (s *sequence) claim() (<-chan struct{}, func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -192,8 +191,7 @@ func (d *Voice) stop(kind config.ActionKind) {
 		settle := sync.OnceFunc(d.settle)
 		defer settle()
 
-		// Ends the capture straight away: the recorder cannot take the next
-		// press until this one is stopped.
+		// Stop at once: the recorder cannot take the next press until this one is stopped.
 		raw, err := d.service.StopRecording()
 
 		if ahead != nil {

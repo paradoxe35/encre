@@ -6,8 +6,7 @@ import (
 )
 
 const (
-	// frostShrink averages the capture down before blurring: the blur is cheap at that size, and the
-	// window scales the result smoothly back up.
+	// Shrunk before blurring: cheap at that size, and the window scales it back up smoothly.
 	frostShrink = 8
 	frostRadius = 2
 	frostPasses = 3

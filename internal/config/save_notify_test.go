@@ -22,8 +22,7 @@ func resetListeners(t *testing.T) {
 	})
 }
 
-// SetAPIKey must not publish: the rest of saveSettings is not written yet, and a hotkey
-// enabled in the same save would go unregistered.
+// SetAPIKey must not publish, or a hotkey enabled in the same save would go unregistered.
 func TestSetAPIKeyDoesNotPublish(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	utils.EnsureAppHomeDir()

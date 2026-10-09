@@ -25,8 +25,7 @@ const (
 
 var remoteClient = &http.Client{Timeout: remoteRequestTimeout}
 
-// pcm is headerless 16-bit signed little-endian mono at remoteSampleRate, as FFISpeech.StopPCM
-// returns it.
+// pcm is headerless 16-bit signed little-endian mono at remoteSampleRate.
 func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) (string, error) {
 	wav := wavFile(pcm)
 	if protocolFor(cfg.RemoteProvider) == ProtocolGemini {
@@ -99,8 +98,7 @@ func remoteRequestBody(cfg config.SpeechConfig, wav []byte) (io.Reader, string, 
 	return &buf, writer.FormDataContentType(), nil
 }
 
-// The gpt- transcribe models take a repeated languages[]; everything else (whisper-1, Groq,
-// unrecognised custom endpoints) takes language.
+// gpt- transcribe models take a repeated languages[]; everything else takes language.
 func remoteLanguageField(model string) string {
 	if strings.HasPrefix(strings.ToLower(model), "gpt-") {
 		return "languages[]"

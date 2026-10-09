@@ -31,8 +31,7 @@ type wish struct {
 	done chan struct{}
 }
 
-// Fades run on a worker so neither the microphone nor the transcript waits for one; a wish that
-// arrives mid-fade turns it around from where it is.
+// Fades run on a worker so nothing waits; a mid-fade wish turns it around from where it is.
 type Ducker struct {
 	open  func() (session, error)
 	step  time.Duration
@@ -142,8 +141,7 @@ func (d *Ducker) apply(current session, share float64) {
 	}
 }
 
-// between eases from one share to another evenly in decibels, the way loudness is heard, and
-// slowly at both ends, so the change never lands as a step.
+// Eases evenly in decibels, as loudness is heard, and slowly at both ends, so it never steps.
 func between(from, to, t float64) float64 {
 	if t >= 1 {
 		return to

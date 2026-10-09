@@ -7,32 +7,28 @@ use super::audio::SAMPLE_RATE;
 use super::speech::{Speech, halves};
 use super::take::{Live, Recognizer};
 
-/// Models without long-form support decode one window and quietly drop the rest
-/// (Canary is built for clips under 40 s), so their takes are cut at pauses.
+/// Models without long-form support silently drop audio past one window (Canary: under 40 s).
 const PIECE_SECS: usize = 30;
 
-/// A piece that starts or ends mid-word can decode to nothing; a little silence on
-/// both sides keeps the decoder honest. One side alone is not enough.
+/// Padding both sides keeps a mid-word piece from decoding to nothing; one side is not enough.
 const SILENCE_PAD_SECS: f32 = 0.5;
 
-/// An incomplete piece is halved and retried down to this length; shorter, its partial text is kept.
+/// Below this an incomplete piece keeps its partial text instead of being halved.
 const MIN_RETRY_SECS: usize = 4;
 
-/// Keeps the session resident between takes: loading costs seconds, a take costs
-/// milliseconds.
+/// Loading costs seconds, a take milliseconds.
 #[derive(Default)]
 pub struct Engine {
     loaded: Option<Loaded>,
-    /// Why the last load failed, reported by the transcription that needed it.
+    /// Reported by the transcription that needed it.
     load_error: Option<String>,
 }
 
 struct Loaded {
     path: PathBuf,
     session: transcribe_cpp::Session,
-    /// Whether the model handles audio longer than its window on its own.
     long_form: bool,
-    /// The language codes the model accepts, empty when it takes any.
+    /// Empty when it takes any.
     languages: Vec<String>,
 }
 
@@ -45,7 +41,7 @@ impl Engine {
         self.loaded = None;
     }
 
-    /// The resident model is freed before the new one is read, so two are never in memory at once.
+    /// Frees the resident model first so two are never in memory at once.
     pub fn load(&mut self, path: &Path) -> Result<()> {
         if self.loaded.as_ref().is_some_and(|l| l.path == path) {
             return Ok(());
@@ -109,7 +105,7 @@ impl Engine {
 
 enum Decoded {
     Text(String),
-    /// The decode stopped early, past the output budget or caught repeating itself.
+    /// Past the output budget or caught repeating itself.
     Incomplete(String),
 }
 
@@ -135,8 +131,7 @@ fn run_piece(
     }
 }
 
-/// An incomplete piece is split at its quietest point and retried, as shorter audio fits the budget
-/// and rarely loops; too short to split, it keeps the text it reached.
+/// Shorter audio fits the budget and rarely loops.
 fn transcribe_piece(
     decode: &mut impl FnMut(&[f32]) -> Result<Decoded>,
     piece: &[f32],
@@ -154,8 +149,7 @@ fn transcribe_piece(
     }
 }
 
-/// Drops a phrase repeated at the end of the text, keeping it once: a decoder stuck in a loop
-/// says the same words until its budget runs out.
+/// A decoder stuck in a loop repeats the same words until its budget runs out.
 fn without_repetition(text: &str) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
     for phrase in 1..=words.len() / 3 {
@@ -187,7 +181,7 @@ fn padded(piece: &[f32]) -> Vec<f32> {
     padded
 }
 
-/// One failure fails the take: a transcript with a hole is worse than none.
+/// A transcript with a hole is worse than none.
 fn join(parts: impl Iterator<Item = Result<String>>) -> Result<String> {
     let mut text = String::new();
     for part in parts {
@@ -210,7 +204,7 @@ fn run_options(accepted: &[String], language: Option<&str>) -> RunOptions {
     }
 }
 
-/// Some models name their languages by region (en-US) where Encre names them by language (en).
+/// Some models name languages by region (en-US) where Encre uses language (en).
 fn accepted_code(accepted: &[String], code: &str) -> String {
     if accepted.is_empty() || accepted.iter().any(|l| l == code) {
         return code.to_owned();
@@ -250,7 +244,7 @@ impl Live for transcribe_cpp::Stream<'_> {
 
     fn finalize(&mut self) -> Result<Option<String>> {
         transcribe_cpp::Stream::finalize(self)?;
-        // The display text stops at what was committed before the end; the final hypothesis is whole.
+        // The display text stops at what was committed; the final hypothesis is whole.
         let text = self.text().full.trim().to_owned();
         Ok((!text.is_empty()).then_some(text))
     }

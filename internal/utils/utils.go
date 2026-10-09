@@ -8,8 +8,7 @@ import (
 
 const appDirName = ".encre"
 
-// AppHomeDir cannot depend on the logger package: the logger builds its own log path by calling
-// this function, and an import back to logger would cycle.
+// Cannot log: the logger calls this to build its path, so the import would cycle.
 func AppHomeDir(elem ...string) string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

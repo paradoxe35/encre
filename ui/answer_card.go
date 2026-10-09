@@ -34,8 +34,7 @@ const (
 	fadeFor   = 120 * time.Millisecond
 )
 
-// AnswerCard shows answers where the indicator was, as they are written, and takes typed questions.
-// Unlike the indicator it takes the keyboard, so Esc can close it.
+// AnswerCard takes the keyboard, unlike the indicator, so Esc can close it.
 type AnswerCard struct {
 	app     fyne.App
 	window  fyne.Window
@@ -79,9 +78,8 @@ type AnswerCard struct {
 	pending  bool
 	later    func(time.Duration, func())
 
-	content *widget.RichText
-	scroll  *container.Scroll
-	// reading holds the question and answer at the text size chosen for reading.
+	content   *widget.RichText
+	scroll    *container.Scroll
 	reading   *container.ThemeOverride
 	textScale float32
 	footer    fyne.CanvasObject
@@ -113,19 +111,17 @@ func (c *AnswerCard) SetShowHideCallbacks(onShow, onHide func()) {
 	c.onHide = onHide
 }
 
-// SetOnAsk receives each question typed into the card, on the UI thread.
+// SetOnAsk's callback runs on the UI thread.
 func (c *AnswerCard) SetOnAsk(onAsk func(question string)) {
 	c.onAsk = onAsk
 }
 
-// Prompt opens the card with the keyboard in its input. It may be called from any goroutine.
+// Prompt may be called from any goroutine.
 func (c *AnswerCard) Prompt() {
 	fyne.Do(c.prompt)
 }
 
-// Open shows question and returns what fills in its answer: update with the text so far, then a done
-// update or fail. Closing the card calls stop. All of them may be called from any goroutine; once a
-// newer question is shown, the older one's are ignored.
+// Closing the card calls stop; callbacks are goroutine-safe and ignored once a newer question shows.
 func (c *AnswerCard) Open(question string, stop func()) (update func(text string, done bool), fail func(reason string), status func(line string)) {
 	id := c.sessions.Add(1)
 	fyne.Do(func() { c.open(id, question, stop) })
@@ -238,8 +234,7 @@ func (c *AnswerCard) seeThrough() bool {
 	return designFor(c.style).glass && (c.backdrop == overlay.BackdropBlurred || c.backdrop == overlay.BackdropSharp)
 }
 
-// frost captures the screen the card may cover at its largest. Before its first show the window may
-// not know its screen's scale, so that capture allows for 2.
+// frost allows for scale 2: before its first show the window may not know its screen's scale.
 func (c *AnswerCard) frost() {
 	c.fill.fill = colorNameCard
 	c.frosted.Hide()
@@ -301,8 +296,7 @@ func (c *AnswerCard) focusInput() {
 	c.window.Canvas().Focus(c.input)
 }
 
-// render leaves the reader where they are: an answer is read from its start, so text arriving past
-// the bottom of the card waits there rather than pulling the view down.
+// render never scrolls: text arriving past the card's bottom waits there.
 func (c *AnswerCard) render() {
 	c.content.Segments = c.segments()
 	c.content.Refresh()
@@ -474,9 +468,7 @@ func (c *AnswerCard) fit() fyne.Size {
 	height := c.window.Content().MinSize().Height
 	width := c.width()
 	if c.reading.Visible() {
-		// Measuring resizes the answer; left so, the scroll would see nothing to scroll once the card
-		// stops growing, and ignore the wheel until the pointer moved over it. Laying it out again
-		// clamps the scroll to that empty answer first, so the reader's place is put back after.
+		// Re-lay the scroll after measuring, or it ignores the wheel; then restore the reader's place.
 		reading := c.scroll.Offset
 		c.content.Resize(fyne.NewSize(width-2*answerInset, 0))
 		height += max(c.content.MinSize().Height-c.scroll.MinSize().Height, 0)
@@ -527,8 +519,7 @@ func (c *AnswerCard) readingTheme() fyne.Theme {
 	return &scaledText{Theme: c.cardTheme(), scale: c.textScale}
 }
 
-// Only see-through glass is drawn rounded: any other card has its corners cut from the window, and its
-// edge follows that cut.
+// Only see-through glass is drawn rounded; other cards have their corners cut from the window.
 func (c *AnswerCard) surface() fyne.CanvasObject {
 	design := designFor(c.style)
 	c.backdrop, c.frosted = overlay.BackdropNone, nil
@@ -566,8 +557,7 @@ func (c *AnswerCard) corner() float32 {
 
 func (c *AnswerCard) resizeTo(size fyne.Size) {
 	c.target = size
-	// Refits the window's minimum to the content first: a window manager refuses a size below
-	// the minimum it was last given, which would leave the window taller than its frame.
+	// A window manager refuses a size below the last minimum it was given, so refit it first.
 	c.window.SetFixedSize(false)
 	if c.resizing != nil {
 		c.resizing.Stop()
@@ -582,17 +572,14 @@ func (c *AnswerCard) resizeTo(size fyne.Size) {
 	c.resizing = c.animate(c.size, size, c.applySize)
 }
 
-// applySize moves and sizes the native window in one step before Fyne follows: sized alone, a window
-// keeps its top edge until it is moved, so the card, held by its bottom, would jump and leave a strip
-// undrawn on the way.
+// applySize moves and sizes in one step: sized alone, the bottom-anchored card would jump.
 func (c *AnswerCard) applySize(size fyne.Size) {
 	c.size = c.wholePixels(size)
 	c.float()
 	c.window.Resize(c.size)
 }
 
-// wholePixels is size at the nearest whole pixels, so the window and Fyne round it alike: apart, each
-// would size the window to its own rounding in turn, without end.
+// wholePixels makes the window and Fyne round alike, or each resizes to its own rounding forever.
 func (c *AnswerCard) wholePixels(size fyne.Size) fyne.Size {
 	scale := float64(c.window.Canvas().Scale())
 	round := func(v float32) float32 { return float32(math.Round(float64(v)*scale) / scale) }
@@ -609,7 +596,6 @@ func glide(from, to fyne.Size, apply func(fyne.Size)) *fyne.Animation {
 	return animation
 }
 
-// glideFor is quick for a card growing as words arrive, and slower and even for one giving its height up.
 func glideFor(from, to fyne.Size) (time.Duration, fyne.AnimationCurve) {
 	if to.Height < from.Height {
 		return shrinkFor, fyne.AnimationEaseInOut
@@ -699,8 +685,7 @@ func mutedStyle() widget.RichTextStyle {
 	}
 }
 
-// answerLayout puts the footer at the bottom and gives the scroll the rest, with a gap between them only
-// while the scroll shows: an empty card has the same space above its input as below.
+// answerLayout gaps footer and scroll only while the scroll shows, so an empty card stays balanced.
 type answerLayout struct {
 	scroll fyne.CanvasObject
 	footer fyne.CanvasObject
@@ -759,9 +744,7 @@ func (w *sizeWatch) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	w.onSize(size)
 }
 
-// wheelCatch scrolls the answer from anywhere on the card. Fyne aims the wheel at where it last saw
-// the pointer, which is out of date once the card appears or grows under a pointer that has not moved,
-// as under a two-finger scroll. A scrollable deeper in the card, such as the input, still takes its own.
+// wheelCatch exists because Fyne aims the wheel at the last pointer position, stale once the card grows.
 type wheelCatch struct {
 	widget.BaseWidget
 	content fyne.CanvasObject

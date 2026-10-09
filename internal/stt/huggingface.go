@@ -20,9 +20,7 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-// The catalogue is built from the handy-computer org on Hugging Face.
-// Everything factual (size, checksum, languages, word error rate, realtime
-// factor) comes from the hub API; only the curation below is ours.
+// Everything factual comes from the hub API; only the curation below is ours.
 const (
 	HuggingFaceAPI = "https://huggingface.co/api"
 	catalogOrg     = "handy-computer"
@@ -41,8 +39,7 @@ const (
 // Tests point this at a local server.
 var hubAPI = HuggingFaceAPI
 
-// Q8_0 first: near-lossless and still small for speech models. F32 last: it
-// is the unquantised original, the largest file for no accuracy gain.
+// Q8_0 is near-lossless and small; F32 is the unquantised original, largest for no gain.
 var quantPreference = []string{"Q8_0", "Q5_K_M", "Q6_K", "Q4_K_M", "F16", "F32"}
 
 type featured struct {
@@ -50,8 +47,7 @@ type featured struct {
 	description string
 }
 
-// Offered first, with copy written for someone choosing rather than
-// benchmarking.
+// Offered first, with copy for someone choosing rather than benchmarking.
 var featuredModels = map[string]featured{
 	"parakeet-unified-en-0.6b": {1, "Fast and accurate English. The best default if you dictate in English."},
 	"whisper-small":            {2, "Multilingual workhorse. Good accuracy at moderate cost."},
@@ -75,9 +71,7 @@ func newHub() *hub {
 	}
 }
 
-// FetchCatalog builds the catalogue live from Hugging Face. A repo the hub no
-// longer serves is skipped; any other failure aborts, since a half-built list
-// would silently drop models the user may already have downloaded.
+// A repo the hub stopped serving is skipped; other failures abort so no model silently drops off.
 func FetchCatalog(ctx context.Context) (*Catalog, error) {
 	return newHub().catalog(ctx)
 }
@@ -103,8 +97,7 @@ func (e *hubStatusError) Error() string {
 	return fmt.Sprintf("%s returned HTTP %d", e.url, e.status)
 }
 
-// gone is a repo the hub will not serve: removed, private or gated. That is
-// a fact about the repo, not the network, so the rest of the list still counts.
+// gone is a removed, private or gated repo: a fact about the repo, not the network.
 func (e *hubStatusError) gone() bool {
 	return e.status == http.StatusNotFound || e.status == http.StatusForbidden || e.status == http.StatusUnauthorized
 }
@@ -150,8 +143,7 @@ func (h *hub) catalog(ctx context.Context) (*Catalog, error) {
 	}
 	sort.Strings(repos)
 
-	// Every repo needs two round trips; a bounded pool keeps them overlapping
-	// without hammering the hub. The first failure cancels the rest.
+	// Two round trips per repo; a bounded pool overlaps them without hammering the hub.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -230,8 +222,7 @@ type treeEntry struct {
 	} `json:"lfs"`
 }
 
-// The LFS size is the real file; the plain size is the pointer's when the
-// listing is not expanded.
+// The plain size is the LFS pointer's when the listing is not expanded.
 func (e treeEntry) fileSize() int64 {
 	if e.LFS != nil && e.LFS.Size != 0 {
 		return e.LFS.Size
@@ -239,8 +230,7 @@ func (e treeEntry) fileSize() int64 {
 	return e.Size
 }
 
-// resolve turns one repo into a catalogue entry. A nil model with a nil error
-// means the repo was skipped deliberately.
+// A nil model with a nil error means the repo was skipped deliberately.
 func (h *hub) resolve(ctx context.Context, repo string) (*Model, error) {
 	slug := strings.TrimSuffix(repo[strings.LastIndex(repo, "/")+1:], "-gguf")
 
@@ -272,8 +262,7 @@ func (h *hub) resolve(ctx context.Context, repo string) (*Model, error) {
 		logger.Info("Skipping a model with no quantisation under the size cap", "model", slug)
 		return nil, nil
 	}
-	// The checksum is the trust anchor for a downloaded file; an entry without
-	// one could never be verified, so it is left out rather than guessed.
+	// The checksum is the trust anchor; an entry without one could never be verified.
 	if chosen.LFS == nil || chosen.LFS.OID == "" {
 		logger.Info("Skipping a model with no published checksum", "model", slug)
 		return nil, nil
@@ -335,9 +324,7 @@ func skippable(err error) bool {
 	return errors.As(err, &status) && status.gone()
 }
 
-// pickQuant is the best quantisation that fits under the size cap. A repo is
-// only out of reach when none of its quantisations fit: Voxtral's Q8_0 is
-// 4.7 GB but its Q5_K_M is 3.2 GB at 0.04 more WER.
+// Out of reach only when no quant fits: Voxtral's Q8_0 is 4.7 GB, its Q5_K_M 3.2 GB.
 func pickQuant(files []treeEntry, maxBytes int64) (string, *treeEntry) {
 	byQuant := make(map[string]*treeEntry, len(quantPreference))
 	for i := range files {
@@ -382,9 +369,7 @@ func scoreFromRTF(rtf float64) *float64 {
 	return &score
 }
 
-// orHalf is the unmeasured default. A zero score also reads as unmeasured,
-// which keeps parity with the shipped file, where a model past the usable
-// WER limit still shows 0.5 rather than 0.
+// A zero score also reads as unmeasured, matching the shipped file's 0.5 past the WER limit.
 func orHalf(score *float64) float64 {
 	if score == nil || *score == 0 {
 		return 0.5
@@ -392,9 +377,7 @@ func orHalf(score *float64) float64 {
 	return *score
 }
 
-// bestWER reads the first published error rate, preferring the figure for
-// the chosen quantisation over whatever was measured first. First means
-// first in the card, so key order matters.
+// Prefers the chosen quant's figure, else the first in the card, so key order matters.
 func bestWER(meta orderedFields, quant string) *float64 {
 	for _, field := range meta {
 		if !strings.HasPrefix(field.key, "wer_") || !isObject(field.value) {
@@ -417,8 +400,7 @@ func bestWER(meta orderedFields, quant string) *float64 {
 	return nil
 }
 
-// cpuRTF is the slowest measured CPU machine. Ranking should under-promise,
-// not over. Zero means none published.
+// The slowest measured CPU machine, so ranking under-promises; zero means none published.
 func cpuRTF(meta orderedFields) float64 {
 	slowest := 0.0
 	for _, field := range meta {
@@ -469,8 +451,7 @@ func isObject(raw json.RawMessage) bool {
 	return len(trimmed) > 0 && trimmed[0] == '{'
 }
 
-// truthy follows Python's idea of truth, since the card's flags were written
-// for a script that used bool().
+// Python truthiness, since the card's flags were written for a script using bool().
 func truthy(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
@@ -499,8 +480,7 @@ type orderedField struct {
 	value json.RawMessage
 }
 
-// orderedFields is a JSON object with its key order kept; the script picked
-// the first matching key, so a map would change which figure is used.
+// Keeps key order: the script took the first matching key, which a map would change.
 type orderedFields []orderedField
 
 func (f orderedFields) get(key string) json.RawMessage {
@@ -552,8 +532,7 @@ func displayName(slug string) string {
 	return strings.Join(words, " ")
 }
 
-// splitCamel: SenseVoiceSmall -> Sense Voice Small. A capital after a digit
-// is a unit, not a new word, so 3B stays 3B.
+// SenseVoiceSmall -> Sense Voice Small; a capital after a digit is a unit, so 3B stays 3B.
 func splitCamel(word []rune) []string {
 	var out []string
 	var current []rune
@@ -578,8 +557,7 @@ func hasUpper(runes []rune) bool { return slices.ContainsFunc(runes, unicode.IsU
 
 func hasDigit(runes []rune) bool { return slices.ContainsFunc(runes, unicode.IsDigit) }
 
-// isUpper matches Python's str.isupper: every cased letter is upper and there
-// is at least one.
+// Python's str.isupper: every cased letter is upper and there is at least one.
 func isUpper(runes []rune) bool {
 	cased := false
 	for _, r := range runes {

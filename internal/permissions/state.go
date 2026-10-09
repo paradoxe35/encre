@@ -21,8 +21,7 @@ func (t Type) DisplayName() string {
 	}
 }
 
-// The microphone only counts once refused: while undecided, the system asks by itself the
-// first time dictation records.
+// The microphone counts only once refused: while undecided, the system asks on first recording.
 type State struct {
 	AccessibilityGranted   bool
 	InputMonitoringGranted bool

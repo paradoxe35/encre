@@ -1,5 +1,4 @@
-//! A keyboard tap served by the listener's own run loop. rdev parks its tap on the main loop,
-//! so with it every key event waits for whatever the UI thread is doing.
+//! Own run loop: rdev parks its tap on the main loop, so key events wait on the UI thread.
 
 use std::ffi::c_void;
 use std::ptr;
@@ -15,9 +14,7 @@ pub enum TapKind {
 pub struct TapEvent {
     pub kind: TapKind,
     pub keycode: u16,
-    /// Names the modifiers down as the event was made.
     pub flags: u64,
-    /// Posted by the simulator rather than typed.
     pub synthetic: bool,
 }
 
@@ -68,7 +65,7 @@ extern "C" fn deliver<F: FnMut(TapEvent)>(
     event: *mut c_void,
     user_info: *mut c_void,
 ) -> *mut c_void {
-    // macOS switches a tap off when its callback runs late or on user input; switch it back on.
+    // macOS disables a tap whose callback runs late or on user input; re-enable it.
     if kind == TAP_DISABLED_BY_TIMEOUT || kind == TAP_DISABLED_BY_USER_INPUT {
         unsafe { CGEventTapEnable(TAP.load(Ordering::Acquire), true) };
         return event;
@@ -93,7 +90,7 @@ extern "C" fn deliver<F: FnMut(TapEvent)>(
     event
 }
 
-/// Runs the tap on the calling thread for the rest of the process.
+/// Blocks the calling thread for the rest of the process.
 pub fn listen<F: FnMut(TapEvent) + 'static>(callback: F) -> Result<(), String> {
     let mask = (1u64 << KEY_DOWN)
         | (1 << KEY_UP)

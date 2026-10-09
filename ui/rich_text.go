@@ -14,8 +14,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// adopt gives text nested in lists and tables the theme of the rich text it shows in, which Fyne gives
-// only to top-level text.
+// adopt gives nested text the holder's theme, which Fyne gives only to top-level text.
 func adopt(holder *widget.RichText, segments []widget.RichTextSegment) []widget.RichTextSegment {
 	return adoptWithin(holder, holder, segments)
 }
@@ -74,9 +73,7 @@ func setHolder(text *widget.TextSegment, holder *widget.RichText) {
 	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(holder))
 }
 
-// cardList draws a list as rows of a marker beside its item's text, which wraps within the space left
-// to it. Fyne indents an item's wrapped lines by the marker but wraps them at the full width, so they
-// ran past the card's edge.
+// cardList works around Fyne wrapping indented list lines at the full width.
 type cardList struct {
 	within *widget.RichText
 	items  []listItem
@@ -121,7 +118,6 @@ func (l *cardList) Textual() string {
 	return text.String()
 }
 
-// plain is the text of segments, through the blocks that hold it.
 func plain(segments []widget.RichTextSegment) string {
 	var text strings.Builder
 	for _, segment := range segments {
@@ -151,8 +147,7 @@ func (l *cardList) Select(_, _ fyne.Position) {}
 func (l *cardList) SelectedText() string      { return "" }
 func (l *cardList) Unselect()                 {}
 
-// listLayout puts each marker in a column and its text beside it. The text is a rich text of its own,
-// whose padding is laid outside the space it is given so it lines up with the text around the list.
+// listLayout lays the text's padding outside its space so it lines up with the text around the list.
 type listLayout struct {
 	within *widget.RichText
 }
@@ -197,8 +192,7 @@ func (l *listLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	l.arrange(objects, size.Width, true)
 }
 
-// cardTable draws a markdown table in the card's theme: Fyne's own fills its cells from the app's
-// theme, whose background is see-through.
+// cardTable exists because Fyne's table fills cells from the app theme, whose background is see-through.
 type cardTable struct {
 	*widget.TableSegment
 	holder *widget.RichText

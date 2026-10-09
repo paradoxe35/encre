@@ -5,8 +5,7 @@ package input
 /*
 // ggml (C++) and cpal (platform audio) link flags live here; cgo unions LDFLAGS across the package.
 #cgo linux LDFLAGS: -lstdc++ -lasound
-// Accelerate: ggml-cpu calls vDSP directly under GGML_USE_ACCELERATE, but its own link
-// manifest only requests the framework when BLAS is on, which this build disables.
+// Accelerate: ggml-cpu calls vDSP, but its link manifest only asks for it with BLAS, off here.
 #cgo darwin LDFLAGS: -lc++ -framework Accelerate -framework AudioToolbox -framework CoreAudio -framework AudioUnit
 #cgo windows LDFLAGS: -lstdc++ -lole32 -lavrt
 
@@ -22,9 +21,7 @@ import (
 	"unsafe"
 )
 
-// mu is shared: Rust orders Start, Stop and Cancel itself, and an exclusive lock would make
-// the next take wait on the previous transcription. Close takes it exclusively so the handle
-// stays alive under a call.
+// Shared: Rust orders Start, Stop and Cancel; Close takes it exclusively to keep the handle alive.
 type FFISpeech struct {
 	mu     sync.RWMutex
 	handle C.encre_SttHandle
@@ -162,8 +159,7 @@ func (s *FFISpeech) SetLanguage(code string) error {
 	return nil
 }
 
-// Capture-only keeps audio away from the engine, for a remote transcriber that needs the raw
-// take. Applies to the next recording.
+// Capture-only keeps audio from the engine, for remote transcribers; applies to the next recording.
 func (s *FFISpeech) SetCaptureOnly(enabled bool) error {
 	s.mu.RLock()
 	result := C.encre_stt_set_capture_only(s.handle, C.bool(enabled))

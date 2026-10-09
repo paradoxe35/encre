@@ -11,9 +11,7 @@ package overlay
 #include <stdio.h>
 #include <stdlib.h>
 
-// The window manager, not GLFW, decides who gets focus when a window appears. A
-// window that declares the "no input" model and calls itself a notification is
-// one every manager leaves alone.
+// The WM, not GLFW, decides focus; a "no input" notification window is one every WM leaves alone.
 static void encre_overlay_no_focus(Display* display, Window window) {
     XWMHints hints;
     hints.flags = InputHint;
@@ -62,8 +60,7 @@ static void encre_overlay_panel_state(Display* display, Window window) {
     XFlush(display);
 }
 
-// While a resize waits for its next frame, X keeps the window's old picture held to its bottom, as
-// the card is, rather than clearing it to black.
+// Has X hold the old picture to the bottom during a resize rather than clearing it to black.
 static void encre_overlay_keep_picture(Display* display, Window window) {
     XSetWindowAttributes attributes;
     attributes.background_pixmap = None;
@@ -139,8 +136,7 @@ static void encre_overlay_opacity(Display* display, Window window, unsigned long
     XFlush(display);
 }
 
-// The active window can vanish between two calls; Xlib's default handler would
-// then end the whole process, so errors are swallowed while we look.
+// The active window can vanish mid-call; Xlib's default handler would then kill the process.
 static int encre_overlay_locate(Display* display, int* x, int* y);
 
 static int encre_overlay_ignore_error(Display* display, XErrorEvent* error) {
@@ -276,9 +272,7 @@ func noFocus(window *glfw.Window) {
 	C.encre_overlay_no_focus(display, C.Window(window.GetX11Window()))
 }
 
-// Panel makes a focusable window float like the indicator, rounded and placed in the frame.
-// A glass panel draws its own smooth corners once a compositor shows its transparency; otherwise
-// the corners are cut from the window.
+// Glass panels draw their own corners once a compositor shows transparency; else X11 cuts them.
 func Panel(window uintptr, frame image.Rectangle, look Look) {
 	if window == 0 || glfw.GetPlatform() != glfw.PlatformX11 {
 		return

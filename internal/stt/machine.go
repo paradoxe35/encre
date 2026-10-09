@@ -9,14 +9,12 @@ import (
 	"sync"
 )
 
-// Only what can be learned cheaply: enough to rank models by whether they will keep up.
 type Machine struct {
 	Cores    int
 	MemoryMB int
 }
 
-// referenceCores matches the slowest machine the catalog's realtime factors
-// were measured on, so scaling from it errs toward caution.
+// The slowest machine the realtime factors were measured on, so scaling errs toward caution.
 const referenceCores = 8
 
 var (
@@ -31,8 +29,7 @@ func Host() Machine {
 	return machine
 }
 
-// EstimatedRealtime scales the catalog's measured factor by core count. A heuristic, not a
-// benchmark: cores are a rough proxy for throughput and say nothing about clock speed or vector width.
+// Heuristic: cores are a rough proxy and say nothing about clock speed or vector width.
 func (m Model) EstimatedRealtime(host Machine) float64 {
 	if m.RealtimeFactor <= 0 || host.Cores <= 0 {
 		return 0
@@ -53,8 +50,7 @@ type Fit int
 const (
 	// Transcribes faster than you can speak, with headroom, and fits in memory.
 	FitComfortable Fit = iota
-	// No measured realtime factor (e.g. a user-dropped model file); ranks below known-good
-	// but "slow" would be a claim the catalog can't support.
+	// No measured factor (e.g. a user-dropped model): below known-good, without claiming slow.
 	FitUnknown
 	FitSlow
 	FitTooLarge

@@ -194,8 +194,7 @@ func (w *MainWindow) initBindings() {
 	w.themeBinding.Set(theme)
 }
 
-// A refused microphone only stops dictation, so it is a Speech tab notice
-// rather than the blocking permission card.
+// A refused microphone only stops dictation, so it is a Speech tab notice, not the blocking card.
 func (w *MainWindow) SetPermissionState(state permissions.State, showRestart bool) {
 	// The card shows and hides itself; only the main content needs to make way for it.
 	w.permissionPrompt.update(state, showRestart)
@@ -298,7 +297,6 @@ func (w *MainWindow) SetAvailableUpdate(rel *updater.Release) {
 	w.addTrayUpdateItem(rel)
 }
 
-// The tray gains an "Update to vX" entry above Settings, the way most tray apps announce one.
 func (w *MainWindow) addTrayUpdateItem(rel *updater.Release) {
 	if w.tray == nil || w.updates == nil {
 		return

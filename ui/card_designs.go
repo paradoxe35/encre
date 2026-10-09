@@ -211,7 +211,6 @@ func glassColors(variant fyne.ThemeVariant) palette {
 	return colors
 }
 
-// cardTheme is the app's theme under a card design's colours.
 type cardTheme struct {
 	base    fyne.Theme
 	variant *fyne.ThemeVariant

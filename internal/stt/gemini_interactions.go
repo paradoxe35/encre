@@ -10,8 +10,7 @@ import (
 	"github.com/paradoxe35/encre/internal/config"
 )
 
-// The Interactions API counts the whole request, base64 included, against 20 MB;
-// the Files API lifts that but costs an upload round trip a dictation cannot spare.
+// Caps the whole request, base64 included, at 20 MB; the Files API costs a round trip.
 const interactionsMaxRequestBytes = 18 * 1024 * 1024
 
 type interactionsRequest struct {
@@ -44,11 +43,9 @@ type interactionsResponse struct {
 	} `json:"steps"`
 }
 
-// gemini-3.5-transcribe is a speech model, not a chat model: no prompt, no preamble to strip,
-// no thinking budget, and the language is a field instead of a sentence.
+// A speech model, not chat: no prompt, no thinking budget, and the language is a field.
 func geminiTranscribeSpeech(ctx context.Context, cfg config.SpeechConfig, wav []byte) (string, error) {
-	// The -live twin needs the Live API websocket; naming the model that works beats the
-	// endpoint's own error.
+	// The -live twin needs the Live API websocket; naming the working model beats the endpoint's error.
 	if isGeminiLiveModel(cfg.RemoteModel) {
 		return "", fmt.Errorf("%s streams over the Live API; use gemini-3.5-transcribe instead",
 			cfg.RemoteModel)

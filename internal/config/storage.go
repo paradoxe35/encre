@@ -86,8 +86,7 @@ func DecryptAPIKey(encryptedKey string) (string, error) {
 	return string(plaintext), nil
 }
 
-// SetAPIKey stores the key in memory only. Saving here would publish a config
-// the caller is still partway through applying.
+// Memory only: saving would publish a config the caller is still applying.
 func (c *Config) SetAPIKey(provider, apiKey string) error {
 	encrypted, err := EncryptAPIKey(apiKey)
 	if err != nil {

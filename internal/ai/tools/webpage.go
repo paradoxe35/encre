@@ -18,8 +18,7 @@ import (
 	"golang.org/x/net/html"
 )
 
-// guardedClient refuses addresses on the user's own machine and network, checked once resolved, so
-// a page cannot steer the model into reading a router or a local service.
+// Checked once resolved, so a page cannot steer the model into reading a router or local service.
 var guardedClient = &http.Client{
 	Timeout: 20 * time.Second,
 	Transport: &http.Transport{

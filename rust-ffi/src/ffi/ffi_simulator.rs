@@ -60,7 +60,7 @@ pub unsafe extern "C" fn encre_simulate_paste(handle: SimulatorHandle) -> c_int 
     outcome(simulator.paste(), "Paste simulation failed")
 }
 
-/// Ctrl+Shift+V, the paste chord terminals bind. Cmd+V on macOS, like `encre_simulate_paste`.
+/// Ctrl+Shift+V, the paste chord terminals bind; Cmd+V on macOS.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_simulate_paste_terminal(handle: SimulatorHandle) -> c_int {
     let Some(simulator) = simulator(handle) else {

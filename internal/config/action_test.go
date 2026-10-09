@@ -77,8 +77,7 @@ func TestPromptOrDefaultFallsBackPerOperation(t *testing.T) {
 	}
 }
 
-// Both revise shortcuts must resolve to one set of settings, or editing the
-// prompt in one place would leave the other stale.
+// Both revise shortcuts must share settings, or editing one prompt would leave the other stale.
 func TestBothReviseBindingsShareOneOperation(t *testing.T) {
 	if ActionReviseSelection.Operation() != OpRevise {
 		t.Error("revise_selection should map to the revise operation")
@@ -211,8 +210,7 @@ func TestActionKindClassification(t *testing.T) {
 	}
 }
 
-// The 1000-character limit and 60-second timeout are defaults nobody touches, so a
-// quiet change would go unnoticed.
+// Pinned: nobody touches these defaults, so a quiet change would go unnoticed.
 func TestShippedDefaultsAreUnchanged(t *testing.T) {
 	if DefaultCharacterLimit != 1000 {
 		t.Errorf("DefaultCharacterLimit = %d, want 1000", DefaultCharacterLimit)

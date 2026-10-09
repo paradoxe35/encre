@@ -1,5 +1,4 @@
-// Package witai is a free speech-to-text engine backed by Wit.ai. A Wit app is
-// single-language, so one key is embedded per supported language.
+// Package witai transcribes via Wit.ai; a Wit app is single-language, so one key per language.
 package witai
 
 import (
@@ -18,8 +17,7 @@ type Key struct {
 	Language string `json:"lang"`
 }
 
-// A constructor so tests can rebind rawKeys and get a fresh cache instead of sync.OnceValue's
-// permanent one.
+// A constructor so tests can rebind rawKeys and get a fresh cache, unlike sync.OnceValue.
 func newParseKeys() func() []Key {
 	return sync.OnceValue(func() []Key {
 		if rawKeys == "" {

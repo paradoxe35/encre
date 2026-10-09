@@ -64,8 +64,7 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	return container.NewVScroll(form)
 }
 
-// The indicator needs a window that floats without taking focus, which Wayland has no
-// way to offer; the switch stays visible but off, with the reason.
+// Wayland cannot float a window without focus, so the switch stays visible but off, with the reason.
 func (w *MainWindow) createIndicatorControls() fyne.CanvasObject {
 	voice := widget.NewCheck("Show a floating indicator while dictating or asking by voice", nil)
 	voice.Bind(w.voiceIndicator)

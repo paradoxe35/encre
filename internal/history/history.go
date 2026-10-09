@@ -37,8 +37,7 @@ type Entry struct {
 	Characters int       `json:"characters"`
 }
 
-// Append-only JSONL log capped at MaxEntries; reads load the whole file, which stays
-// small by construction.
+// Reads load the whole file, which the MaxEntries cap keeps small.
 type Store struct {
 	mu   sync.Mutex
 	path string
@@ -48,8 +47,7 @@ type Store struct {
 
 func NewStore() *Store { return &Store{path: utils.AppHomeDir("history.jsonl")} }
 
-// Fired after every successful append, on the writing goroutine and outside the lock, so a
-// handler may read the store back without deadlocking.
+// Fired outside the lock, so a handler may read the store back without deadlocking.
 func (s *Store) OnChange(fn func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

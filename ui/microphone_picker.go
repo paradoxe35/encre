@@ -78,7 +78,6 @@ func (p *MicrophonePicker) Refresh() {
 			present = true
 		}
 	}
-	// Keep a missing device visible rather than dropping the user's choice.
 	if p.chosen != "" && !slices.Contains(options, p.chosen) {
 		options = append(options, p.chosen)
 	} else if p.saved != "" && !present && !slices.Contains(options, p.saved) {

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Prints the changes in a release, from the commits since the release before it, grouped by kind.
 # Usage: scripts/release-notes.sh v0.1.9
 set -euo pipefail
 

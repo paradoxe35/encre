@@ -82,7 +82,7 @@ func (c *FFIClipboardManager) GetText() (string, error) {
 	return "", fmt.Errorf("clipboard holds no text")
 }
 
-// Clear empties the clipboard, which is what makes a following copy landing observable.
+// Clearing is what makes a following copy observable.
 func (c *FFIClipboardManager) Clear() error {
 	if c.handle == nil {
 		return fmt.Errorf("clipboard manager not initialized")
@@ -95,8 +95,7 @@ func (c *FFIClipboardManager) Clear() error {
 	return nil
 }
 
-// await polls until read answers or the deadline passes, rather than a fixed sleep that's
-// wrong for either a fast or a slow application.
+// Polls rather than a fixed sleep, which is wrong for either a fast or a slow app.
 func await(read func() (string, bool)) (string, bool) {
 	deadline := time.Now().Add(clipboardCopyTimeout)
 	for {
@@ -167,7 +166,7 @@ func (c *FFIClipboardManager) CaptureAll() (string, CaptureOutcome, error) {
 	return c.capture(true)
 }
 
-// Clears the clipboard before copying so a failed copy is observable rather than reusing stale contents.
+// Clearing first makes a failed copy observable instead of reusing stale contents.
 func (c *FFIClipboardManager) capture(selectAllFirst bool) (string, CaptureOutcome, error) {
 	if err := c.SaveCurrent(); err != nil {
 		return "", CaptureCopyFailed, fmt.Errorf("could not read the clipboard: %w", err)
@@ -220,8 +219,7 @@ func (c *FFIClipboardManager) capture(selectAllFirst bool) (string, CaptureOutco
 	return copied, CaptureOK, nil
 }
 
-// The selection is still active from the capture, so pasting replaces it; the clipboard is
-// put back afterwards.
+// The capture's selection is still active, so pasting replaces it; the clipboard is restored.
 func (c *FFIClipboardManager) ReplaceSelectedText(newText string, shortcut config.PasteShortcut) error {
 	if err := c.SetText(newText); err != nil {
 		c.Abandon()
@@ -253,15 +251,14 @@ func (c *FFIClipboardManager) ReplaceSelectedText(newText string, shortcut confi
 		return fmt.Errorf("failed to simulate paste: %w", err)
 	}
 
-	// The paste is asynchronous; restoring immediately can hand the target application the old contents.
+	// The paste is asynchronous; restoring at once can hand the target the old contents.
 	time.Sleep(clipboardPasteSettle)
 	c.Abandon()
 
 	return nil
 }
 
-// Abandon puts the clipboard back, unless something new was copied meanwhile, and logs rather than
-// returns a failure.
+// Restores unless something new was copied meanwhile; logs rather than returns failures.
 func (c *FFIClipboardManager) Abandon() {
 	if err := c.Restore(); err != nil {
 		logger.Warn("Failed to restore clipboard", "error", err)

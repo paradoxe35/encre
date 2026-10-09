@@ -9,8 +9,7 @@ var (
 	frenchOnly   = []string{"fr"}
 )
 
-// The whole rule in one table: what to use after moving from one engine to
-// another. "" means auto-detect.
+// "" means auto-detect.
 func TestSwitchLanguage(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -54,8 +53,7 @@ func TestSwitchLanguage(t *testing.T) {
 	}
 }
 
-// Engines spell the same language differently, and a switch must see through
-// that rather than treating fr-FR as a language Groq cannot speak.
+// fr-FR must not read as a language Groq cannot speak.
 func TestSwitchLanguageAcrossCodeFormats(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -79,8 +77,7 @@ func TestSwitchLanguageAcrossCodeFormats(t *testing.T) {
 	}
 }
 
-// An engine that cannot detect must never be handed a blank language: the
-// library behind it assumes English and silently mistranscribes everything else.
+// A blank language makes the library assume English and mistranscribe everything else.
 func TestNonDetectingEngineIsNeverLeftBlank(t *testing.T) {
 	sets := [][]string{detecting, noDetectMany, noDetectNoEN, frenchOnly}
 
@@ -121,8 +118,7 @@ func TestModelLanguageAfterSwitchUsesTheSharedRule(t *testing.T) {
 	}
 }
 
-// Every hosted set, and Wit.ai's, has to survive the rule without producing a
-// code the engine does not list.
+// No set may yield a code its engine does not list.
 func TestSwitchLanguageOverRealSets(t *testing.T) {
 	sets := map[string][]string{
 		"whisper":           Codes(whisperLanguages),

@@ -1,8 +1,6 @@
 package stt
 
-// RemoteProtocol is the request shape a hosted service speaks. Most take the
-// OpenAI multipart POST; Gemini has no equivalent endpoint and transcribes by
-// being asked to, through generateContent.
+// Gemini has no OpenAI-style multipart endpoint and transcribes through generateContent.
 type RemoteProtocol string
 
 const (
@@ -55,8 +53,7 @@ var RemotePresets = []RemotePreset{
 	},
 }
 
-// An unknown id is a config naming a preset this build does not have; every such preset
-// is OpenAI-shaped.
+// An unknown id names a preset this build lacks; every such preset is OpenAI-shaped.
 func protocolFor(presetID string) RemoteProtocol {
 	if preset, ok := FindPreset(presetID); ok && preset.Protocol != "" {
 		return preset.Protocol

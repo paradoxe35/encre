@@ -11,9 +11,7 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-// Handover lets a launch that lost the instance lock reach the running copy; without it,
-// clicking the launcher while Encre sits in the tray does nothing. Loopback only, which also
-// keeps macOS from asking about incoming connections.
+// Loopback only, which also keeps macOS from asking about incoming connections.
 type Handover struct {
 	portPath string
 	listener net.Listener

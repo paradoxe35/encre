@@ -5,12 +5,10 @@ import (
 	"sync"
 )
 
-// Endpoint/model pairs that refused a reasoning parameter, so the wasted round trip happens once
-// per launch. Process-scoped: persisted, a stale rejection could outlive a model upgrade.
+// Not persisted: a stale rejection could outlive a model upgrade.
 var rejected sync.Map
 
-// Retries without the reasoning parameter on a 400 or 422, matched on status as providers word the
-// error differently. The rejection is cached only once the retry succeeds, since a 400 has other causes.
+// A 400 has other causes, so the rejection is cached only once the retry succeeds.
 func withReasoningFallback(endpoint, model string, wanted bool, send func(lowReasoning bool) (string, error)) (string, error) {
 	key := endpoint + "::" + model
 	if _, refused := rejected.Load(key); !wanted || refused {

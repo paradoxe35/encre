@@ -21,8 +21,7 @@ type SpeechConfig struct {
 
 	Language string `json:"language,omitempty"`
 
-	// RemoteProvider is a preset id; endpoint and key are stored alongside so
-	// transcription does not depend on a chat provider being configured.
+	// Endpoint and key are stored here so transcription does not depend on a chat provider.
 	RemoteProvider string `json:"remote_provider,omitempty"`
 	RemoteModel    string `json:"remote_model,omitempty"`
 	RemoteBaseURL  string `json:"remote_base_url,omitempty"`
@@ -34,8 +33,7 @@ type SpeechConfig struct {
 	// Routes the transcript through the selected AI provider before typing.
 	CleanUp bool `json:"clean_up,omitempty"`
 
-	// Turns other apps down while the microphone is open. Absent means on, so only a choice to
-	// turn it off is stored.
+	// Turns other apps down while recording. Absent means on.
 	LowerAudio *bool `json:"lower_audio,omitempty"`
 }
 

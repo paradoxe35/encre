@@ -38,8 +38,7 @@ func newUpdater(app fyne.App, beforeRelaunch func()) (ui.Updater, error) {
 	})
 }
 
-// A tray app runs for days, so the check repeats. Each release is notified only once,
-// remembered across launches so a skipped version does not nag.
+// A tray app runs for days, so the check repeats; each release is announced once, across launches.
 func (a *Application) checkForUpdates(stop <-chan struct{}) {
 	if a.updater == nil {
 		return

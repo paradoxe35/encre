@@ -25,8 +25,7 @@ type Application struct {
 	app        fyne.App
 	mainWindow *ui.MainWindow
 
-	// configMu guards config: the listener swaps it while hotkey and voice
-	// goroutines are reading it.
+	// configMu guards config: the listener swaps it while hotkey and voice goroutines read it.
 	configMu sync.RWMutex
 	config   *config.Config
 
@@ -248,8 +247,7 @@ func (a *Application) reportBindingFailure(binding string, err error) {
 	})
 }
 
-// Serialised: listeners run on their own goroutine, and interleaving one reload's
-// clear with another's re-registration would leave shortcuts unbound.
+// Serialised: listeners run concurrently, and interleaved reloads would leave shortcuts unbound.
 func (a *Application) reloadHotkeysFromConfig() {
 	a.reloadMutex.Lock()
 	defer a.reloadMutex.Unlock()
@@ -281,8 +279,7 @@ type indicatorChoice struct {
 	text  bool
 }
 
-// applyOverlay swaps the indicators only when a choice changed, so a save of
-// unrelated settings never interrupts one that is showing.
+// Swaps only on a changed choice, so unrelated saves never interrupt a showing indicator.
 func (a *Application) applyOverlay(cfg *config.Config) {
 	a.overlayMu.Lock()
 	defer a.overlayMu.Unlock()
@@ -465,8 +462,7 @@ func (a *Application) Stop() {
 	fyne.Do(a.app.Quit)
 }
 
-// teardown releases the hotkeys and background work; an updated copy relaunched
-// in our place needs them free before it starts.
+// An updated copy relaunched in our place needs the hotkeys free before it starts.
 func (a *Application) teardown() {
 	if a.updateChecks != nil {
 		close(a.updateChecks)

@@ -7,17 +7,15 @@ use super::speech::Speech;
 const VAD_FRAME: usize = 256;
 const VAD_THRESHOLD: f32 = 0.5;
 
-/// Speech stays open this long after the detector drops it, so a trailing word is not clipped.
+/// Keeps a trailing word from being clipped.
 const HANGOVER_FRAMES: usize = 28; // ~450 ms
-/// Frames kept before onset, recovering the attack the detector needed to fire.
+/// Recovers the attack the detector needed to fire.
 const PREFILL_FRAMES: usize = 28;
-/// Consecutive speech frames before onset is believed, rejecting clicks.
+/// Rejects clicks.
 const ONSET_FRAMES: usize = 4;
 
 const RESAMPLER_CHUNK: usize = 1024;
 
-/// Resamples to 16 kHz, then keeps only the frames the detector calls speech, noting
-/// where a pause split it into phrases.
 pub struct Pipeline {
     resampler: Option<rubato::FftFixedIn<f32>>,
     pending: Vec<f32>,
@@ -117,13 +115,13 @@ impl Pipeline {
         self.prefill.push_back(frame);
     }
 
-    /// Speech since the last call. Pause offsets are relative to this burst.
+    /// Pause offsets are relative to this burst.
     pub fn take(&mut self) -> Speech {
         self.speech.take()
     }
 
     pub fn finish(&mut self) -> Speech {
-        // Zero-padded to a whole chunk so the resampler gives back what it still holds.
+        // Zero-padded to a whole chunk so the resampler flushes what it holds.
         if !self.pending.is_empty() {
             let mut tail = std::mem::take(&mut self.pending);
             tail.resize(RESAMPLER_CHUNK, 0.0);
@@ -155,7 +153,6 @@ mod tests {
         );
     }
 
-    /// A 200 Hz tone, which the voice detector keeps in full.
     fn tone(seconds: f32, rate: u32) -> Vec<f32> {
         let n = (seconds * rate as f32) as usize;
         (0..n)

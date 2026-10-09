@@ -12,17 +12,15 @@ use arboard::SetExtLinux as _;
 #[cfg(windows)]
 use arboard::SetExtWindows as _;
 
-/// What the clipboard holds, as far as Encre can read it back.
 #[derive(Clone, Debug)]
 enum Content {
     Text(String),
     Image(ImageData<'static>),
-    /// Empty, or holding what cannot be read back, such as files. Putting it back clears the
-    /// clipboard, so Encre's text is not left in its place.
+    /// Also covers unreadable content such as files; restoring it clears Encre's text.
     Nothing,
 }
 
-/// Text comes first: a copy from a spreadsheet or a document carries a picture of it as well.
+/// Text first: a spreadsheet or document copy also carries a picture of it.
 fn content_of(text: Option<String>, image: impl FnOnce() -> Option<ImageData<'static>>) -> Content {
     match text {
         Some(text) if !text.is_empty() => Content::Text(text),
@@ -30,14 +28,12 @@ fn content_of(text: Option<String>, image: impl FnOnce() -> Option<ImageData<'st
     }
 }
 
-/// Encre's text on the clipboard, and the text it replaced there.
 struct Write {
     text: String,
     replaced: Option<String>,
 }
 
-/// Something else on the clipboard than Encre's text, or what that replaced, was copied since:
-/// putting the old content back would overwrite it.
+/// Something new was copied since, so restoring would overwrite it.
 fn still_borrowed(write: Option<&Write>, current: Option<&str>) -> bool {
     write.is_none_or(|write| {
         current == Some(write.text.as_str()) || current == write.replaced.as_deref()
@@ -65,7 +61,7 @@ impl ClipboardManager {
         })
     }
 
-    /// `None` covers both "empty" and "holds an image"; neither is a failure.
+    /// `None` covers both empty and image; neither is a failure.
     pub fn get_text(&self) -> Option<String> {
         self.clipboard.lock().get_text().ok()
     }
@@ -94,10 +90,9 @@ impl ClipboardManager {
         *self.borrow.lock() = Borrow { saved, write: None };
     }
 
-    /// Puts back what was saved, unless something new was copied meanwhile.
     pub fn restore_clipboard(&self) -> Result<()> {
         let current = self.get_text();
-        // Released before writing, which blocks on X11 while handing over the selection.
+        // Lock released before writing, which blocks on X11 while handing over the selection.
         let saved = {
             let mut borrow = self.borrow.lock();
             let write = borrow.write.take();
@@ -110,8 +105,7 @@ impl ClipboardManager {
         self.put(saved).context("Failed to restore the clipboard")
     }
 
-    /// Every write stays out of clipboard history: Encre's text is there only until the paste
-    /// lands, and what it puts back is already in the history from the user's own copy.
+    /// Kept out of clipboard history: Encre's text is transient and the restored content is already there.
     fn put(&self, content: Content) -> Result<(), arboard::Error> {
         let mut clipboard = self.clipboard.lock();
         match content {

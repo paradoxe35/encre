@@ -10,8 +10,7 @@ import (
 
 const sFalse = 1
 
-// mixerSession holds each app's session on the default output, as its slider in the volume mixer.
-// Its objects live on the worker's thread, which opened them.
+// mixerSession's COM objects live on the worker thread that opened them.
 type mixerSession struct {
 	volumes []*wca.ISimpleAudioVolume
 	levels  []float32

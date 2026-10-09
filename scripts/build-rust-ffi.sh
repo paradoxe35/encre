@@ -14,8 +14,7 @@ else
   out_dir="target/release"
 fi
 
-# ggml clears CMAKE_STATIC_LIBRARY_PREFIX on WIN32, so it installs ggml.a while
-# its link manifest says "ggml" and rustc looks for libggml.a.
+# ggml clears the static lib prefix on WIN32 and installs ggml.a, but rustc looks for libggml.a.
 normalize_native_archives() {
   shopt -s nullglob
   local archive name dir

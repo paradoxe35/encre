@@ -14,7 +14,6 @@ import (
 	"github.com/paradoxe35/encre/internal/config"
 )
 
-// scriptedModel answers each turn from its script, and keeps the prompts it was sent.
 type scriptedModel struct {
 	turns   []ai.Reply
 	prompts []ai.Prompt

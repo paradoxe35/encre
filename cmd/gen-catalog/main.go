@@ -1,9 +1,4 @@
-// Command gen-catalog rebuilds the shipped model list from Hugging Face:
-//
-//	go run ./cmd/gen-catalog
-//
-// It writes internal/stt/models.json, the offline and first-run fallback, so
-// a release ships with whatever the hub published at the time.
+// Command gen-catalog rebuilds the offline model list, internal/stt/models.json, from Hugging Face.
 package main
 
 import (

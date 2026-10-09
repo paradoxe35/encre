@@ -6,8 +6,7 @@ import (
 	"github.com/paradoxe35/encre/internal/prompt"
 )
 
-// Operation is what happens to the text. Prompt, provider and limits are configured per
-// operation, so two shortcuts that both revise cannot drift apart.
+// Settings are per operation, so two shortcuts that both revise cannot drift apart.
 type Operation string
 
 const (
@@ -103,8 +102,7 @@ type OperationConfig struct {
 	SystemPrompt   string `json:"system_prompt,omitempty"`
 	CharacterLimit int    `json:"character_limit,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
-	// Memory is how many questions Ask sends, the new one included, the earlier ones with their
-	// answers; unset is 1, which remembers nothing.
+	// Memory counts the new question too; unset is 1, which remembers nothing.
 	Memory int  `json:"memory,omitempty"`
 	Tools  bool `json:"tools,omitempty"`
 
@@ -172,8 +170,7 @@ func defaultHotkeys() map[ActionKind]string {
 	}
 }
 
-// Translate and the voice actions start off: translate needs a language pair and voice
-// needs a downloaded model, so none should claim a shortcut unasked.
+// Off by default: translate needs a language pair and voice a downloaded model.
 func enabledByDefault(kind ActionKind) bool {
 	return kind == ActionReviseSelection || kind == ActionReviseEverything
 }

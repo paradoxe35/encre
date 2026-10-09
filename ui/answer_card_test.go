@@ -16,7 +16,7 @@ import (
 	"github.com/paradoxe35/encre/internal/config"
 )
 
-// newCard batches nothing behind the test's back: a batch only runs when a test calls it.
+// Batches run only when a test calls them.
 func newCard(t *testing.T) (*AnswerCard, fyne.App) {
 	t.Helper()
 	app := test.NewTempApp(t)
@@ -150,8 +150,7 @@ func TestLongAnswersStopGrowingTheCard(t *testing.T) {
 	}
 }
 
-// A reader at the top of a long answer scrolls it with the wheel at once, with no pointer move
-// first: a two-finger scroll moves none.
+// No pointer move first: a two-finger scroll moves none.
 func TestTheWheelScrollsAnAnswerThatOutgrewTheCard(t *testing.T) {
 	card, _ := newCard(t)
 	var batch func()
@@ -175,7 +174,6 @@ func TestTheWheelScrollsAnAnswerThatOutgrewTheCard(t *testing.T) {
 	}
 }
 
-// streamInto opens a card and returns a way to send it more of a long answer, rendered at once.
 func streamInto(t *testing.T) (*AnswerCard, func(paragraphs int, done bool)) {
 	t.Helper()
 	card, _ := newCard(t)
@@ -190,7 +188,6 @@ func streamInto(t *testing.T) (*AnswerCard, func(paragraphs int, done bool)) {
 	}
 }
 
-// A reader who scrolled is left where they are while the answer keeps coming.
 func TestAReaderKeepsTheirPlaceWhileTheAnswerGrows(t *testing.T) {
 	card, stream := streamInto(t)
 	stream(100, false)
@@ -205,8 +202,6 @@ func TestAReaderKeepsTheirPlaceWhileTheAnswerGrows(t *testing.T) {
 	}
 }
 
-// Scrolling while the answer streams, from while the card still grows to long after it stopped, is
-// never undone by the words arriving.
 func TestScrollingWhileTheAnswerStreamsIsNeverUndone(t *testing.T) {
 	card, stream := streamInto(t)
 	for paragraphs := 1; paragraphs <= 60; paragraphs++ {
@@ -224,7 +219,6 @@ func TestScrollingWhileTheAnswerStreamsIsNeverUndone(t *testing.T) {
 	}
 }
 
-// An answer is read from its start: text arriving past the bottom of the card waits there.
 func TestALongAnswerStaysAtItsStartAsItGrows(t *testing.T) {
 	card, stream := streamInto(t)
 	stream(100, false)
@@ -409,8 +403,7 @@ func TestATypedQuestionKeepsTheInputForTheNext(t *testing.T) {
 	}
 }
 
-// Esc is released in the hide callback, so every way of closing the card must run it. The window
-// manager's close goes through the close intercept, which Fyne's test window cannot send.
+// Esc is released in the hide callback; the test window cannot send the WM's close intercept.
 func TestEveryWayOfClosingRunsTheHideCallback(t *testing.T) {
 	closers := map[string]func(*AnswerCard){
 		"close button": func(c *AnswerCard) { test.Tap(closeButton(t, c)) },
@@ -487,8 +480,6 @@ func TestASizeChangeGlidesWhileTheCardShows(t *testing.T) {
 	}
 }
 
-// A new question after a long answer gives most of the card's height up, which reads as a jump at the
-// speed the card grows.
 func TestTheCardShrinksMoreSlowlyThanItGrows(t *testing.T) {
 	small, large := fyne.NewSize(480, 140), fyne.NewSize(480, 440)
 	grow, growCurve := glideFor(small, large)
@@ -561,7 +552,6 @@ func TestTheGlassCardFollowsTheAppVariant(t *testing.T) {
 	}
 }
 
-// Every line of an answer fits the card, including the wrapped lines of an indented list item.
 func TestNoLineOfAListRunsPastTheCard(t *testing.T) {
 	card, _ := newCard(t)
 	answered(card, "q", "Intro.\n\n"+
@@ -582,7 +572,6 @@ func TestNoLineOfAListRunsPastTheCard(t *testing.T) {
 	}
 }
 
-// walkTexts visits every text drawn under object, with its distance from object's left edge.
 func walkTexts(t *testing.T, object fyne.CanvasObject, left float32, visit func(*canvas.Text, float32)) {
 	t.Helper()
 	if !object.Visible() {

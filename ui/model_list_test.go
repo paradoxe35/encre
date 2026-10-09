@@ -25,8 +25,6 @@ func TestActiveModelTextRemainsVisibleForLongLists(t *testing.T) {
 	}
 }
 
-// A catalogue refresh replaces the list underneath the widget; Reload must
-// rebuild the rows and re-emit the active label without any user action.
 func TestModelListReloadRebuildsRowsAndActiveLabel(t *testing.T) {
 	test.NewApp()
 	list := NewModelList(stt.NewStore(), test.NewWindow(nil), "", nil)

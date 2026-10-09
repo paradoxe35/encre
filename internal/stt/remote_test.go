@@ -21,8 +21,7 @@ func TestIsPresetModel(t *testing.T) {
 	}
 }
 
-// Every preset needs a protocol: an empty one would silently fall back to the
-// OpenAI shape and post audio at an endpoint that does not exist.
+// An empty protocol would silently fall back to the OpenAI shape.
 func TestEveryPresetDeclaresAProtocol(t *testing.T) {
 	for _, preset := range RemotePresets {
 		if preset.Protocol == "" {
@@ -31,8 +30,7 @@ func TestEveryPresetDeclaresAProtocol(t *testing.T) {
 	}
 }
 
-// The model each preset offers first is what a new user gets, so it has to be
-// the one the provider currently recommends for transcribing a finished take.
+// The first model a preset offers must be the provider's current recommendation.
 func TestPresetDefaultsAreCurrentModels(t *testing.T) {
 	want := map[string]string{
 		"openai": "gpt-transcribe",

@@ -105,8 +105,7 @@ func ModelDetails(model Model, host Machine, downloaded bool) string {
 	return strings.Join(lines, "\n")
 }
 
-// A model that cannot detect transcribes as whatever language it is told, so
-// the picker is not optional for it.
+// A model that cannot detect assumes whatever language it is told, so the picker is required.
 func detectionLine(model Model) string {
 	if model.LanguageDetect {
 		return "Language: detected automatically, or pick one"
@@ -115,7 +114,6 @@ func detectionLine(model Model) string {
 }
 
 func streamingLine(model Model) string {
-	// Transcript lands the moment you stop speaking; not live captions mid-sentence.
 	if model.Streaming {
 		return "Streaming: supported — transcribes as you speak, so text lands the moment you stop"
 	}

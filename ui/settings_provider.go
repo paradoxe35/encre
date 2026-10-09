@@ -89,7 +89,7 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	modelEntry := w.dirtyEntry()
 	modelEntry.Bind(w.modelBinding)
 	modelEntry.PlaceHolder = "e.g. gpt-6-luna"
-	modelEntry.Validator = nil // no validation icon
+	modelEntry.Validator = nil
 
 	browseModels := widget.NewButtonWithIcon("", theme.ListIcon(), nil)
 	browseModels.Importance = widget.LowImportance
@@ -105,7 +105,7 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	baseURLEntry := w.dirtyEntry()
 	baseURLEntry.Bind(w.baseURLBinding)
 	baseURLEntry.PlaceHolder = "Required for custom providers"
-	baseURLEntry.Validator = nil // no validation icon
+	baseURLEntry.Validator = nil
 
 	w.baseURLContainer = container.NewVBox(
 		widget.NewSeparator(),
@@ -198,8 +198,7 @@ func (w *MainWindow) testAPIConnection(report progress) {
 
 var errAnswering = errors.New("answering")
 
-// answers waits only for the reply to begin: a reasoning model can think for a minute before its
-// first word, and the server streaming at all proves the address, key and model.
+// answers waits only for the reply to begin: a reasoning model can think for a minute first.
 func answers(provider ai.Provider, wait time.Duration) error {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)

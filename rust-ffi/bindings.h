@@ -14,8 +14,7 @@
 
 #if defined(ENCRE_MACOS)
 /**
- * Stamped on every event the simulator posts, so the hotkey listener can tell them from the
- * user's own keystrokes.
+ * Lets the hotkey listener tell posted events from the user's keystrokes.
  */
 #define encre_SYNTHETIC_TAG 1162756946
 #endif
@@ -26,9 +25,6 @@ typedef void *encre_ClipboardHandle;
 
 typedef void *encre_HotkeyManagerHandle;
 
-/**
- * Receives the action string the binding was registered with.
- */
 typedef void (*encre_HotkeyCallback)(const char*);
 
 /**
@@ -37,7 +33,7 @@ typedef void (*encre_HotkeyCallback)(const char*);
 typedef void (*encre_PttCallback)(const char*, int);
 
 /**
- * Receives one message at a time, from any thread. The string is only valid during the call.
+ * Called from any thread; the string is only valid during the call.
  */
 typedef void (*encre_LogCallback)(int level, const char *message);
 
@@ -45,9 +41,6 @@ typedef void *encre_SimulatorHandle;
 
 typedef void *encre_SttHandle;
 
-/**
- * Microphone RMS level while recording, for a meter.
- */
 typedef void (*encre_LevelCallback)(float);
 
 /**
@@ -63,21 +56,21 @@ void encre_free_string(char *s);
 encre_ClipboardHandle encre_clipboard_new(void);
 
 /**
- * Null when the clipboard holds no text, including when it holds an image.
+ * Null when the clipboard holds no text, including an image. Free with `encre_free_string`.
  */
 char *encre_clipboard_get_text(encre_ClipboardHandle handle);
 
 int encre_clipboard_set_text(encre_ClipboardHandle handle, const char *text);
 
 /**
- * Empties the clipboard, so a following simulated copy landing becomes observable.
+ * Lets the host observe when a following simulated copy lands.
  */
 int encre_clipboard_clear(encre_ClipboardHandle handle);
 
 int encre_clipboard_save(encre_ClipboardHandle handle);
 
 /**
- * Puts back what save found, text or image, unless something new was copied meanwhile.
+ * Skipped if something new was copied meanwhile.
  */
 int encre_clipboard_restore(encre_ClipboardHandle handle);
 
@@ -94,9 +87,6 @@ int encre_hotkey_register(encre_HotkeyManagerHandle handle,
                           const char *action,
                           encre_HotkeyCallback callback);
 
-/**
- * Push-to-talk: the callback receives 1 on key down and 0 on key up.
- */
 int encre_hotkey_register_hold(encre_HotkeyManagerHandle handle,
                                const char *binding,
                                const char *action,
@@ -107,7 +97,7 @@ int encre_hotkey_start(encre_HotkeyManagerHandle handle);
 int encre_hotkey_stop(encre_HotkeyManagerHandle handle);
 
 /**
- * Null when the listener is running. The caller frees the string with `encre_free_string`.
+ * Null when the listener is running. Free with `encre_free_string`.
  */
 char *encre_hotkey_listen_error(encre_HotkeyManagerHandle handle);
 
@@ -124,7 +114,7 @@ int encre_simulate_copy(encre_SimulatorHandle handle);
 int encre_simulate_paste(encre_SimulatorHandle handle);
 
 /**
- * Ctrl+Shift+V, the paste chord terminals bind. Cmd+V on macOS, like `encre_simulate_paste`.
+ * Ctrl+Shift+V, the paste chord terminals bind; Cmd+V on macOS.
  */
 int encre_simulate_paste_terminal(encre_SimulatorHandle handle);
 
@@ -166,21 +156,19 @@ int encre_stt_set_device(encre_SttHandle handle, const char *name);
 int encre_stt_set_language(encre_SttHandle handle, const char *code);
 
 /**
- * While on, a take never touches the engine: `encre_stt_stop` fails and audio is
- * read back with `encre_stt_stop_pcm`. Takes effect on the next recording.
+ * While on, `encre_stt_stop` fails; read audio with `encre_stt_stop_pcm`. Applies next recording.
  */
 int encre_stt_set_capture_only(encre_SttHandle handle, bool enabled);
 
 /**
- * Headerless 16-bit signed little-endian mono PCM at `encre_SAMPLE_RATE`; free with
- * `encre_stt_free_bytes`. Null on failure; a silent take is a valid zero-length buffer.
+ * 16-bit LE mono PCM at `encre_SAMPLE_RATE`; free with `encre_stt_free_bytes`. Null on failure.
  */
 uint8_t *encre_stt_stop_pcm(encre_SttHandle handle, uintptr_t *out_len);
 
 void encre_stt_free_bytes(uint8_t *ptr, uintptr_t len);
 
 /**
- * Input device names, newline separated, the default marked with a leading '*'.
+ * Newline separated; the default is marked with a leading '*'. Free with `encre_free_string`.
  */
 char *encre_stt_devices(void);
 

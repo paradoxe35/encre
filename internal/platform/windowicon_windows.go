@@ -55,8 +55,7 @@ var enumWindowsCallback = windows.NewCallback(func(hwnd windows.HWND, _ uintptr)
 	return 1
 })
 
-// SetWindowIcons replaces the single 256 px image GLFW installs for every
-// size, which Task Manager draws at full size, with the frame drawn for each.
+// GLFW installs one 256 px image for every size, which Task Manager draws at full size.
 func SetWindowIcons(ico []byte) {
 	frames, err := icoFrames(ico)
 	if err != nil {

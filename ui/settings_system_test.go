@@ -17,7 +17,7 @@ func TestPasteShortcutOptionsRoundTrip(t *testing.T) {
 	}
 }
 
-// An empty value, from a config written before the setting existed, shows as the standard chord.
+// An empty value comes from a config written before the setting existed.
 func TestPasteShortcutUnknownFallsBackToStandard(t *testing.T) {
 	if got := pasteShortcutLabelFor(""); got != "Ctrl+V (standard)" {
 		t.Errorf("label for empty = %q, want the standard chord", got)

@@ -37,8 +37,7 @@ func askContext(now time.Time) string {
 
 var errKeptLookingUp = errors.New("the model kept looking things up instead of answering - ask again, or turn off its tools")
 
-// converse runs each round's calls together; once the rounds are used up, the model must answer.
-// keepAlive marks progress, as lookups take time without the model writing anything.
+// keepAlive marks progress: lookups take time without the model writing anything.
 func converse(ctx context.Context, model ai.ToolUser, prompt ai.Prompt, toolset []tools.Tool, onText, onStatus func(string), keepAlive func()) (string, error) {
 	byName := make(map[string]tools.Tool, len(toolset))
 	for _, tool := range toolset {

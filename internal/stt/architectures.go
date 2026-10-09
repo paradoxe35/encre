@@ -1,11 +1,9 @@
 package stt
 
-// transcribeCPPVersion is the speech library the runnable list below was taken from; the Rust
-// core pins it in rust-ffi/Cargo.toml.
+// Pinned in rust-ffi/Cargo.toml; the runnable list below was taken from this version.
 const transcribeCPPVersion = "0.3.1"
 
-// runnable are the architectures, as a model's GGUF names them, the bundled library can transcribe
-// with. Sortformer is left out: it tells speakers apart but never transcribes.
+// Sortformer is left out: it tells speakers apart but never transcribes.
 var runnable = map[string]bool{
 	"canary":              true,
 	"canary_qwen":         true,
