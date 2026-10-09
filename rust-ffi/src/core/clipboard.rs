@@ -1,43 +1,67 @@
-use anyhow::Result;
-use arboard::Clipboard;
+use anyhow::{Context, Result};
+use arboard::{Clipboard, ImageData};
 use parking_lot::Mutex;
 
-#[derive(Debug, PartialEq, Eq)]
-enum Saved {
+#[cfg(target_os = "macos")]
+use arboard::SetExtApple as _;
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
+))]
+use arboard::SetExtLinux as _;
+#[cfg(windows)]
+use arboard::SetExtWindows as _;
+
+/// What the clipboard holds, as far as Encre can read it back.
+#[derive(Clone, Debug)]
+enum Content {
     Text(String),
-    /// Occupied by something this layer cannot round-trip, such as an image.
-    Foreign,
-    Empty,
+    Image(ImageData<'static>),
+    /// Empty, or holding what cannot be read back, such as files. Putting it back clears the
+    /// clipboard, so Encre's text is not left in its place.
+    Nothing,
 }
 
-/// Split out from [`ClipboardManager`] so the rule is testable without a display server.
-fn classify(current: Option<String>) -> Saved {
-    match current {
-        Some(text) if text.is_empty() => Saved::Empty,
-        Some(text) => Saved::Text(text),
-        // Telling "empty" from "holds a PNG" needs a per-platform format query. Assuming occupied
-        // is the safe way to be wrong: restore then clears instead of leaving pasted text behind.
-        None => Saved::Foreign,
+/// Text comes first: a copy from a spreadsheet or a document carries a picture of it as well.
+fn content_of(text: Option<String>, image: impl FnOnce() -> Option<ImageData<'static>>) -> Content {
+    match text {
+        Some(text) if !text.is_empty() => Content::Text(text),
+        _ => image().map_or(Content::Nothing, Content::Image),
     }
 }
 
-fn restore_target(saved: &Saved) -> Option<String> {
-    match saved {
-        Saved::Text(text) => Some(text.clone()),
-        Saved::Foreign | Saved::Empty => None,
-    }
+/// Encre's text on the clipboard, and the text it replaced there.
+struct Write {
+    text: String,
+    replaced: Option<String>,
+}
+
+/// Something else on the clipboard than Encre's text, or what that replaced, was copied since:
+/// putting the old content back would overwrite it.
+fn still_borrowed(write: Option<&Write>, current: Option<&str>) -> bool {
+    write.is_none_or(|write| {
+        current == Some(write.text.as_str()) || current == write.replaced.as_deref()
+    })
+}
+
+struct Borrow {
+    saved: Content,
+    write: Option<Write>,
 }
 
 pub struct ClipboardManager {
     clipboard: Mutex<Clipboard>,
-    saved: Mutex<Saved>,
+    borrow: Mutex<Borrow>,
 }
 
 impl ClipboardManager {
     pub fn new() -> Result<Self> {
         Ok(Self {
             clipboard: Mutex::new(Clipboard::new()?),
-            saved: Mutex::new(Saved::Empty),
+            borrow: Mutex::new(Borrow {
+                saved: Content::Nothing,
+                write: None,
+            }),
         })
     }
 
@@ -47,30 +71,53 @@ impl ClipboardManager {
     }
 
     pub fn set_text(&self, text: String) -> Result<()> {
-        self.clipboard
-            .lock()
-            .set_text(text)
-            .map_err(|e| anyhow::anyhow!("Failed to set clipboard text: {}", e))
+        let replaced = self.get_text();
+        self.put(Content::Text(text.clone()))
+            .context("Failed to set clipboard text")?;
+        self.borrow.lock().write = Some(Write { text, replaced });
+        Ok(())
     }
 
     pub fn clear(&self) -> Result<()> {
-        self.clipboard
-            .lock()
-            .clear()
-            .map_err(|e| anyhow::anyhow!("Failed to clear clipboard: {}", e))
+        self.put(Content::Nothing)
+            .context("Failed to clear clipboard")?;
+        self.borrow.lock().write = None;
+        Ok(())
     }
 
     pub fn save_clipboard(&self) {
-        *self.saved.lock() = classify(self.get_text());
+        let saved = {
+            let mut clipboard = self.clipboard.lock();
+            let text = clipboard.get_text().ok();
+            content_of(text, || clipboard.get_image().ok())
+        };
+        *self.borrow.lock() = Borrow { saved, write: None };
     }
 
-    /// Clears when the original cannot be restored, so a borrow never becomes an overwrite.
+    /// Puts back what was saved, unless something new was copied meanwhile.
     pub fn restore_clipboard(&self) -> Result<()> {
-        // Lock released before set_text, which blocks on X11 while handing over the selection.
-        let restore_to = restore_target(&self.saved.lock());
-        match restore_to {
-            Some(text) => self.set_text(text),
-            None => self.clear(),
+        let current = self.get_text();
+        // Released before writing, which blocks on X11 while handing over the selection.
+        let saved = {
+            let mut borrow = self.borrow.lock();
+            let write = borrow.write.take();
+            if !still_borrowed(write.as_ref(), current.as_deref()) {
+                tracing::info!("something new was copied; leaving the clipboard as it is");
+                return Ok(());
+            }
+            borrow.saved.clone()
+        };
+        self.put(saved).context("Failed to restore the clipboard")
+    }
+
+    /// Every write stays out of clipboard history: Encre's text is there only until the paste
+    /// lands, and what it puts back is already in the history from the user's own copy.
+    fn put(&self, content: Content) -> Result<(), arboard::Error> {
+        let mut clipboard = self.clipboard.lock();
+        match content {
+            Content::Text(text) => clipboard.set().exclude_from_history().text(text),
+            Content::Image(image) => clipboard.set().exclude_from_history().image(image),
+            Content::Nothing => clipboard.clear(),
         }
     }
 }
@@ -79,30 +126,73 @@ impl ClipboardManager {
 mod tests {
     use super::*;
 
-    #[test]
-    fn text_is_saved_and_put_back() {
-        let saved = classify(Some("user's own text".to_string()));
-        assert_eq!(saved, Saved::Text("user's own text".to_string()));
-        assert_eq!(restore_target(&saved), Some("user's own text".to_string()));
+    fn picture() -> ImageData<'static> {
+        ImageData {
+            width: 1,
+            height: 1,
+            bytes: vec![255, 0, 0, 255].into(),
+        }
+    }
+
+    fn write(text: &str, replaced: Option<&str>) -> Write {
+        Write {
+            text: text.to_string(),
+            replaced: replaced.map(str::to_string),
+        }
     }
 
     #[test]
-    fn an_unreadable_clipboard_is_cleared_rather_than_left_holding_our_text() {
-        let saved = classify(None);
-        assert_eq!(saved, Saved::Foreign);
-        assert_eq!(restore_target(&saved), None);
+    fn text_is_kept_as_text() {
+        let content = content_of(Some("user's own text".to_string()), || {
+            panic!("text was enough")
+        });
+        assert!(matches!(content, Content::Text(text) if text == "user's own text"));
     }
 
     #[test]
-    fn an_empty_clipboard_is_left_empty() {
-        let saved = classify(Some(String::new()));
-        assert_eq!(saved, Saved::Empty);
-        assert_eq!(restore_target(&saved), None);
+    fn whitespace_is_content() {
+        let content = content_of(Some("  \n".to_string()), || None);
+        assert!(matches!(content, Content::Text(text) if text == "  \n"));
     }
 
     #[test]
-    fn whitespace_is_content_and_is_preserved() {
-        let saved = classify(Some("  \n".to_string()));
-        assert_eq!(restore_target(&saved), Some("  \n".to_string()));
+    fn an_image_is_kept_when_there_is_no_text() {
+        let content = content_of(None, || Some(picture()));
+        assert!(
+            matches!(content, Content::Image(image) if image.width == 1 && image.bytes.len() == 4)
+        );
+    }
+
+    #[test]
+    fn what_cannot_be_read_back_is_nothing_to_put_back() {
+        assert!(matches!(content_of(None, || None), Content::Nothing));
+        assert!(matches!(
+            content_of(Some(String::new()), || None),
+            Content::Nothing
+        ));
+    }
+
+    #[test]
+    fn the_clipboard_is_put_back_while_it_holds_encres_text() {
+        let pasted = write("revised", Some("selection"));
+        assert!(still_borrowed(Some(&pasted), Some("revised")));
+    }
+
+    #[test]
+    fn the_clipboard_is_put_back_when_encres_text_never_took() {
+        let pasted = write("revised", Some("selection"));
+        assert!(still_borrowed(Some(&pasted), Some("selection")));
+    }
+
+    #[test]
+    fn a_new_copy_is_never_overwritten() {
+        let pasted = write("revised", Some("selection"));
+        assert!(!still_borrowed(Some(&pasted), Some("copied meanwhile")));
+    }
+
+    #[test]
+    fn without_a_write_the_clipboard_is_always_put_back() {
+        assert!(still_borrowed(None, Some("anything")));
+        assert!(still_borrowed(None, None));
     }
 }

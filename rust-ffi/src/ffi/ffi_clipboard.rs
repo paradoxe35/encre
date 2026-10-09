@@ -80,6 +80,7 @@ pub unsafe extern "C" fn encre_clipboard_save(handle: ClipboardHandle) -> c_int 
     FFIErrorCode::Success as c_int
 }
 
+/// Puts back what save found, text or image, unless something new was copied meanwhile.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_restore(handle: ClipboardHandle) -> c_int {
     let Some(clipboard) = clipboard(handle) else {

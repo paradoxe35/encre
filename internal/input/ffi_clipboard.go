@@ -40,7 +40,7 @@ const (
 const (
 	clipboardPollInterval = 15 * time.Millisecond
 	clipboardCopyTimeout  = 900 * time.Millisecond
-	clipboardPasteSettle  = 220 * time.Millisecond
+	clipboardPasteSettle  = 400 * time.Millisecond
 )
 
 type FFIClipboardManager struct {
@@ -260,7 +260,8 @@ func (c *FFIClipboardManager) ReplaceSelectedText(newText string, shortcut confi
 	return nil
 }
 
-// Abandon puts the clipboard back and logs, rather than returning, on failure.
+// Abandon puts the clipboard back, unless something new was copied meanwhile, and logs rather than
+// returns a failure.
 func (c *FFIClipboardManager) Abandon() {
 	if err := c.Restore(); err != nil {
 		logger.Warn("Failed to restore clipboard", "error", err)

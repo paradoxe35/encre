@@ -76,6 +76,9 @@ int encre_clipboard_clear(encre_ClipboardHandle handle);
 
 int encre_clipboard_save(encre_ClipboardHandle handle);
 
+/**
+ * Puts back what save found, text or image, unless something new was copied meanwhile.
+ */
 int encre_clipboard_restore(encre_ClipboardHandle handle);
 
 void encre_clipboard_free(encre_ClipboardHandle handle);
