@@ -255,3 +255,64 @@ func TestACompleteReplyCutOffIsNotReturned(t *testing.T) {
 		t.Fatalf("got %q, %v", text, err)
 	}
 }
+
+func TestAWholeReplyIsReadWhenTheServerIgnoresTheStream(t *testing.T) {
+	cases := map[string]string{
+		config.BuiltInOpenAI: `{"choices":[{"message":{"content":"Bonjour"}}]}`,
+		config.BuiltInClaude: `{"content":[{"type":"text","text":"Bonjour"}]}`,
+		config.BuiltInGemini: `{"candidates":[{"content":{"parts":[{"text":"Bonjour"}]}}]}`,
+	}
+	for provider, body := range cases {
+		server := httptest.NewServer(reply(body))
+		p, _ := FromSettings(provider, config.ProviderSettings{BaseURL: server.URL}, "k", false)
+
+		pieces, text, err := stream(t, p)
+		server.Close()
+		if err != nil || text != "Bonjour" || strings.Join(pieces, "|") != "Bonjour" {
+			t.Errorf("%s: got %q as %v, %v", provider, text, pieces, err)
+		}
+	}
+}
+
+// Revise pastes what comes back, so a reply that is not one must be an error.
+func TestSomethingOtherThanAReplyIsReportedNotReturned(t *testing.T) {
+	cases := map[string]string{
+		"<html><body>Welcome</body></html>": "web page",
+		"":                                  "empty reply",
+		`{"status":"ok"}`:                   "unexpected reply",
+	}
+	for body, want := range cases {
+		server := httptest.NewServer(reply(body))
+		p, _ := FromSettings(config.BuiltInOpenAI, config.ProviderSettings{BaseURL: server.URL}, "k", false)
+
+		text, err := complete(t, p)
+		server.Close()
+		if err == nil || !strings.Contains(err.Error(), want) || text != "" {
+			t.Errorf("%q: got %q, %v; want an error saying %q", body, text, err, want)
+		}
+	}
+}
+
+func TestAServerThatRefusesToStreamIsAskedForTheWholeReply(t *testing.T) {
+	refusal := status(http.StatusBadRequest, `{"error":{"message":"Unsupported value: 'stream' does not support true with this model."}}`)
+	server, seen := recordingServer[chatRequest](t, refusal, chatOK, chatOK)
+	p, _ := FromSettings("local", config.ProviderSettings{BaseURL: server.URL + "/v1", Model: "no-stream"}, "", true)
+
+	for range 2 {
+		if text, err := complete(t, p); err != nil || text != "corrigé" {
+			t.Fatalf("got %q, %v", text, err)
+		}
+	}
+	if len(*seen) != 3 || !(*seen)[0].Stream || (*seen)[1].Stream || (*seen)[2].Stream {
+		t.Fatalf("streamed %d requests as %+v, want one refused stream then whole replies", len(*seen), *seen)
+	}
+}
+
+func TestOtherRefusalsAreNotRetriedWithoutStreaming(t *testing.T) {
+	server, seen := recordingServer[chatRequest](t, status(http.StatusBadRequest, `{"error":{"message":"model not found"}}`))
+	p, _ := FromSettings("local", config.ProviderSettings{BaseURL: server.URL + "/v1", Model: "missing"}, "", true)
+
+	if _, err := complete(t, p); err == nil || len(*seen) != 1 {
+		t.Fatalf("got %v after %d requests, want the refusal reported as it came", err, len(*seen))
+	}
+}

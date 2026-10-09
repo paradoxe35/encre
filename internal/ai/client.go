@@ -9,11 +9,13 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 // protocol is one API's wire format; the provider around it does the HTTP, errors and retries.
 type protocol interface {
 	request(ctx context.Context, target endpoint, prompt Prompt, stream, lowReasoning bool) (*http.Request, error)
+	// decode reads a reply sent whole, by a server asked not to stream or that ignores the request to.
 	decode(body []byte) (string, error)
 	// event reads one streamed event into the reply, and reports whether the stream has ended.
 	event(data []byte, reply *turn) (done bool, err error)
@@ -49,26 +51,6 @@ type provider struct {
 func (p *provider) Name() string  { return p.name }
 func (p *provider) Model() string { return p.endpoint.model }
 
-func (p *provider) Complete(ctx context.Context, prompt Prompt) (string, error) {
-	return p.withReasoning(func(lowReasoning bool) (string, error) {
-		resp, err := p.send(ctx, prompt, false, lowReasoning)
-		if err != nil {
-			return "", err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("%s: reading the reply: %w", p.name, err)
-		}
-		text, err := p.protocol.decode(body)
-		if err != nil {
-			return "", p.unreadable(err, body)
-		}
-		return text, nil
-	})
-}
-
 func (p *provider) Stream(ctx context.Context, prompt Prompt, onText func(string)) (string, error) {
 	reply, err := p.stream(ctx, prompt, onText)
 	return reply.Text, err
@@ -83,7 +65,7 @@ func (p *provider) Turn(ctx context.Context, prompt Prompt, onText func(string))
 func (p *provider) stream(ctx context.Context, prompt Prompt, onText func(string)) (Reply, error) {
 	var reply Reply
 	_, err := p.withReasoning(func(lowReasoning bool) (string, error) {
-		resp, err := p.send(ctx, prompt, true, lowReasoning)
+		resp, err := p.open(ctx, prompt, lowReasoning)
 		if err != nil {
 			return "", err
 		}
@@ -91,13 +73,23 @@ func (p *provider) stream(ctx context.Context, prompt Prompt, onText func(string
 
 		streamed := &turn{onText: onText}
 		onEvent := activity(ctx)
-		err = readEvents(resp.Body, func(data []byte) (bool, error) {
+		events := 0
+		head := &prefix{room: maxEventSize}
+		err = readEvents(io.TeeReader(resp.Body, head), func(data []byte) (bool, error) {
 			done, err := p.protocol.event(data, streamed)
 			if err == nil {
+				events++
 				onEvent()
 			}
 			return done, err
 		})
+		if err == nil && events == 0 {
+			text, err := p.protocol.decode(head.Bytes())
+			if err != nil {
+				return "", p.unreadable(err, head.Bytes())
+			}
+			streamed.write(text)
+		}
 		reply = streamed.reply()
 		if err != nil {
 			return reply.Text, fmt.Errorf("%s: %w", p.name, err)
@@ -109,6 +101,30 @@ func (p *provider) stream(ctx context.Context, prompt Prompt, onText func(string
 
 func (p *provider) withReasoning(attempt func(lowReasoning bool) (string, error)) (string, error) {
 	return withReasoningFallback(p.endpoint.baseURL, p.endpoint.model, p.lowReasoning, attempt)
+}
+
+// Endpoint/model pairs that refused to stream, asked for whole replies until the app restarts.
+var refusedStreaming sync.Map
+
+func (p *provider) open(ctx context.Context, prompt Prompt, lowReasoning bool) (*http.Response, error) {
+	key := p.endpoint.baseURL + "::" + p.endpoint.model
+	if _, refused := refusedStreaming.Load(key); refused {
+		return p.send(ctx, prompt, false, lowReasoning)
+	}
+	resp, err := p.send(ctx, prompt, true, lowReasoning)
+	if !streamingRefused(err) {
+		return resp, err
+	}
+	resp, err = p.send(ctx, prompt, false, lowReasoning)
+	if err == nil {
+		refusedStreaming.Store(key, struct{}{})
+	}
+	return resp, err
+}
+
+// Matched on wording as well as status: a 400 has many causes, and only this one is cured by not streaming.
+func streamingRefused(err error) bool {
+	return refusedRequest(err) && strings.Contains(strings.ToLower(err.Error()), "stream")
 }
 
 // send returns the response only once it is known to be a success, so a stream never starts on an error.

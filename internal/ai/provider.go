@@ -41,8 +41,7 @@ func (p Prompt) conversation(assistant string) []chatMessage {
 type Provider interface {
 	Name() string
 	Model() string
-	Complete(ctx context.Context, prompt Prompt) (string, error)
-	// Stream hands each piece of the reply to onText as it arrives, and returns the whole of it.
+	// Stream hands each piece of the reply to onText, if given, as it arrives, and returns the whole of it.
 	Stream(ctx context.Context, prompt Prompt, onText func(string)) (string, error)
 }
 

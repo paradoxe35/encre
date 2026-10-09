@@ -346,12 +346,8 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, req reques
 		return reply{}, err
 	}
 
-	// The timeout is a silence: a stream that keeps writing is given as long as it needs.
-	timeout := time.Duration(operation.TimeoutSeconds) * time.Second
-	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
-	silence := time.AfterFunc(timeout, func() { cancel(errTimedOut) })
-	defer silence.Stop()
+	ctx, keepAlive, stop := untilSilent(ctx, time.Duration(operation.TimeoutSeconds)*time.Second)
+	defer stop()
 
 	logger.Info("Sending text to AI provider",
 		"operation", op,
@@ -367,7 +363,6 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, req reques
 	if op == config.OpAsk {
 		prompt.Context = askContext(time.Now())
 	}
-	keepAlive := func() { silence.Reset(timeout) }
 	answer, err := generate(ctx, provider, prompt, req, keepAlive)
 	if errors.Is(context.Cause(ctx), errTimedOut) {
 		return reply{}, fmt.Errorf("no reply within %ds - raise the timeout in Settings > Actions > %s",
@@ -379,19 +374,25 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, req reques
 	return reply{text: answer, provider: name, model: provider.Model()}, nil
 }
 
+// untilSilent ends ctx with errTimedOut once a reply has sent nothing for timeout: one that keeps
+// coming, thinking included, is given as long as it needs. keepAlive restarts the count.
+func untilSilent(ctx context.Context, timeout time.Duration) (_ context.Context, keepAlive, stop func()) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	silence := time.AfterFunc(timeout, func() { cancel(errTimedOut) })
+	keepAlive = func() { silence.Reset(timeout) }
+	stop = func() {
+		silence.Stop()
+		cancel(nil)
+	}
+	return ai.WithActivity(ctx, keepAlive), keepAlive, stop
+}
+
 func generate(ctx context.Context, provider ai.Provider, prompt ai.Prompt, req request, keepAlive func()) (string, error) {
-	if req.onText == nil {
-		return provider.Complete(ctx, prompt)
-	}
-	onText := func(text string) {
-		keepAlive()
-		req.onText(text)
-	}
 	model, canUseTools := provider.(ai.ToolUser)
 	if !canUseTools || len(req.tools) == 0 {
-		return provider.Stream(ctx, prompt, onText)
+		return provider.Stream(ctx, prompt, req.onText)
 	}
-	return converse(ctx, model, prompt, req.tools, onText, req.onStatus, keepAlive)
+	return converse(ctx, model, prompt, req.tools, req.onText, req.onStatus, keepAlive)
 }
 
 func systemPrompt(cfg *config.Config, op config.Operation, operation config.OperationConfig) string {
@@ -517,9 +518,8 @@ func (p *Processor) CleanTranscript(text string) (string, error) {
 		return "", fmt.Errorf("transcript cleanup unavailable: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(),
-		time.Duration(config.DefaultTimeoutSeconds)*time.Second)
-	defer cancel()
+	ctx, _, stop := untilSilent(context.Background(), time.Duration(config.DefaultTimeoutSeconds)*time.Second)
+	defer stop()
 
 	logger.Info("Cleaning dictated transcript",
 		"provider", provider.Name(),
@@ -527,7 +527,10 @@ func (p *Processor) CleanTranscript(text string) (string, error) {
 		"characters", utf8.RuneCountInString(trimmed),
 	)
 
-	cleaned, err := provider.Complete(ctx, ai.Prompt{System: prompt.Dictate, Text: trimmed})
+	cleaned, err := provider.Stream(ctx, ai.Prompt{System: prompt.Dictate, Text: trimmed}, nil)
+	if errors.Is(context.Cause(ctx), errTimedOut) {
+		return "", fmt.Errorf("transcript cleanup got no reply within %ds", config.DefaultTimeoutSeconds)
+	}
 	if err != nil {
 		return "", fmt.Errorf("transcript cleanup failed: %w", err)
 	}

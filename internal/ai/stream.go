@@ -26,6 +26,19 @@ func activity(ctx context.Context) func() {
 	return func() {}
 }
 
+// prefix keeps the first bytes written to it and drops the rest.
+type prefix struct {
+	bytes.Buffer
+	room int
+}
+
+func (p *prefix) Write(data []byte) (int, error) {
+	kept := data[:min(len(data), p.room)]
+	p.room -= len(kept)
+	p.Buffer.Write(kept)
+	return len(data), nil
+}
+
 // readEvents hands the data of each server-sent event to handle, until handle reports the stream
 // done or the body ends. Comments and fields other than data are skipped.
 func readEvents(body io.Reader, handle func(data []byte) (done bool, err error)) error {

@@ -46,7 +46,6 @@ type recordingProvider struct {
 	prompts *[]ai.Prompt
 }
 
-func (r recordingProvider) Complete(context.Context, ai.Prompt) (string, error) { return "", nil }
 func (r recordingProvider) Stream(_ context.Context, prompt ai.Prompt, onText func(string)) (string, error) {
 	*r.prompts = append(*r.prompts, prompt)
 	onText("answer to " + prompt.Text)

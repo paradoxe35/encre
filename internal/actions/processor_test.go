@@ -3,6 +3,8 @@ package actions
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -252,9 +254,10 @@ type cannedProvider struct {
 	name, model, answer string
 }
 
-func (c cannedProvider) Complete(context.Context, ai.Prompt) (string, error) { return c.answer, nil }
 func (c cannedProvider) Stream(_ context.Context, _ ai.Prompt, onText func(string)) (string, error) {
-	onText(c.answer)
+	if onText != nil {
+		onText(c.answer)
+	}
 	return c.answer, nil
 }
 func (c cannedProvider) Name() string  { return c.name }
@@ -285,51 +288,72 @@ func TestTheReplyNamesTheProviderThatAnswered(t *testing.T) {
 	}
 }
 
-// slowProvider writes a piece every gap, count times, or stays silent until cancelled when count is 0.
-type slowProvider struct {
-	gap   time.Duration
-	count int
-}
+// silentProvider never answers, until cancelled.
+type silentProvider struct{}
 
-func (s slowProvider) Complete(context.Context, ai.Prompt) (string, error) { return "", nil }
-func (s slowProvider) Stream(ctx context.Context, _ ai.Prompt, onText func(string)) (string, error) {
-	if s.count == 0 {
-		<-ctx.Done()
-		return "", ctx.Err()
-	}
-	for range s.count {
-		select {
-		case <-time.After(s.gap):
-			onText("word ")
-		case <-ctx.Done():
-			return "", ctx.Err()
+func (silentProvider) Stream(ctx context.Context, _ ai.Prompt, _ func(string)) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+func (silentProvider) Name() string  { return "silent" }
+func (silentProvider) Model() string { return "m" }
+
+const (
+	thinking = `{"choices":[{"delta":{"content":"","reasoning":"hmm"}}]}`
+	writing  = `{"choices":[{"delta":{"content":"word "}}]}`
+)
+
+// slowStream sends the event six times, 300 ms apart: longer in all than the 1 s timeout.
+func slowStream(t *testing.T, event string) ai.Provider {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for range 6 {
+			w.Write([]byte("data: " + event + "\n\n"))
+			w.(http.Flusher).Flush()
+			time.Sleep(300 * time.Millisecond)
 		}
+		w.Write([]byte("data: " + writing + "\n\ndata: [DONE]\n\n"))
+	}))
+	t.Cleanup(server.Close)
+	provider, err := ai.FromSettings(config.BuiltInOpenAI, config.ProviderSettings{BaseURL: server.URL}, "k", false)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return "done", nil
+	return provider
 }
-func (s slowProvider) Name() string  { return "slow" }
-func (s slowProvider) Model() string { return "m" }
 
-func askWith(t *testing.T, provider ai.Provider) error {
+func completeWith(t *testing.T, op config.Operation, provider ai.Provider) error {
 	t.Helper()
 	cfg := mentionConfig(false)
 	cfg.AIProvider.Provider = "OpenAI"
-	cfg.SetOperation(config.OpAsk, config.OperationConfig{TimeoutSeconds: 1, CharacterLimit: 100})
+	cfg.SetOperation(op, config.OperationConfig{TimeoutSeconds: 1, CharacterLimit: 100})
 
 	p := &Processor{config: cfg, providerFactory: ai.NewProviderFactory()}
 	p.providerFactory.Register("OpenAI", provider)
-	_, err := p.complete(context.Background(), cfg, request{op: config.OpAsk, text: "q", onText: func(string) {}})
+	req := request{op: op, text: "q"}
+	if op == config.OpAsk {
+		req.onText = func(string) {}
+	}
+	_, err := p.complete(context.Background(), cfg, req)
 	return err
 }
 
-func TestAStreamThatKeepsWritingOutlastsTheTimeout(t *testing.T) {
-	if err := askWith(t, slowProvider{gap: 300 * time.Millisecond, count: 6}); err != nil {
-		t.Fatalf("a stream writing for longer than the timeout was cut off: %v", err)
+func TestAReplyThatKeepsComingOutlastsTheTimeout(t *testing.T) {
+	for name, event := range map[string]string{"writing": writing, "thinking": thinking} {
+		for _, op := range []config.Operation{config.OpAsk, config.OpRevise} {
+			t.Run(string(op)+" "+name, func(t *testing.T) {
+				t.Parallel()
+				if err := completeWith(t, op, slowStream(t, event)); err != nil {
+					t.Errorf("cut off: %v", err)
+				}
+			})
+		}
 	}
 }
 
-func TestASilentStreamTimesOutWithAHint(t *testing.T) {
-	err := askWith(t, slowProvider{})
+func TestASilentReplyTimesOutWithAHint(t *testing.T) {
+	err := completeWith(t, config.OpAsk, silentProvider{})
 	if err == nil || !strings.Contains(err.Error(), "no reply within 1s") || errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v", err)
 	}

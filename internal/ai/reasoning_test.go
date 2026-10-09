@@ -66,7 +66,7 @@ func build(t *testing.T, name, url string, low bool) Provider {
 
 func complete(t *testing.T, p Provider) (string, error) {
 	t.Helper()
-	return p.Complete(context.Background(), Prompt{System: "prompt", Text: "text"})
+	return p.Stream(context.Background(), Prompt{System: "prompt", Text: "text"}, nil)
 }
 
 func TestLowReasoningSendsEffort(t *testing.T) {
