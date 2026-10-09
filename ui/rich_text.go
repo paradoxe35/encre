@@ -3,6 +3,7 @@ package ui
 import (
 	"image/color"
 	"reflect"
+	"strings"
 	"unsafe"
 
 	"fyne.io/fyne/v2"
@@ -16,13 +17,18 @@ import (
 // adopt gives text nested in lists and tables the theme of the rich text it shows in, which Fyne gives
 // only to top-level text.
 func adopt(holder *widget.RichText, segments []widget.RichTextSegment) []widget.RichTextSegment {
+	return adoptWithin(holder, holder, segments)
+}
+
+// adoptWithin takes the theme from holder, and lays lists out across within, the rich text they sit in.
+func adoptWithin(holder, within *widget.RichText, segments []widget.RichTextSegment) []widget.RichTextSegment {
 	adopted := make([]widget.RichTextSegment, len(segments))
 	for i, segment := range segments {
 		switch segment := segment.(type) {
 		case *widget.ListSegment:
-			adopted[i] = &widget.ParagraphSegment{Texts: adopt(holder, segment.Segments())}
+			adopted[i] = newCardList(holder, within, segment)
 		case *widget.ParagraphSegment:
-			segment.Texts = adopt(holder, segment.Texts)
+			segment.Texts = adoptWithin(holder, within, segment.Texts)
 			adopted[i] = segment
 		case *widget.TableSegment:
 			adopted[i] = &cardTable{TableSegment: segment, holder: holder}
@@ -49,6 +55,13 @@ func eachText(segments []widget.RichTextSegment, do func(*widget.TextSegment)) {
 					eachText(cell, do)
 				}
 			}
+		case *cardList:
+			for _, item := range segment.items {
+				if item.marker != nil {
+					do(item.marker)
+				}
+				eachText(item.text.Segments, do)
+			}
 		}
 	}
 }
@@ -59,6 +72,129 @@ func setHolder(text *widget.TextSegment, holder *widget.RichText) {
 		return
 	}
 	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(holder))
+}
+
+// cardList draws a list as rows of a marker beside its item's text, which wraps within the space left
+// to it. Fyne indents an item's wrapped lines by the marker but wraps them at the full width, so they
+// ran past the card's edge.
+type cardList struct {
+	within *widget.RichText
+	items  []listItem
+}
+
+// listItem is a marker and the rich text of its item; a list nested in an item has no marker of its own.
+type listItem struct {
+	marker *widget.TextSegment
+	text   *widget.RichText
+}
+
+func newCardList(holder, within *widget.RichText, list *widget.ListSegment) *cardList {
+	l := &cardList{within: within}
+	for _, item := range list.Segments() {
+		texts := item.(*widget.ParagraphSegment).Texts
+		var marker *widget.TextSegment
+		if bullet, ok := texts[0].(*widget.TextSegment); ok && len(texts) > 1 {
+			// Fyne indents a nested list's markers with spaces; the rows here indent it already.
+			bullet.Text = strings.TrimLeft(bullet.Text, " ")
+			marker, texts = bullet, texts[1:]
+			setHolder(marker, holder)
+		}
+		text := widget.NewRichText()
+		text.Wrapping = fyne.TextWrapWord
+		text.Segments = adoptWithin(holder, text, texts)
+		l.items = append(l.items, listItem{marker: marker, text: text})
+	}
+	return l
+}
+
+func (l *cardList) Inline() bool { return false }
+
+func (l *cardList) Textual() string {
+	var text strings.Builder
+	for _, item := range l.items {
+		if item.marker != nil {
+			text.WriteString(item.marker.Text)
+		}
+		text.WriteString(plain(item.text.Segments))
+		text.WriteString("\n")
+	}
+	return text.String()
+}
+
+// plain is the text of segments, through the blocks that hold it.
+func plain(segments []widget.RichTextSegment) string {
+	var text strings.Builder
+	for _, segment := range segments {
+		if block, ok := segment.(widget.RichTextBlock); ok {
+			text.WriteString(plain(block.Segments()))
+		} else {
+			text.WriteString(segment.Textual())
+		}
+	}
+	return text.String()
+}
+
+func (l *cardList) Visual() fyne.CanvasObject {
+	var objects []fyne.CanvasObject
+	for _, item := range l.items {
+		var marker fyne.CanvasObject = layout.NewSpacer()
+		if item.marker != nil {
+			marker = item.marker.Visual()
+		}
+		objects = append(objects, marker, item.text)
+	}
+	return &fyne.Container{Layout: &listLayout{within: l.within}, Objects: objects}
+}
+
+func (l *cardList) Update(fyne.CanvasObject)  {}
+func (l *cardList) Select(_, _ fyne.Position) {}
+func (l *cardList) SelectedText() string      { return "" }
+func (l *cardList) Unselect()                 {}
+
+// listLayout puts each marker in a column and its text beside it. The text is a rich text of its own,
+// whose padding is laid outside the space it is given so it lines up with the text around the list.
+type listLayout struct {
+	within *widget.RichText
+}
+
+// width is the line of the rich text the list sits in: Fyne asks a block's height before laying it out.
+func (l *listLayout) width() float32 {
+	return l.within.Size().Width - 2*theme.SizeForWidget(theme.SizeNameInnerPadding, l.within)
+}
+
+func (l *listLayout) arrange(objects []fyne.CanvasObject, width float32, place bool) float32 {
+	var column float32
+	for i := 0; i < len(objects); i += 2 {
+		column = max(column, objects[i].MinSize().Width)
+	}
+	spacing := theme.SizeForWidget(theme.SizeNameLineSpacing, l.within)
+	var y float32
+	for i := 0; i < len(objects); i += 2 {
+		marker, text := objects[i], objects[i+1]
+		pad := theme.SizeForWidget(theme.SizeNameInnerPadding, text.(*widget.RichText))
+		text.Resize(fyne.NewSize(width-column+2*pad, text.Size().Height))
+		height := text.MinSize().Height - 2*pad
+		if place {
+			marker.Move(fyne.NewPos(0, y))
+			marker.Resize(fyne.NewSize(column, marker.MinSize().Height))
+			text.Move(fyne.NewPos(column-pad, y-pad))
+			text.Resize(fyne.NewSize(width-column+2*pad, height+2*pad))
+		}
+		y += height
+		if i+2 < len(objects) {
+			y += spacing
+		}
+	}
+	return y
+}
+
+func (l *listLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	width := l.width()
+	return fyne.NewSize(width, l.arrange(objects, width, false))
+}
+
+func (l *listLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	l.arrange(objects, size.Width, true)
 }
 
 // cardTable draws a markdown table in the card's theme: Fyne's own fills its cells from the app's

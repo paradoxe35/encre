@@ -528,6 +528,48 @@ func TestTheGlassCardFollowsTheAppVariant(t *testing.T) {
 	}
 }
 
+// Every line of an answer fits the card, including the wrapped lines of an indented list item.
+func TestNoLineOfAListRunsPastTheCard(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "Intro.\n\n"+
+		"1. **Le paradoxe des jumeaux** : Selon la théorie de la relativité d'Einstein, un astronaute qui voyage à une vitesse proche de celle de la lumière vieillit moins vite qu'un jumeau resté sur Terre.\n"+
+		"2. **Le paradoxe de Banach-Tarski** : Il suggère qu'on peut diviser une boule en un nombre fini de pièces et réassembler ces pièces pour former deux boules identiques à la première.\n\n"+
+		"- un point qui ne tient pas sur une seule ligne de la carte, même quand elle est assez large pour en lire beaucoup")
+
+	edge := card.content.Size().Width - card.readingTheme().Size(theme.SizeNameInnerPadding)
+	texts := 0
+	walkTexts(t, card.content, 0, func(text *canvas.Text, x float32) {
+		texts++
+		if end := x + text.MinSize().Width; end > edge+0.5 {
+			t.Errorf("%q ends at %v, past the text's edge at %v", text.Text, end, edge)
+		}
+	})
+	if texts == 0 {
+		t.Fatal("found no text to measure")
+	}
+}
+
+// walkTexts visits every text drawn under object, with its distance from object's left edge.
+func walkTexts(t *testing.T, object fyne.CanvasObject, left float32, visit func(*canvas.Text, float32)) {
+	t.Helper()
+	if !object.Visible() {
+		return
+	}
+	left += object.Position().X
+	switch object := object.(type) {
+	case *canvas.Text:
+		visit(object, left)
+	case *fyne.Container:
+		for _, child := range object.Objects {
+			walkTexts(t, child, left, visit)
+		}
+	case fyne.Widget:
+		for _, child := range test.TempWidgetRenderer(t, object).Objects() {
+			walkTexts(t, child, left, visit)
+		}
+	}
+}
+
 func TestListItemsTakeTheCardsTextSizeAndColours(t *testing.T) {
 	card, app := newCard(t)
 	variant := theme.VariantLight
@@ -561,6 +603,15 @@ func findText(segments []widget.RichTextSegment, text string) *widget.TextSegmen
 		case widget.RichTextBlock:
 			if found := findText(segment.Segments(), text); found != nil {
 				return found
+			}
+		case *cardList:
+			for _, item := range segment.items {
+				if item.marker != nil && strings.HasPrefix(item.marker.Text, text) {
+					return item.marker
+				}
+				if found := findText(item.text.Segments, text); found != nil {
+					return found
+				}
 			}
 		}
 	}
