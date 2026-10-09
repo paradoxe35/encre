@@ -7,6 +7,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
@@ -212,7 +213,7 @@ func TestAFailureShowsBelowWhatArrived(t *testing.T) {
 	update("Paris is", false)
 	fail("connection lost")
 	got := card.content.String()
-	if !strings.Contains(got, "Paris is") || !strings.Contains(got, "connection lost") || strings.Contains(got, "Thinking") {
+	if !strings.Contains(got, "Paris is") || !strings.Contains(got, "Connection lost") || strings.Contains(got, "Thinking") {
 		t.Fatalf("card reads %q", got)
 	}
 }
@@ -409,11 +410,17 @@ func TestAStyleChangeWaitsForTheCardToClose(t *testing.T) {
 	if card.window != shown {
 		t.Fatal("the card was rebuilt while it showed")
 	}
+	if designFor(card.style).glass {
+		t.Fatal("the open card took on the new style before it was rebuilt")
+	}
 
 	card.Hide()
 	answered(card, "Q", "A")
 	if card.window == shown {
 		t.Fatal("the card kept its old window after closing")
+	}
+	if !designFor(card.style).glass {
+		t.Fatal("the rebuilt card is not glass")
 	}
 }
 
@@ -479,5 +486,98 @@ func TestEveryCardStyleHasADesignAndAName(t *testing.T) {
 		if cardStyleLabels[style] == "" {
 			t.Errorf("style %q has no name in settings", style)
 		}
+	}
+}
+
+func TestTablesTakeTheCardsTextSizeAndColours(t *testing.T) {
+	card, app := newCard(t)
+	variant := theme.VariantLight
+	app.Settings().SetTheme(newAppTheme(&variant))
+	card.SetTextSize(config.TextSizeLarger)
+	answered(card, "Q", "| City | Country |\n| --- | --- |\n| Paris | France |")
+
+	var table *cardTable
+	for _, segment := range card.content.Segments {
+		if found, ok := segment.(*cardTable); ok {
+			table = found
+		}
+	}
+	if table == nil {
+		t.Fatal("the table was not drawn in the card's theme")
+	}
+
+	reading := card.readingTheme()
+	texts := test.LaidOutObjects(table.Visual())
+	var cells int
+	for _, object := range texts {
+		text, ok := object.(*canvas.Text)
+		if !ok {
+			continue
+		}
+		cells++
+		if text.TextSize != reading.Size(theme.SizeNameText) {
+			t.Errorf("%q is %v points, want the card's %v", text.Text, text.TextSize, reading.Size(theme.SizeNameText))
+		}
+		if want := reading.Color(theme.ColorNameForeground, variant); text.Color != want {
+			t.Errorf("%q is drawn in %v, want the dark card's %v", text.Text, text.Color, want)
+		}
+	}
+	if cells != 4 {
+		t.Fatalf("drew %d cells, want the header and one row of two", cells)
+	}
+}
+
+func TestAnUnknownTextSizeReadsAtTheDefaultSize(t *testing.T) {
+	card, _ := newCard(t)
+	card.SetTextSize("huge")
+	if card.textScale != 1 {
+		t.Fatalf("an unknown text size scales text by %v", card.textScale)
+	}
+}
+
+func TestAMessageIsCapitalisedAndAnEmptyOneStaysEmpty(t *testing.T) {
+	if got := sentence("the API key was refused"); got != "The API key was refused" {
+		t.Errorf("got %q", got)
+	}
+	for _, kept := range []string{"", "ctrl+alt+space: already in use", "macOS refused it", "openai: rate limited"} {
+		if got := sentence(kept); got != kept {
+			t.Errorf("%q became %q", kept, got)
+		}
+	}
+}
+
+func TestATableKeepsItsAlignmentLinksAndEmptyRows(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "Q", "| Item | Price |\n| --- | ---: |\n| [Docs](https://example.com) | 4 |\n|  |  |")
+
+	var table *cardTable
+	for _, segment := range card.content.Segments {
+		if found, ok := segment.(*cardTable); ok {
+			table = found
+		}
+	}
+	if table == nil {
+		t.Fatal("no table in the answer")
+	}
+	if table.align(1) != fyne.TextAlignTrailing {
+		t.Fatalf("the price column aligns %v, want trailing", table.align(1))
+	}
+
+	objects := test.LaidOutObjects(table.Visual())
+	var link bool
+	for _, object := range objects {
+		if _, ok := object.(*widget.Hyperlink); ok {
+			link = true
+		}
+	}
+	if !link {
+		t.Error("the link in a cell lost its hyperlink")
+	}
+
+	grid := table.Visual().(*container.Scroll).Content.(*fyne.Container)
+	layout := grid.Layout.(*tableLayout)
+	_, heights := layout.measure(grid.Objects)
+	if empty := heights[len(heights)-1]; empty < heights[0] {
+		t.Errorf("an empty row is %v high, want as tall as the header (%v)", empty, heights[0])
 	}
 }

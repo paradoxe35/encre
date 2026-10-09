@@ -40,7 +40,9 @@ type AnswerCard struct {
 	typing  bool
 	onAsk   func(question string)
 
-	style config.CardStyle
+	// style is the window's; wanted is the one set, which waits for an open card to close.
+	style  config.CardStyle
+	wanted config.CardStyle
 	// created is whether the native window exists: a glass one must be made transparent from the start.
 	created bool
 	// restyle defers a change of style until the card is closed, since it needs a new window.
@@ -187,12 +189,14 @@ func (c *AnswerCard) show() {
 		c.onShow()
 	}
 	c.visible = true
-	if appearing && c.frosted != nil && !c.mapped {
+	// A card still fading out keeps its capture: the screen behind it would show the card itself.
+	if appearing && !c.hideFading() && c.frosted != nil {
 		c.frost()
 	}
 	// The first Show creates the native window, which the placement in render could not reach yet.
 	c.showWindow()
 	if appearing {
+		c.opacity = 0
 		c.setOpacity(0)
 	}
 	c.float()
@@ -200,6 +204,22 @@ func (c *AnswerCard) show() {
 	if appearing {
 		c.fadeTo(1, nil)
 	}
+}
+
+// hideFading takes down a card still fading out, so it comes back from nothing where it now
+// belongs, and reports whether it did.
+func (c *AnswerCard) hideFading() bool {
+	if !c.mapped {
+		return false
+	}
+	if c.fading != nil {
+		c.fading.Stop()
+		c.fading = nil
+	}
+	c.setOpacity(0)
+	c.window.Hide()
+	c.mapped = false
+	return true
 }
 
 func (c *AnswerCard) showWindow() {
@@ -263,7 +283,7 @@ func (c *AnswerCard) fail(reason string) {
 	if !c.visible {
 		return
 	}
-	c.failure, c.done = reason, true
+	c.failure, c.done = sentence(reason), true
 	c.render()
 }
 
@@ -366,12 +386,12 @@ func fadeWindow(from, to float64, apply func(float64), done func()) *fyne.Animat
 // SetStyle switches between the solid and the glass card. It may be called from any goroutine.
 func (c *AnswerCard) SetStyle(style config.CardStyle) {
 	fyne.Do(func() {
-		if style == c.style {
-			return
-		}
-		c.style = style
+		c.wanted = style
 		switch {
+		case style == c.style:
+			c.restyle = false
 		case c.window == nil:
+			c.style = style
 		case c.visible:
 			c.restyle = true
 		default:
@@ -390,6 +410,7 @@ func (c *AnswerCard) discard() {
 	c.window.Close()
 	c.window, c.created, c.restyle, c.mapped = nil, false, false, false
 	c.frosted, c.fill = nil, nil
+	c.style = c.wanted
 }
 
 func (c *AnswerCard) Visible() bool { return c.visible }
@@ -455,7 +476,11 @@ func (c *AnswerCard) width() float32 {
 // SetTextSize sets the size the question and answer are read at. It may be called from any goroutine.
 func (c *AnswerCard) SetTextSize(size config.TextSize) {
 	fyne.Do(func() {
-		c.textScale = textScales[size]
+		scale, ok := textScales[size]
+		if !ok {
+			scale = textScales[config.TextSizeDefault]
+		}
+		c.textScale = scale
 		c.retheme()
 	})
 }
