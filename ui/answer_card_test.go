@@ -204,6 +204,25 @@ func TestAReaderKeepsTheirPlaceWhileTheAnswerGrows(t *testing.T) {
 	}
 }
 
+// Scrolling while the answer streams, from while the card still grows to long after it stopped, is
+// never undone by the words arriving.
+func TestScrollingWhileTheAnswerStreamsIsNeverUndone(t *testing.T) {
+	card, stream := streamInto(t)
+	for paragraphs := 1; paragraphs <= 60; paragraphs++ {
+		if paragraphs%5 == 0 {
+			card.scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.NewDelta(0, -40)})
+		}
+		reading := card.scroll.Offset.Y
+		stream(paragraphs*8, paragraphs == 60)
+		if card.scroll.Offset.Y != reading {
+			t.Fatalf("after %d paragraphs the answer moved the reader from %v to %v", paragraphs*8, reading, card.scroll.Offset.Y)
+		}
+	}
+	if card.scroll.Offset.Y == 0 {
+		t.Fatal("the reader's scrolling never took")
+	}
+}
+
 // An answer is read from its start: text arriving past the bottom of the card waits there.
 func TestALongAnswerStaysAtItsStartAsItGrows(t *testing.T) {
 	card, stream := streamInto(t)
