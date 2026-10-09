@@ -165,7 +165,7 @@ func (c *AnswerCard) prompt() {
 		c.question, c.text, c.failure, c.done, c.stop = "", "", "", true, nil
 	}
 	c.show()
-	c.window.Canvas().Focus(c.input)
+	c.focusInput()
 }
 
 func (c *AnswerCard) open(id uint64, question string, stop func()) {
@@ -273,6 +273,9 @@ func (c *AnswerCard) update(text string, done bool) {
 	wait := renderEvery - time.Since(c.rendered)
 	if done || wait <= 0 {
 		c.render()
+		if done {
+			c.focusInput()
+		}
 		return
 	}
 	if !c.pending {
@@ -292,6 +295,13 @@ func (c *AnswerCard) fail(reason string) {
 	}
 	c.failure, c.status, c.done = sentence(reason), "", true
 	c.render()
+	c.focusInput()
+}
+
+// focusInput readies the card for a follow-up once its answer is in. It moves the focus within the
+// card only, so an app the user went back to keeps the keyboard.
+func (c *AnswerCard) focusInput() {
+	c.window.Canvas().Focus(c.input)
 }
 
 // render keeps the end of the answer in view, unless the reader has scrolled away from it.

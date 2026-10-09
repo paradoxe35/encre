@@ -619,3 +619,23 @@ func TestTheLookupLinesGoWhenTheAnswerEndsWithoutText(t *testing.T) {
 		t.Fatalf("a failed card reads %q", got)
 	}
 }
+
+func TestTheInputIsReadyOnceAnAnswerIsIn(t *testing.T) {
+	card, _ := newCard(t)
+	update, _, _ := card.Open("spoken question", func() {})
+	update("Half an ans", false)
+	if card.window.Canvas().Focused() == card.input {
+		t.Fatal("the input took the focus before the answer was in")
+	}
+	update("Half an answer.", true)
+	if card.window.Canvas().Focused() != card.input {
+		t.Fatal("a finished answer leaves the input without the cursor")
+	}
+
+	card.window.Canvas().Unfocus()
+	_, fail, _ := card.Open("another", func() {})
+	fail("the service is having trouble")
+	if card.window.Canvas().Focused() != card.input {
+		t.Fatal("a failed answer leaves the input without the cursor")
+	}
+}
