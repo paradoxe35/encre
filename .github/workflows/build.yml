@@ -744,30 +744,8 @@ jobs:
       - name: Write release notes
         run: |
           {
-            echo "Revise, translate and dictate text, and ask questions, with AI, anywhere, with global hotkeys."
-            echo
             scripts/release-notes.sh "${GITHUB_REF_NAME}"
-            cat <<'EOF'
-          ## Downloads
-
-          - **Windows**: `encre-windows-amd64-installer.exe`, or `encre-windows-amd64-portable.zip`
-          - **macOS**: `encre-darwin-arm64.dmg` (Apple Silicon), `encre-darwin-amd64.dmg` (Intel); the matching `.zip` holds the same app
-          - **Linux**: `encre-linux-amd64.deb`, `.rpm`, `.pkg.tar.zst`, `encre-linux-amd64.AppImage`, or `encre-linux-amd64.tar.gz`
-
-          Verify what you downloaded against `checksums.txt`. Installed copies
-          update themselves from the System tab.
-
-          ## Setup
-
-          Installation, hotkeys and troubleshooting live in the
-          [README](https://github.com/paradoxe35/encre#installation). Two things
-          that catch people out:
-
-          - **macOS**: the first launch is blocked. Right-click the app > Open;
-            the README lists the alternatives.
-          - **Linux on Wayland**: hotkeys need you in the `input` group.
-            `sudo usermod -aG input $USER`, then log out and back in.
-          EOF
+            echo "[How to install](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}#install)"
           } > release-notes.md
 
       - name: Create Release
@@ -777,7 +755,6 @@ jobs:
           body_path: release-notes.md
           draft: false
           prerelease: false
-          generate_release_notes: true
 
       # The release owns the files now. Only runs on a successful upload, so a
       # failed publish keeps them for debugging.
