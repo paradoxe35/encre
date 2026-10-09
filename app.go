@@ -145,7 +145,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	}
 
 	app.Lifecycle().SetOnStarted(func() {
-		systray.SetTooltip("Encre - revise, translate and dictate text, and ask questions")
+		systray.SetTooltip("Encre")
 		installReopenHandler(application.ShowWindow)
 		prepareNotifications()
 	})
