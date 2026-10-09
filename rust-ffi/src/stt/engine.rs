@@ -231,7 +231,8 @@ impl Live for transcribe_cpp::Stream<'_> {
 
     fn finalize(&mut self) -> Result<Option<String>> {
         transcribe_cpp::Stream::finalize(self)?;
-        let text = self.text().display().trim().to_owned();
+        // The display text stops at what was committed before the end; the final hypothesis is whole.
+        let text = self.text().full.trim().to_owned();
         Ok((!text.is_empty()).then_some(text))
     }
 
