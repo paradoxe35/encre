@@ -24,12 +24,12 @@ type permissionPrompt struct {
 }
 
 func newPermissionPrompt() *permissionPrompt {
-	title := widget.NewLabelWithStyle("Permissions Required", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	title := widget.NewLabelWithStyle("Permissions required", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	info := widget.NewLabel(pendingPermissionsInfo)
 	info.Wrapping = fyne.TextWrapWord
 
-	accessibilityButton := newPermissionButton("Grant Access", func() {
+	accessibilityButton := newPermissionButton("Grant access", func() {
 		permissions.OpenPreference(permissions.Accessibility)
 	})
 
@@ -39,27 +39,27 @@ func newPermissionPrompt() *permissionPrompt {
 		accessibilityButton,
 	)
 
-	inputMonitoringButton := newPermissionButton("Grant Access", func() {
+	inputMonitoringButton := newPermissionButton("Grant access", func() {
 		permissions.OpenPreference(permissions.InputMonitoring)
 	})
 
 	inputMonitoringSection := buildPermissionRow(
 		"Input Monitoring",
-		"Required to detect global keyboard shortcuts in the background.",
+		"Required to listen for hotkeys in the background.",
 		inputMonitoringButton,
 	)
 
-	microphoneButton := newPermissionButton("Grant Access", func() {
+	microphoneButton := newPermissionButton("Grant access", func() {
 		permissions.OpenPreference(permissions.Microphone)
 	})
 
 	microphoneSection := buildPermissionRow(
 		"Microphone",
-		"Dictation was refused the microphone. Allow Encre, then hold the dictate shortcut again.",
+		microphoneRefused,
 		microphoneButton,
 	)
 
-	restartButton := widget.NewButtonWithIcon("Restart Application", theme.MediaReplayIcon(), nil)
+	restartButton := widget.NewButtonWithIcon("Restart Encre", theme.MediaReplayIcon(), nil)
 	restartButton.Importance = widget.HighImportance
 
 	restartRow := container.NewPadded(
@@ -123,7 +123,7 @@ func (p *permissionPrompt) update(state permissions.State, showRestart bool) {
 		p.restartRow.Hide()
 		p.root.Show()
 	case showRestart:
-		p.infoLabel.SetText("All permissions granted! Please restart the application.")
+		p.infoLabel.SetText("All permissions granted. Restart Encre to use them.")
 		p.dividerAboveList.Hide()
 		p.dividerBelowList.Show()
 		p.restartRow.Show()

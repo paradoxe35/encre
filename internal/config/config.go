@@ -83,15 +83,15 @@ type AppearanceConfig struct {
 	Indicators *IndicatorsConfig `json:"indicators,omitempty"`
 }
 
-// IndicatorsConfig is the floating indicator, per feature. It is written whole, so
-// a switch turned off stays off.
+// IndicatorsConfig is the floating indicator: Voice while dictating or asking by voice, Text while
+// revising or translating. It is written whole, so a switch turned off stays off.
 type IndicatorsConfig struct {
-	Dictation bool `json:"dictation"`
-	Actions   bool `json:"actions"`
+	Voice bool `json:"voice"`
+	Text  bool `json:"text"`
 }
 
 func defaultIndicators() *IndicatorsConfig {
-	return &IndicatorsConfig{Dictation: true, Actions: true}
+	return &IndicatorsConfig{Voice: true, Text: true}
 }
 
 type MetaConfig struct {

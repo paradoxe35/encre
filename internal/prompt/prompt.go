@@ -31,8 +31,8 @@ First, detect the language of the text.
 
 Rules:
 - Never translate. The corrected text must stay in the detected language, word for word.
-- Keep the speaker's words and meaning. Do not summarise or embellish.
-- Add punctuation and capitalisation, and remove filler words and false starts.
+- Keep the speaker's words and meaning. Do not summarize or embellish.
+- Add punctuation and capitalization, and remove filler words and false starts.
 
 Reply with the cleaned text in the same language as the input only. No preamble, no quotes, no explanation, no notes.`
 

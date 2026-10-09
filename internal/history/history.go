@@ -17,7 +17,7 @@ type Kind string
 const (
 	KindRevise    Kind = "revise"
 	KindTranslate Kind = "translate"
-	KindSpeech    Kind = "speech"
+	KindDictate   Kind = "dictate"
 	KindAsk       Kind = "ask"
 )
 

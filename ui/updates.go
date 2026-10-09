@@ -51,7 +51,7 @@ func (s *updateState) upToDate() {
 
 func (s *updateState) found(rel *updater.Release) {
 	s.release = rel
-	s.set(updateIdle, "Version "+rel.Tag+" is available", false)
+	s.set(updateIdle, "Encre "+rel.Tag+" is available", false)
 }
 
 func (s *updateState) checkFailed(err error) {

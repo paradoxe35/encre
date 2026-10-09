@@ -32,15 +32,15 @@ func (w *MainWindow) saveSettings() {
 
 	startMinimized, _ := w.startMinimizedBinding.Get()
 	startOnLogin, _ := w.startOnLoginBinding.Get()
-	dictationIndicator, _ := w.dictationIndicator.Get()
-	actionIndicator, _ := w.actionIndicator.Get()
+	voiceIndicator, _ := w.voiceIndicator.Get()
+	textIndicator, _ := w.textIndicator.Get()
 	themeSetting, _ := w.themeBinding.Get()
 
 	w.config.SetAppearanceSettings(config.AppearanceConfig{
 		Theme:          themeSetting,
 		StartMinimized: startMinimized,
 		StartOnLogin:   startOnLogin,
-		Indicators:     &config.IndicatorsConfig{Dictation: dictationIndicator, Actions: actionIndicator},
+		Indicators:     &config.IndicatorsConfig{Voice: voiceIndicator, Text: textIndicator},
 	})
 
 	pasteShortcut, _ := w.pasteShortcutBinding.Get()

@@ -86,7 +86,7 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	modelLabel.TextStyle.Bold = true
 	modelEntry := w.dirtyEntry()
 	modelEntry.Bind(w.modelBinding)
-	modelEntry.PlaceHolder = "e.g., gpt-6-luna"
+	modelEntry.PlaceHolder = "e.g. gpt-6-luna"
 	modelEntry.Validator = nil // no validation icon
 
 	browseModels := widget.NewButtonWithIcon("", theme.ListIcon(), nil)
@@ -142,7 +142,7 @@ func (w *MainWindow) browseProviderModels(report progress) {
 }
 
 func (w *MainWindow) createConnectionTestSection() fyne.CanvasObject {
-	testBtn := widget.NewButtonWithIcon("Test Connection", theme.ConfirmIcon(), nil)
+	testBtn := widget.NewButtonWithIcon("Test connection", theme.ConfirmIcon(), nil)
 	testBtn.OnTapped = func() { w.testAPIConnection(w.statusProgress(testBtn)) }
 	testBtn.Importance = widget.MediumImportance
 
@@ -237,7 +237,7 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 	baseURLEntry.PlaceHolder = "https://api.example.com/v1"
 
 	apiKeyEntry := widget.NewPasswordEntry()
-	apiKeyEntry.PlaceHolder = "Enter API key"
+	apiKeyEntry.PlaceHolder = "Enter your API key"
 
 	requiresKey := widget.NewCheck("Requires an API key", func(checked bool) {
 		if checked {
@@ -337,7 +337,7 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 	)
 	content := container.NewBorder(nil, buttons, nil, nil, form)
 
-	d = dialog.NewCustomWithoutButtons("Add Custom Provider", content, w.Window)
+	d = dialog.NewCustomWithoutButtons("Add custom provider", content, w.Window)
 	d.Resize(fyne.NewSize(480, 0))
 	d.Show()
 	w.Canvas().Focus(nameEntry)
@@ -351,7 +351,7 @@ func (w *MainWindow) showDeleteProviderConfirmation() {
 	}
 
 	dialog.ShowConfirm(
-		"Delete Provider",
+		"Delete provider",
 		fmt.Sprintf("Are you sure you want to delete '%s'?\n\nThis action cannot be undone.", currentProvider),
 		func(confirmed bool) {
 			if !confirmed {

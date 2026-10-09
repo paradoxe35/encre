@@ -1,4 +1,4 @@
-package revision
+package actions
 
 import (
 	"context"
@@ -76,7 +76,7 @@ func (p *Processor) initializeProviders() error {
 
 	name := cfg.GetCurrentProvider()
 	if name == "" {
-		return fmt.Errorf("no provider configured")
+		return fmt.Errorf("no AI provider configured - add an API key in Settings > AI")
 	}
 
 	if _, err := p.providerNamed(name); err != nil {
@@ -141,7 +141,7 @@ func (p *Processor) begin() (func(), error) {
 	if p.processing {
 		p.mu.Unlock()
 		logger.Warn("Already processing an action")
-		return nil, fmt.Errorf("already processing, please wait")
+		return nil, fmt.Errorf("another action is already running")
 	}
 	p.processing = true
 	p.mu.Unlock()
@@ -220,14 +220,14 @@ func (p *Processor) History() *history.Store {
 }
 
 // Raw and final differ when the AI cleanup ran; showing both is what makes the history useful.
-func (p *Processor) RecordSpeech(raw, final string) {
+func (p *Processor) RecordDictation(raw, final string) {
 	model := ""
 	if m, ok := stt.FindModel(p.currentConfig().SpeechSettings().ModelID); ok {
 		model = m.Name
 	}
 
 	p.history.Add(history.Entry{
-		Kind:       history.KindSpeech,
+		Kind:       history.KindDictate,
 		Original:   raw,
 		Result:     final,
 		Model:      model,
@@ -355,11 +355,11 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.
 		answer, err = provider.Complete(ctx, request)
 	}
 	if errors.Is(context.Cause(ctx), errTimedOut) {
-		return reply{}, fmt.Errorf("%s got no reply within %ds - raise the timeout under Settings > Actions",
-			op.Label(), operation.TimeoutSeconds)
+		return reply{}, fmt.Errorf("no reply within %ds - raise the timeout in Settings > Actions > %s",
+			operation.TimeoutSeconds, op.Label())
 	}
 	if err != nil {
-		return reply{}, fmt.Errorf("%s failed: %w", op.Label(), err)
+		return reply{}, err
 	}
 	return reply{text: answer, provider: name, model: provider.Model()}, nil
 }
@@ -393,7 +393,7 @@ func (p *Processor) resolveProvider(cfg *config.Config, op config.Operation, men
 	name := cfg.ProviderFor(op)
 	provider, err := p.providerNamed(name)
 	if err != nil {
-		return "", nil, fmt.Errorf("no AI provider configured - add an API key in Settings")
+		return "", nil, fmt.Errorf("no AI provider configured - add an API key in Settings > AI")
 	}
 	return name, provider, nil
 }

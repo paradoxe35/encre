@@ -84,7 +84,7 @@ func ModelDetails(model Model, host Machine, downloaded bool) string {
 	lines = append(lines, streamingLine(model))
 	lines = append(lines, detectionLine(model))
 	if model.Translate {
-		lines = append(lines, "Translation: can translate speech into English")
+		lines = append(lines, "Speech translation: can translate speech into English")
 	}
 	if model.License != "" {
 		lines = append(lines, "License: "+model.License)

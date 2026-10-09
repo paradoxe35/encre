@@ -8,12 +8,12 @@ import (
 
 func TestTheIndicatorsAreOnUntilSwitchedOff(t *testing.T) {
 	indicators := Default().IndicatorSettings()
-	if !indicators.Dictation || !indicators.Actions {
+	if !indicators.Voice || !indicators.Text {
 		t.Fatal("the indicators must start switched on")
 	}
 
 	out, _ := json.Marshal(Default().AppearanceSettings())
-	if !strings.Contains(string(out), `"indicators":{"dictation":true,"actions":true}`) {
+	if !strings.Contains(string(out), `"indicators":{"voice":true,"text":true}`) {
 		t.Fatalf("the defaults are not written whole: %s", out)
 	}
 }
@@ -26,7 +26,7 @@ func TestAConfigWrittenBeforeTheIndicatorsReadsAsOn(t *testing.T) {
 	cfg.applyDefaults()
 
 	indicators := cfg.IndicatorSettings()
-	if !indicators.Dictation || !indicators.Actions {
+	if !indicators.Voice || !indicators.Text {
 		t.Fatalf("an old config reads as %+v, want both on", indicators)
 	}
 	if cfg.AppearanceSettings().Theme != "dark" {
@@ -36,19 +36,19 @@ func TestAConfigWrittenBeforeTheIndicatorsReadsAsOn(t *testing.T) {
 
 func TestSwitchedOffIndicatorsStayOff(t *testing.T) {
 	cfg := &Config{}
-	if err := json.Unmarshal([]byte(`{"appearance":{"indicators":{"dictation":false,"actions":false}}}`), cfg); err != nil {
+	if err := json.Unmarshal([]byte(`{"appearance":{"indicators":{"voice":false,"text":false}}}`), cfg); err != nil {
 		t.Fatal(err)
 	}
 	cfg.applyDefaults()
 
-	if indicators := cfg.IndicatorSettings(); indicators.Dictation || indicators.Actions {
+	if indicators := cfg.IndicatorSettings(); indicators.Voice || indicators.Text {
 		t.Fatalf("switched-off indicators came back as %+v", indicators)
 	}
 }
 
 func TestIndicatorSettingsNeverComeBackMissing(t *testing.T) {
 	cfg := &Config{}
-	if indicators := cfg.IndicatorSettings(); !indicators.Dictation || !indicators.Actions {
+	if indicators := cfg.IndicatorSettings(); !indicators.Voice || !indicators.Text {
 		t.Fatalf("a bare config reads as %+v, want the defaults", indicators)
 	}
 }

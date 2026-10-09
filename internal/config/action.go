@@ -39,30 +39,30 @@ func (o Operation) UsesAI() bool { return o != OpDictate }
 type ActionKind string
 
 const (
-	ActionReviseSelection ActionKind = "revise_selection"
-	ActionReviseAll       ActionKind = "revise_all"
-	ActionTranslate       ActionKind = "translate"
-	ActionDictate         ActionKind = "dictate"
-	ActionAsk             ActionKind = "ask"
-	ActionAskTyped        ActionKind = "ask_typed"
+	ActionReviseSelection    ActionKind = "revise_selection"
+	ActionReviseEverything   ActionKind = "revise_everything"
+	ActionTranslateSelection ActionKind = "translate_selection"
+	ActionDictate            ActionKind = "dictate"
+	ActionAskByVoice         ActionKind = "ask_by_voice"
+	ActionAskByTyping        ActionKind = "ask_by_typing"
 )
 
 var ActionOrder = []ActionKind{
 	ActionReviseSelection,
-	ActionReviseAll,
-	ActionTranslate,
+	ActionReviseEverything,
+	ActionTranslateSelection,
 	ActionDictate,
-	ActionAsk,
-	ActionAskTyped,
+	ActionAskByVoice,
+	ActionAskByTyping,
 }
 
 var actionLabels = map[ActionKind]string{
-	ActionReviseSelection: "Revise selection",
-	ActionReviseAll:       "Revise everything",
-	ActionTranslate:       "Translate selection",
-	ActionDictate:         "Dictate",
-	ActionAsk:             "Ask by voice",
-	ActionAskTyped:        "Ask by typing",
+	ActionReviseSelection:    "Revise selection",
+	ActionReviseEverything:   "Revise everything",
+	ActionTranslateSelection: "Translate selection",
+	ActionDictate:            "Dictate",
+	ActionAskByVoice:         "Ask by voice",
+	ActionAskByTyping:        "Ask by typing",
 }
 
 func (k ActionKind) Label() string {
@@ -74,11 +74,11 @@ func (k ActionKind) Label() string {
 
 func (k ActionKind) Operation() Operation {
 	switch k {
-	case ActionTranslate:
+	case ActionTranslateSelection:
 		return OpTranslate
 	case ActionDictate:
 		return OpDictate
-	case ActionAsk, ActionAskTyped:
+	case ActionAskByVoice, ActionAskByTyping:
 		return OpAsk
 	default:
 		return OpRevise
@@ -87,9 +87,9 @@ func (k ActionKind) Operation() Operation {
 
 func (k ActionKind) UsesAI() bool { return k.Operation().UsesAI() }
 
-func (k ActionKind) SelectsAll() bool { return k == ActionReviseAll }
+func (k ActionKind) SelectsAll() bool { return k == ActionReviseEverything }
 
-func (k ActionKind) Listens() bool { return k == ActionDictate || k == ActionAsk }
+func (k ActionKind) Listens() bool { return k == ActionDictate || k == ActionAskByVoice }
 
 type ActionConfig struct {
 	Enabled bool   `json:"enabled"`
@@ -103,7 +103,8 @@ type OperationConfig struct {
 	SystemPrompt   string `json:"system_prompt,omitempty"`
 	CharacterLimit int    `json:"character_limit,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
-	// Memory is how many messages Ask sends, the question included; unset is 1, which remembers nothing.
+	// Memory is how many questions Ask sends, the new one included, the earlier ones with their
+	// answers; unset is 1, which remembers nothing.
 	Memory int `json:"memory,omitempty"`
 
 	// Empty means the default provider, so changing the default carries every operation with it.
@@ -142,30 +143,30 @@ func defaultHotkeys() map[ActionKind]string {
 	switch runtime.GOOS {
 	case "darwin":
 		return map[ActionKind]string{
-			ActionReviseSelection: "ctrl+cmd",
-			ActionReviseAll:       "ctrl+option+space",
-			ActionTranslate:       "ctrl+option+g",
-			ActionDictate:         "ctrl+shift+space",
-			ActionAsk:             "ctrl+option+a",
-			ActionAskTyped:        "ctrl+option+k",
+			ActionReviseSelection:    "ctrl+cmd",
+			ActionReviseEverything:   "ctrl+option+space",
+			ActionTranslateSelection: "ctrl+option+g",
+			ActionDictate:            "ctrl+shift+space",
+			ActionAskByVoice:         "ctrl+option+a",
+			ActionAskByTyping:        "ctrl+option+k",
 		}
 	case "windows":
 		return map[ActionKind]string{
-			ActionReviseSelection: "ctrl+win",
-			ActionReviseAll:       "ctrl+alt+space",
-			ActionTranslate:       "ctrl+alt+g",
-			ActionDictate:         "ctrl+shift+space",
-			ActionAsk:             "ctrl+alt+a",
-			ActionAskTyped:        "ctrl+alt+k",
+			ActionReviseSelection:    "ctrl+win",
+			ActionReviseEverything:   "ctrl+alt+space",
+			ActionTranslateSelection: "ctrl+alt+g",
+			ActionDictate:            "ctrl+shift+space",
+			ActionAskByVoice:         "ctrl+alt+a",
+			ActionAskByTyping:        "ctrl+alt+k",
 		}
 	default:
 		return map[ActionKind]string{
-			ActionReviseSelection: "ctrl+super",
-			ActionReviseAll:       "ctrl+alt+space",
-			ActionTranslate:       "ctrl+alt+g",
-			ActionDictate:         "ctrl+shift+space",
-			ActionAsk:             "ctrl+alt+a",
-			ActionAskTyped:        "ctrl+alt+k",
+			ActionReviseSelection:    "ctrl+super",
+			ActionReviseEverything:   "ctrl+alt+space",
+			ActionTranslateSelection: "ctrl+alt+g",
+			ActionDictate:            "ctrl+shift+space",
+			ActionAskByVoice:         "ctrl+alt+a",
+			ActionAskByTyping:        "ctrl+alt+k",
 		}
 	}
 }
@@ -173,7 +174,7 @@ func defaultHotkeys() map[ActionKind]string {
 // Translate and the voice actions start off: translate needs a language pair and voice
 // needs a downloaded model, so none should claim a shortcut unasked.
 func enabledByDefault(kind ActionKind) bool {
-	return kind == ActionReviseSelection || kind == ActionReviseAll
+	return kind == ActionReviseSelection || kind == ActionReviseEverything
 }
 
 func DefaultActions() map[ActionKind]ActionConfig {

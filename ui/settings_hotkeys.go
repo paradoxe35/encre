@@ -41,7 +41,7 @@ func (w *MainWindow) createHotkeysSection() fyne.CanvasObject {
 	help := widget.NewLabel(
 		"• Click 'Capture', press the keys in sequence, then Enter to save\n" +
 			"• Requires at least one modifier (Ctrl/Alt/Shift/Super)\n" +
-			"• Press ESC to cancel")
+			"• Press Esc to cancel")
 	help.Wrapping = fyne.TextWrapWord
 
 	reset := widget.NewButton("Reset to defaults", func() {

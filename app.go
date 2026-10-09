@@ -10,13 +10,13 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/systray"
+	"github.com/paradoxe35/encre/internal/actions"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/overlay"
 	"github.com/paradoxe35/encre/internal/permissions"
 	"github.com/paradoxe35/encre/internal/platform"
-	"github.com/paradoxe35/encre/internal/revision"
 	"github.com/paradoxe35/encre/internal/stt"
 	"github.com/paradoxe35/encre/ui"
 )
@@ -25,14 +25,14 @@ type Application struct {
 	app        fyne.App
 	mainWindow *ui.MainWindow
 
-	// configMu guards config: the listener swaps it while hotkey and dictation
+	// configMu guards config: the listener swaps it while hotkey and voice
 	// goroutines are reading it.
 	configMu sync.RWMutex
 	config   *config.Config
 
 	hotkeyManager *input.FFIHotkeyManager
-	processor     *revision.Processor
-	dictation     *revision.Dictation
+	processor     *actions.Processor
+	voice         *actions.Voice
 	answers       *ui.AnswerCard
 	notifications *ui.NotificationManager
 	// updater is nil in development builds.
@@ -54,7 +54,7 @@ type Application struct {
 const closeAnswerAction = "close_answer"
 
 func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
-	processor, err := revision.NewProcessor(cfg)
+	processor, err := actions.NewProcessor(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create processor: %w", err)
 	}
@@ -100,7 +100,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 		go processor.AnswerTyped(application.answers, question)
 	})
 
-	application.dictation = revision.NewDictation(processor,
+	application.voice = actions.NewVoice(processor,
 		application.currentConfig,
 		func(kind config.ActionKind, err error) {
 			fyne.Do(func() {
@@ -112,7 +112,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 		application.answers)
 
 	application.applyOverlay(cfg)
-	input.OnLevel(application.dictation.Level)
+	input.OnLevel(application.voice.Level)
 
 	// Before hotkeys, so the UI reflects permission state early.
 	application.setupPermissions()
@@ -120,7 +120,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	application.setupHotkeys()
 
 	stt.StartRefreshing()
-	application.dictation.Prepare()
+	application.voice.Prepare()
 
 	config.RegisterListener(func(newCfg *config.Config) {
 		logger.Info("Config changed, reloading hotkeys")
@@ -145,7 +145,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	}
 
 	app.Lifecycle().SetOnStarted(func() {
-		systray.SetTooltip("Encre - AI Text Revision Tool")
+		systray.SetTooltip("Encre - revise, translate and dictate text, and ask questions")
 		installReopenHandler(application.ShowWindow)
 		prepareNotifications()
 	})
@@ -170,7 +170,7 @@ func (a *Application) setupHotkeys() {
 		switch {
 		case kind.Listens():
 			a.registerVoice(kind, action)
-		case kind == config.ActionAskTyped:
+		case kind == config.ActionAskByTyping:
 			err := a.hotkeyManager.RegisterHotkey(action.Hotkey, string(kind), a.answers.Prompt)
 			a.reportBindingFailure(action.Hotkey, err)
 		default:
@@ -181,9 +181,9 @@ func (a *Application) setupHotkeys() {
 }
 
 func (a *Application) registerVoice(kind config.ActionKind, action config.ActionConfig) {
-	hold := a.dictation.Toggle
-	if kind == config.ActionAsk {
-		hold = a.dictation.Ask
+	hold := a.voice.Dictate
+	if kind == config.ActionAskByVoice {
+		hold = a.voice.Ask
 	}
 
 	var err error
@@ -191,7 +191,7 @@ func (a *Application) registerVoice(kind config.ActionKind, action config.Action
 		err = a.hotkeyManager.RegisterHoldHotkey(action.Hotkey, string(kind), hold)
 	} else {
 		err = a.hotkeyManager.RegisterHotkey(action.Hotkey, string(kind), func() {
-			hold(!a.dictation.Recording(kind))
+			hold(!a.voice.Recording(kind))
 		})
 	}
 	a.reportBindingFailure(action.Hotkey, err)
@@ -203,7 +203,7 @@ func (a *Application) actionHandler(kind config.ActionKind) func() {
 
 		if a.processor.IsProcessing() {
 			fyne.Do(func() {
-				a.notifications.ShowInfo("Please Wait", "Another action is already running")
+				a.notifications.ShowInfo("Please wait", "Another action is already running")
 			})
 			return
 		}
@@ -244,7 +244,7 @@ func (a *Application) reportBindingFailure(binding string, err error) {
 	}
 	logger.Error("Could not register shortcut", "binding", binding, "error", err)
 	fyne.Do(func() {
-		a.notifications.ShowError("Shortcut not registered", binding+": "+err.Error())
+		a.notifications.ShowError("Hotkey not registered", binding+": "+err.Error())
 	})
 }
 
@@ -263,7 +263,7 @@ func (a *Application) reloadHotkeysFromConfig() {
 	if err := a.hotkeyManager.ClearBindings(); err != nil {
 		logger.Error("Failed to clear bindings", "error", err)
 		fyne.Do(func() {
-			a.notifications.ShowError("Hotkey Reload Failed", "Failed to clear old hotkeys")
+			a.notifications.ShowError("Hotkey reload failed", "Could not clear the old hotkeys")
 		})
 		return
 	}
@@ -277,8 +277,8 @@ func (a *Application) reloadHotkeysFromConfig() {
 
 // indicatorChoice is which features show the indicator; one window serves both.
 type indicatorChoice struct {
-	dictation bool
-	actions   bool
+	voice bool
+	text  bool
 }
 
 // applyOverlay swaps the indicators only when a choice changed, so a save of
@@ -289,8 +289,8 @@ func (a *Application) applyOverlay(cfg *config.Config) {
 
 	indicators := cfg.IndicatorSettings()
 	choice := indicatorChoice{
-		dictation: indicators.Dictation,
-		actions:   indicators.Actions,
+		voice: indicators.Voice,
+		text:  indicators.Text,
 	}
 	if a.indicators != nil && *a.indicators == choice {
 		return
@@ -301,11 +301,11 @@ func (a *Application) applyOverlay(cfg *config.Config) {
 		a.indicator.Close()
 		a.indicator = nil
 	}
-	if choice.dictation || choice.actions {
+	if choice.voice || choice.text {
 		a.indicator = overlay.New(fyne.DoAndWait)
 	}
-	a.dictation.SetOverlay(a.owner(choice.dictation))
-	a.processor.SetOverlay(a.owner(choice.actions))
+	a.voice.SetOverlay(a.owner(choice.voice))
+	a.processor.SetOverlay(a.owner(choice.text))
 }
 
 func (a *Application) owner(on bool) overlay.Overlay {
@@ -430,7 +430,7 @@ func (a *Application) Start() error {
 		if reason := a.hotkeyManager.ListenError(); reason != "" {
 			logger.Error("Shortcuts will not fire", "reason", reason)
 			fyne.Do(func() {
-				a.notifications.ShowError("Shortcuts are not listening", reason)
+				a.notifications.ShowError("Hotkeys are not listening", reason)
 			})
 		}
 	}()
@@ -480,6 +480,6 @@ func (a *Application) teardown() {
 
 	a.hotkeyManager.Stop()
 	a.hotkeyManager.Close()
-	a.dictation.Close()
+	a.voice.Close()
 	a.processor.Close()
 }

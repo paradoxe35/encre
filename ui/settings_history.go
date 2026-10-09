@@ -10,6 +10,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/history"
 )
 
@@ -18,10 +19,15 @@ var historyFilters = []struct {
 	kind  history.Kind
 }{
 	{"All", ""},
-	{"Revision", history.KindRevise},
-	{"Translation", history.KindTranslate},
-	{"Speech", history.KindSpeech},
-	{"Questions", history.KindAsk},
+	{historyLabel(history.KindRevise), history.KindRevise},
+	{historyLabel(history.KindTranslate), history.KindTranslate},
+	{historyLabel(history.KindDictate), history.KindDictate},
+	{historyLabel(history.KindAsk), history.KindAsk},
+}
+
+// historyLabel names a kind after the operation that made it, as Settings > Actions does.
+func historyLabel(kind history.Kind) string {
+	return config.Operation(kind).Label()
 }
 
 // Row text is formatted once here so the list update path never re-formats.
@@ -80,7 +86,7 @@ func (w *MainWindow) createHistorySection() fyne.CanvasObject {
 
 	clear := widget.NewButtonWithIcon("Clear history", theme.DeleteIcon(), func() {
 		dialog.ShowConfirm("Clear history",
-			"Delete all history entries? This cannot be undone.",
+			"Clear all history? This cannot be undone.",
 			func(ok bool) {
 				if ok {
 					if err := w.historyStoreRef().Clear(); err != nil {
@@ -158,12 +164,14 @@ func (h *historyRows) summary() string {
 	if len(h.rows) == 0 {
 		return "No history yet"
 	}
+	if len(h.rows) == 1 {
+		return "1 entry"
+	}
 	return fmt.Sprintf("%d entries", len(h.rows))
 }
 
 func historyTitle(entry history.Entry) string {
-	label := strings.Title(string(entry.Kind))
-	return fmt.Sprintf("%s · %s", label, entry.At.Format("2 Jan 15:04"))
+	return fmt.Sprintf("%s · %s", historyLabel(entry.Kind), entry.At.Format("2 Jan 15:04"))
 }
 
 func historyDetail(entry history.Entry) string {

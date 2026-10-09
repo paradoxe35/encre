@@ -16,7 +16,7 @@ func TestAddAndRecentAreNewestFirst(t *testing.T) {
 	store := testStore(t)
 
 	first := Entry{Kind: KindRevise, Original: "a", Result: "b", At: time.Now().Add(-time.Minute)}
-	second := Entry{Kind: KindSpeech, Original: "c", Result: "d"}
+	second := Entry{Kind: KindDictate, Original: "c", Result: "d"}
 	store.Add(first)
 	store.Add(second)
 
@@ -36,7 +36,7 @@ func TestRecentFiltersByKind(t *testing.T) {
 	store := testStore(t)
 	store.Add(Entry{Kind: KindRevise, Result: "r"})
 	store.Add(Entry{Kind: KindTranslate, Result: "t", FromLang: "en", ToLang: "fr"})
-	store.Add(Entry{Kind: KindSpeech, Result: "s"})
+	store.Add(Entry{Kind: KindDictate, Result: "s"})
 
 	if got := len(store.Recent(KindTranslate)); got != 1 {
 		t.Fatalf("translate filter returned %d entries, want 1", got)

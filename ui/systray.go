@@ -12,7 +12,7 @@ func SetupSystemTray(desk desktop.App, mainWindow *MainWindow, onQuit func() err
 		fyne.NewMenuItem("Settings", func() {
 			fyne.Do(mainWindow.ShowWindow)
 		}),
-		fyne.NewMenuItem("View Logs", func() {
+		fyne.NewMenuItem("View logs", func() {
 			if err := logger.OpenLogFile(); err != nil {
 				logger.Error("Failed to open log file", "error", err)
 			}

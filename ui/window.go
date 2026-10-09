@@ -39,8 +39,8 @@ type MainWindow struct {
 	statusBinding         binding.String
 	startMinimizedBinding binding.Bool
 	startOnLoginBinding   binding.Bool
-	dictationIndicator    binding.Bool
-	actionIndicator       binding.Bool
+	voiceIndicator        binding.Bool
+	textIndicator         binding.Bool
 	themeBinding          binding.String
 	pasteShortcutBinding  binding.String
 	unsavedLabel          *widget.Label
@@ -143,8 +143,8 @@ func (w *MainWindow) initBindings() {
 	w.statusBinding = binding.NewString()
 	w.startMinimizedBinding = binding.NewBool()
 	w.startOnLoginBinding = binding.NewBool()
-	w.dictationIndicator = binding.NewBool()
-	w.actionIndicator = binding.NewBool()
+	w.voiceIndicator = binding.NewBool()
+	w.textIndicator = binding.NewBool()
 	w.themeBinding = binding.NewString()
 	w.pasteShortcutBinding = binding.NewString()
 	w.pasteShortcutBinding.Set(string(w.config.PasteShortcut()))
@@ -164,8 +164,8 @@ func (w *MainWindow) initBindings() {
 	w.statusBinding.Set("Ready")
 	w.startMinimizedBinding.Set(w.config.Appearance.StartMinimized)
 	indicators := w.config.IndicatorSettings()
-	w.dictationIndicator.Set(indicators.Dictation)
-	w.actionIndicator.Set(indicators.Actions)
+	w.voiceIndicator.Set(indicators.Voice)
+	w.textIndicator.Set(indicators.Text)
 
 	// Re-check actual system state: the user may have removed the login item outside the app.
 	autoStart := platform.GetAutoStart()
@@ -174,8 +174,8 @@ func (w *MainWindow) initBindings() {
 
 	// One listener per binding covers both directions without Bind overwriting it.
 	w.startMinimizedBinding.AddListener(binding.NewDataListener(w.markDirty))
-	w.dictationIndicator.AddListener(binding.NewDataListener(w.markDirty))
-	w.actionIndicator.AddListener(binding.NewDataListener(w.markDirty))
+	w.voiceIndicator.AddListener(binding.NewDataListener(w.markDirty))
+	w.textIndicator.AddListener(binding.NewDataListener(w.markDirty))
 	w.startOnLoginBinding.AddListener(binding.NewDataListener(w.markDirty))
 
 	if w.config.Appearance.StartOnLogin != actualStartOnLogin {
@@ -237,7 +237,7 @@ func (w *MainWindow) createContent() fyne.CanvasObject {
 		}()
 	}
 
-	saveBtn := widget.NewButtonWithIcon("Save Settings", theme.DocumentSaveIcon(), w.saveSettings)
+	saveBtn := widget.NewButtonWithIcon("Save settings", theme.DocumentSaveIcon(), w.saveSettings)
 	saveBtn.Importance = widget.HighImportance
 	w.unsavedLabel = widget.NewLabel("Unsaved changes")
 	w.unsavedLabel.TextStyle.Bold = true

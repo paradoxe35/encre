@@ -67,19 +67,19 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 // The indicator needs a window that floats without taking focus, which Wayland has no
 // way to offer; the switch stays visible but off, with the reason.
 func (w *MainWindow) createIndicatorControls() fyne.CanvasObject {
-	dictation := widget.NewCheck("Show a floating indicator while dictating or asking", nil)
-	dictation.Bind(w.dictationIndicator)
-	actions := widget.NewCheck("Show a floating indicator while revising or translating", nil)
-	actions.Bind(w.actionIndicator)
+	voice := widget.NewCheck("Show a floating indicator while dictating or asking by voice", nil)
+	voice.Bind(w.voiceIndicator)
+	text := widget.NewCheck("Show a floating indicator while revising or translating", nil)
+	text.Bind(w.textIndicator)
 	if overlay.Supported() {
-		return container.NewVBox(dictation, actions)
+		return container.NewVBox(voice, text)
 	}
 
-	dictation.Disable()
-	actions.Disable()
+	voice.Disable()
+	text.Disable()
 	hint := widget.NewLabel("Not available on Wayland.")
 	hint.Importance = widget.LowImportance
-	return container.NewVBox(dictation, actions, hint)
+	return container.NewVBox(voice, text, hint)
 }
 
 func (w *MainWindow) createUpdateControls() fyne.CanvasObject {
@@ -135,14 +135,14 @@ func (w *MainWindow) applyAutoStartSetting(enabled bool) {
 	if enabled {
 		if err := autoStart.Enable(); err != nil {
 			logger.Error("Failed to enable auto-start", "error", err)
-			w.statusBinding.Set("Failed to enable auto-start")
+			w.statusBinding.Set("Could not turn on Start on login")
 		} else {
 			logger.Info("Auto-start enabled")
 		}
 	} else {
 		if err := autoStart.Disable(); err != nil {
 			logger.Error("Failed to disable auto-start", "error", err)
-			w.statusBinding.Set("Failed to disable auto-start")
+			w.statusBinding.Set("Could not turn off Start on login")
 		} else {
 			logger.Info("Auto-start disabled")
 		}

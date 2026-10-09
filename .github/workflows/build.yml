@@ -185,14 +185,14 @@ jobs:
           cat > AppDir/usr/share/applications/me.pngwasi.encre.desktop <<'EOF'
           [Desktop Entry]
           Name=Encre
-          GenericName=Text Revision Tool
-          Comment=AI-powered text revision tool
+          GenericName=Writing Assistant
+          Comment=Revise, translate and dictate text, and ask questions, with AI, anywhere
           Exec=encre
           Icon=encre
           Terminal=false
           Type=Application
           Categories=Utility;Office;
-          Keywords=text;revision;ai;
+          Keywords=text;revise;translate;dictate;speech;ask;ai;
           StartupNotify=true
           StartupWMClass=Encre
           EOF
@@ -743,7 +743,7 @@ jobs:
         with:
           files: release/*
           body: |
-            AI-powered text revision, translation and dictation with global hotkeys.
+            Revise, translate and dictate text, and ask questions, with AI, anywhere, with global hotkeys.
 
             ## Downloads
 

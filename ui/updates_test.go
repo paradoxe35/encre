@@ -87,7 +87,7 @@ func TestUpdateStateTransitions(t *testing.T) {
 
 	rel := &updater.Release{Tag: "v2.0.0"}
 	s.found(rel)
-	if !s.canUpdate() || s.status != "Version v2.0.0 is available" {
+	if !s.canUpdate() || s.status != "Encre v2.0.0 is available" {
 		t.Fatalf("a found release should offer the update, got %+v", s)
 	}
 
@@ -117,7 +117,7 @@ func TestUpdatePanelCheckFindsRelease(t *testing.T) {
 	}
 	p.check()
 
-	if p.status.Text != "Version v2.0.0 is available" {
+	if p.status.Text != "Encre v2.0.0 is available" {
 		t.Fatalf("status = %q", p.status.Text)
 	}
 	if !p.updateButton.Visible() || p.updateButton.Disabled() || p.checkButton.Disabled() {

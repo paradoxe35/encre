@@ -46,6 +46,8 @@ func (w *MainWindow) selectedSpeechLanguage() string {
 	return w.speechLanguageCode(w.speechLanguage.Selected)
 }
 
+const microphoneRefused = "Encre was refused the microphone. Allow it, then hold the hotkey again."
+
 func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
 	local := w.localSpeechPane()
 	remote := w.remoteSpeechPane()
@@ -82,7 +84,7 @@ func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
 
 	w.microphoneNotice = microphoneRefusedNotice()
 
-	hint := widget.NewLabel("Hold the dictate shortcut, speak, release.")
+	hint := widget.NewLabel("Hold the Dictate or Ask by voice hotkey, speak, release.")
 	hint.Wrapping = fyne.TextWrapWord
 
 	return container.NewBorder(
@@ -120,7 +122,7 @@ func engineLabel(engine config.SpeechEngine) string {
 }
 
 func microphoneRefusedNotice() *fyne.Container {
-	text := widget.NewLabel("Dictation was refused the microphone. Allow Encre, then hold the shortcut again.")
+	text := widget.NewLabel(microphoneRefused)
 	text.Wrapping = fyne.TextWrapWord
 	text.Importance = widget.WarningImportance
 

@@ -16,7 +16,7 @@ import (
 	"github.com/paradoxe35/encre/internal/stt/witai"
 )
 
-var ErrNoModel = errors.New("no speech model selected - choose one in Settings")
+var ErrNoModel = errors.New("no speech model selected - choose one in Settings > Speech")
 
 type speechEngine interface {
 	UseModel(path string) error

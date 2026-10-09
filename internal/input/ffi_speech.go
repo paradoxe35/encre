@@ -38,7 +38,7 @@ var (
 func NewFFISpeech() (*FFISpeech, error) {
 	handle := C.encre_stt_new(C.encre_LevelCallback(C.speechLevelGateway))
 	if handle == nil {
-		return nil, fmt.Errorf("failed to create speech recogniser: %s", getLastError())
+		return nil, fmt.Errorf("could not create the speech recognizer: %s", getLastError())
 	}
 	return &FFISpeech{handle: handle}, nil
 }

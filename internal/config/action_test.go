@@ -33,12 +33,12 @@ func TestDefaultHotkeysAreUnique(t *testing.T) {
 
 func TestOnlyReviseIsEnabledByDefault(t *testing.T) {
 	want := map[ActionKind]bool{
-		ActionReviseSelection: true,
-		ActionReviseAll:       true,
-		ActionTranslate:       false,
-		ActionDictate:         false,
-		ActionAsk:             false,
-		ActionAskTyped:        false,
+		ActionReviseSelection:    true,
+		ActionReviseEverything:   true,
+		ActionTranslateSelection: false,
+		ActionDictate:            false,
+		ActionAskByVoice:         false,
+		ActionAskByTyping:        false,
 	}
 
 	for kind, action := range DefaultActions() {
@@ -83,10 +83,10 @@ func TestBothReviseBindingsShareOneOperation(t *testing.T) {
 	if ActionReviseSelection.Operation() != OpRevise {
 		t.Error("revise_selection should map to the revise operation")
 	}
-	if ActionReviseAll.Operation() != OpRevise {
-		t.Error("revise_all should map to the revise operation")
+	if ActionReviseEverything.Operation() != OpRevise {
+		t.Error("revise_everything should map to the revise operation")
 	}
-	if ActionTranslate.Operation() == ActionReviseAll.Operation() {
+	if ActionTranslateSelection.Operation() == ActionReviseEverything.Operation() {
 		t.Error("translate must not share the revise operation")
 	}
 }
@@ -96,7 +96,7 @@ func TestEditingReviseAffectsBothBindings(t *testing.T) {
 	cfg.applyDefaults()
 	cfg.SetOperation(OpRevise, OperationConfig{SystemPrompt: "shared", CharacterLimit: 500})
 
-	for _, kind := range []ActionKind{ActionReviseSelection, ActionReviseAll} {
+	for _, kind := range []ActionKind{ActionReviseSelection, ActionReviseEverything} {
 		got := cfg.Operation(kind.Operation())
 		if got.SystemPrompt != "shared" || got.CharacterLimit != 500 {
 			t.Errorf("%s saw %+v, expected the shared revise settings", kind, got)
@@ -119,7 +119,7 @@ func TestOperationFillsZeroedLimits(t *testing.T) {
 func TestActionFallsBackForUnknownKind(t *testing.T) {
 	cfg := &Config{Actions: map[ActionKind]ActionConfig{}}
 
-	if got := cfg.Action(ActionReviseAll).Hotkey; got == "" {
+	if got := cfg.Action(ActionReviseEverything).Hotkey; got == "" {
 		t.Error("a missing action should fall back to its default")
 	}
 }
@@ -197,10 +197,10 @@ func TestApplyDefaultsRepairsPartialConfig(t *testing.T) {
 }
 
 func TestActionKindClassification(t *testing.T) {
-	if !ActionReviseAll.SelectsAll() {
-		t.Error("revise_all should select the whole field")
+	if !ActionReviseEverything.SelectsAll() {
+		t.Error("revise_everything should select the whole field")
 	}
-	if ActionReviseSelection.SelectsAll() || ActionTranslate.SelectsAll() {
+	if ActionReviseSelection.SelectsAll() || ActionTranslateSelection.SelectsAll() {
 		t.Error("selection-scoped actions must not select all")
 	}
 	if OpDictate.UsesAI() {
@@ -229,8 +229,8 @@ func TestDefaultHotkeysMatchWhatShipped(t *testing.T) {
 	actions := DefaultActions()
 
 	want := map[ActionKind]string{
-		ActionReviseAll: "ctrl+alt+space",
-		ActionTranslate: "ctrl+alt+g",
+		ActionReviseEverything:   "ctrl+alt+space",
+		ActionTranslateSelection: "ctrl+alt+g",
 	}
 	if runtime.GOOS == "linux" {
 		want[ActionReviseSelection] = "ctrl+super"
@@ -244,13 +244,13 @@ func TestDefaultHotkeysMatchWhatShipped(t *testing.T) {
 }
 
 func TestAskListensAndUsesItsOwnPrompt(t *testing.T) {
-	if !ActionAsk.Listens() || !ActionDictate.Listens() || ActionTranslate.Listens() {
+	if !ActionAskByVoice.Listens() || !ActionDictate.Listens() || ActionTranslateSelection.Listens() {
 		t.Error("only the voice actions listen")
 	}
-	if !DefaultActions()[ActionAsk].PushToTalk {
+	if !DefaultActions()[ActionAskByVoice].PushToTalk {
 		t.Error("ask should default to hold-to-record")
 	}
-	if ActionAsk.Operation() != OpAsk || !OpAsk.UsesAI() {
+	if ActionAskByVoice.Operation() != OpAsk || !OpAsk.UsesAI() {
 		t.Error("ask should run its own AI operation")
 	}
 	if DefaultPrompt(OpAsk) != prompt.Ask {

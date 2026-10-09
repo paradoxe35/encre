@@ -76,7 +76,7 @@ func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
 	utils.EnsureAppHomeDir()
 
 	cfg := config.Default()
-	if cfg.Action(config.ActionTranslate).Enabled {
+	if cfg.Action(config.ActionTranslateSelection).Enabled {
 		t.Fatal("test setup: translate must start disabled")
 	}
 
@@ -107,12 +107,12 @@ func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
 	published := make(chan bool, 8)
 	config.RegisterListener(func(cfg *config.Config) {
 		select {
-		case published <- cfg.Action(config.ActionTranslate).Enabled:
+		case published <- cfg.Action(config.ActionTranslateSelection).Enabled:
 		default:
 		}
 	})
 
-	w.enables[config.ActionTranslate].SetChecked(true)
+	w.enables[config.ActionTranslateSelection].SetChecked(true)
 
 	if err := w.applyProviderSettings(); err != nil {
 		t.Fatalf("applyProviderSettings: %v", err)

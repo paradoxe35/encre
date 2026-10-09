@@ -557,8 +557,8 @@ impl SimpleHotkeyManager {
                 });
                 if let Err(e) = result {
                     *listen_error.lock() = Some(format!(
-                        "The system refused the key listener ({e}). This is Input Monitoring; \
-                         grant it to Encre and restart."
+                        "The system refused to let Encre listen for hotkeys ({e}). Grant Encre \
+                         Input Monitoring, then restart it."
                     ));
                 }
             }
@@ -585,15 +585,16 @@ impl SimpleHotkeyManager {
 
                         if let Err(e) = start_grab_listen(callback) {
                             *listen_error.lock() = Some(format!(
-                                "Wayland grab failed ({:?}). Add your user to the 'input' group: \
-                                 sudo usermod -aG input $USER",
+                                "Could not listen for hotkeys on Wayland ({:?}). Add your user to the \
+                                 'input' group, then log out and back in: sudo usermod -aG input $USER",
                                 e
                             ));
                         }
                     } else {
                         tracing::info!("X11 session detected, using X11 listener for hotkeys");
                         if let Err(e) = listen(move |event| dispatch(&event)) {
-                            *listen_error.lock() = Some(format!("X11 listener failed ({:?})", e));
+                            *listen_error.lock() =
+                                Some(format!("Could not listen for hotkeys on X11 ({:?})", e));
                         }
                     }
                 }
@@ -601,8 +602,10 @@ impl SimpleHotkeyManager {
                 #[cfg(target_os = "windows")]
                 {
                     if let Err(e) = listen(move |event| dispatch(&event)) {
-                        *listen_error.lock() =
-                            Some(format!("The system refused the key listener ({:?})", e));
+                        *listen_error.lock() = Some(format!(
+                            "The system refused to let Encre listen for hotkeys ({:?})",
+                            e
+                        ));
                     }
                 }
             }
@@ -830,7 +833,7 @@ mod tests {
 
     const MAC: &[(&str, &str)] = &[
         ("ctrl+cmd", "revise_selection"),
-        ("ctrl+option+space", "revise_all"),
+        ("ctrl+option+space", "revise_everything"),
         ("ctrl+option+g", "translate_selection"),
     ];
 
@@ -895,7 +898,7 @@ mod tests {
             ],
         );
 
-        assert_eq!(actions, vec!["revise_all"]);
+        assert_eq!(actions, vec!["revise_everything"]);
     }
 
     #[test]
@@ -1078,7 +1081,7 @@ mod tests {
             ],
         );
 
-        assert_eq!(actions, vec!["revise_all"]);
+        assert_eq!(actions, vec!["revise_everything"]);
     }
 
     #[test]
@@ -1121,7 +1124,7 @@ mod tests {
             &[Down(Key::ControlRight), Down(Key::AltGr), Down(Key::Space)],
         );
 
-        assert_eq!(actions, vec!["revise_all"]);
+        assert_eq!(actions, vec!["revise_everything"]);
     }
 
     #[test]
@@ -1140,17 +1143,21 @@ mod tests {
         }
 
         let actions = fired(
-            &[("ctrl+alt+space", "revise_all")],
+            &[("ctrl+alt+space", "revise_everything")],
             &[Down(Key::ControlLeft), Down(Key::Alt), Down(Key::Space)],
         );
-        assert_eq!(actions, vec!["revise_all"]);
+        assert_eq!(actions, vec!["revise_everything"]);
     }
 
     #[test]
     fn a_binding_naming_a_key_the_listener_cannot_see_is_refused() {
         let mut manager = SimpleHotkeyManager::new();
         let error = manager
-            .register("ctrl+alt+f13".to_string(), "revise_all".to_string(), record)
+            .register(
+                "ctrl+alt+f13".to_string(),
+                "revise_everything".to_string(),
+                record,
+            )
             .expect_err("f13 is not a key the listener knows");
 
         assert!(error.contains("f13"), "unhelpful message: {}", error);
@@ -1161,7 +1168,7 @@ mod tests {
         let mut manager = SimpleHotkeyManager::new();
         assert!(
             manager
-                .register("space".to_string(), "revise_all".to_string(), record)
+                .register("space".to_string(), "revise_everything".to_string(), record)
                 .is_err()
         );
     }
@@ -1190,7 +1197,11 @@ mod tests {
         let mut manager = SimpleHotkeyManager::new();
         assert!(
             manager
-                .register("ctrl+a+b".to_string(), "revise_all".to_string(), record)
+                .register(
+                    "ctrl+a+b".to_string(),
+                    "revise_everything".to_string(),
+                    record
+                )
                 .is_err()
         );
     }
@@ -1397,14 +1408,21 @@ mod tests {
     fn mislabelled_edges_drop_every_other_press() {
         let actions = mac::fired(MAC, &mac::three_presses_around_an_action(), false);
 
-        assert_eq!(actions, vec!["revise_all", "revise_all"]);
+        assert_eq!(actions, vec!["revise_everything", "revise_everything"]);
     }
 
     #[test]
     fn the_event_flags_survive_mislabelled_edges() {
         let actions = mac::fired(MAC, &mac::three_presses_around_an_action(), true);
 
-        assert_eq!(actions, vec!["revise_all", "revise_all", "revise_all"]);
+        assert_eq!(
+            actions,
+            vec![
+                "revise_everything",
+                "revise_everything",
+                "revise_everything"
+            ]
+        );
     }
 
     #[test]
@@ -1425,10 +1443,10 @@ mod tests {
             Release(Key::ControlLeft),
         ];
 
-        assert_eq!(mac::fired(MAC, &script, false), vec!["revise_all"]);
+        assert_eq!(mac::fired(MAC, &script, false), vec!["revise_everything"]);
         assert_eq!(
             mac::fired(MAC, &script, true),
-            vec!["revise_all", "revise_selection"]
+            vec!["revise_everything", "revise_selection"]
         );
     }
 
@@ -1446,7 +1464,7 @@ mod tests {
         ];
 
         assert!(mac::fired(MAC, &script, false).is_empty());
-        assert_eq!(mac::fired(MAC, &script, true), vec!["revise_all"]);
+        assert_eq!(mac::fired(MAC, &script, true), vec!["revise_everything"]);
     }
 
     #[test]

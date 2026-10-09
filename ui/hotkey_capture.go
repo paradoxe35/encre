@@ -85,7 +85,7 @@ func NewHotkeyCapture(binding binding.String) *HotkeyCapture {
 	h.displayLabel.TextStyle.Monospace = true
 
 	h.entry = &captureEntry{parent: h}
-	h.entry.PlaceHolder = "Press keys in sequence (ESC to cancel, Enter to save)"
+	h.entry.PlaceHolder = "Press keys in sequence (Esc to cancel, Enter to save)"
 	h.entry.TextStyle.Bold = true
 	h.entry.TextStyle.Monospace = true
 	h.entry.Hide()

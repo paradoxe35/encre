@@ -66,7 +66,7 @@ func (a *autoStart) Enable() error {
 	desktopContent := fmt.Sprintf(`[Desktop Entry]
 Type=Application
 Name=Encre
-Comment=AI-powered text revision tool
+Comment=Revise, translate and dictate text, and ask questions, with AI, anywhere
 Exec=%s
 Icon=encre
 Terminal=false

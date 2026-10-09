@@ -295,7 +295,7 @@ func (m *ModelList) download(model stt.Model) {
 
 func (m *ModelList) confirmDelete(model stt.Model) {
 	dialog.ShowConfirm("Delete model",
-		fmt.Sprintf("Remove %s? You can download it again later.", model.Name),
+		fmt.Sprintf("Delete %s? You can download it again later.", model.Name),
 		func(confirmed bool) {
 			if !confirmed {
 				return

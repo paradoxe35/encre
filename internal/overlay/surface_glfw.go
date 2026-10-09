@@ -72,7 +72,7 @@ func openSurface() (surface, error) {
 	initGL.Do(func() { glErr = gl.Init() })
 	if glErr != nil {
 		window.Destroy()
-		return nil, fmt.Errorf("could not initialise OpenGL for the indicator: %w", glErr)
+		return nil, fmt.Errorf("could not initialize OpenGL for the indicator: %w", glErr)
 	}
 	// Never let the swap wait for vsync: this runs on Fyne's thread.
 	glfw.SwapInterval(0)

@@ -1,12 +1,12 @@
 [Desktop Entry]
 Name=Encre
-GenericName=Text Revision Tool
-Comment=AI-powered text revision tool
+GenericName=Writing Assistant
+Comment=Revise, translate and dictate text, and ask questions, with AI, anywhere
 Exec=/usr/bin/encre
 Icon=encre
 Terminal=false
 Type=Application
 Categories=Utility;Office;
-Keywords=text;revision;ai;
+Keywords=text;revise;translate;dictate;speech;ask;ai;
 StartupNotify=true
 StartupWMClass=Encre

@@ -1,4 +1,4 @@
-package revision
+package actions
 
 import (
 	"context"
@@ -121,7 +121,7 @@ func (f *fakeTypist) InsertText(text string) error {
 	return f.insErr
 }
 
-func (f *fakeTypist) RecordSpeech(raw, final string) {
+func (f *fakeTypist) RecordDictation(raw, final string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.history = append(f.history, [2]string{raw, final})
@@ -177,7 +177,7 @@ func (f *fakeOverlay) seen() []string {
 }
 
 type harness struct {
-	dictation *Dictation
+	dictation *Voice
 	speech    *fakeSpeech
 	typist    *fakeTypist
 	overlay   *fakeOverlay
@@ -205,7 +205,7 @@ func newHarness(t *testing.T, cleanUp bool) *harness {
 		failed:   make(chan config.ActionKind, 8),
 		view:     &fakeView{done: make(chan shownAnswer, 8)},
 	}
-	h.dictation = newDictation(h.speech, h.typist, func() *config.Config { return cfg },
+	h.dictation = newVoice(h.speech, h.typist, func() *config.Config { return cfg },
 		func(kind config.ActionKind, err error) {
 			h.failed <- kind
 			h.reported <- err
@@ -227,8 +227,8 @@ func (h *harness) waitOverlay(t *testing.T, last string) []string {
 
 // A take is a press followed by a release.
 func (h *harness) take() {
-	h.dictation.Toggle(true)
-	h.dictation.Toggle(false)
+	h.dictation.Dictate(true)
+	h.dictation.Dictate(false)
 }
 
 func (h *harness) expectReport(t *testing.T, want error) {
@@ -376,10 +376,10 @@ func TestAnInsertFailureIsReportedAndNotRemembered(t *testing.T) {
 
 func TestASecondPressWhileRunningIsIgnored(t *testing.T) {
 	h := newHarness(t, false)
-	h.dictation.Toggle(true)
-	h.dictation.Toggle(true)
-	h.dictation.Toggle(false)
-	h.dictation.Toggle(false)
+	h.dictation.Dictate(true)
+	h.dictation.Dictate(true)
+	h.dictation.Dictate(false)
+	h.dictation.Dictate(false)
 
 	h.waitTyped(t, 1)
 	if got := h.speech.recorded(); !slices.Equal(got, []string{"start", "stop"}) {
@@ -389,7 +389,7 @@ func TestASecondPressWhileRunningIsIgnored(t *testing.T) {
 
 func TestAReleaseWithoutAPressDoesNothing(t *testing.T) {
 	h := newHarness(t, false)
-	h.dictation.Toggle(false)
+	h.dictation.Dictate(false)
 
 	h.expectNoReport(t)
 	if got := h.speech.recorded(); len(got) != 0 {
@@ -485,12 +485,12 @@ func TestTheIndicatorStaysUpWhileAnotherTakeIsRunning(t *testing.T) {
 
 	h.take()
 	h.waitStops(t, 1)
-	h.dictation.Toggle(true)
+	h.dictation.Dictate(true)
 	if got := h.overlay.seen(); slices.Contains(got, "hide") {
 		t.Fatalf("indicator hid while a new take was recording: %v", got)
 	}
 
-	h.dictation.Toggle(false)
+	h.dictation.Dictate(false)
 	h.waitStops(t, 2)
 	close(first)
 	h.waitTyped(t, 2)
@@ -620,8 +620,8 @@ func TestAFailedAnswerIsReportedAsAsk(t *testing.T) {
 	h.ask()
 
 	h.expectReport(t, h.typist.askErr)
-	if kind := <-h.failed; kind != config.ActionAsk {
-		t.Fatalf("reported for %q, want %q", kind, config.ActionAsk)
+	if kind := <-h.failed; kind != config.ActionAskByVoice {
+		t.Fatalf("reported for %q, want %q", kind, config.ActionAskByVoice)
 	}
 	if opens, _ := h.view.counts(); opens != 0 {
 		t.Fatal("an answer opened for a request that failed before writing")
@@ -631,9 +631,9 @@ func TestAFailedAnswerIsReportedAsAsk(t *testing.T) {
 func TestAnotherActionsReleaseDoesNotEndTheTake(t *testing.T) {
 	h := newHarness(t, false)
 	h.dictation.Ask(true)
-	h.dictation.Toggle(false)
+	h.dictation.Dictate(false)
 
-	if !h.dictation.Recording(config.ActionAsk) {
+	if !h.dictation.Recording(config.ActionAskByVoice) {
 		t.Fatal("the ask take ended on the dictate release")
 	}
 	h.dictation.Ask(false)
@@ -646,7 +646,7 @@ func TestAnotherActionsReleaseDoesNotEndTheTake(t *testing.T) {
 func TestRecordingClearsAfterAFailedStart(t *testing.T) {
 	h := newHarness(t, false)
 	h.speech.startErr = errors.New("no microphone")
-	h.dictation.Toggle(true)
+	h.dictation.Dictate(true)
 
 	h.expectReport(t, h.speech.startErr)
 	if h.dictation.Recording(config.ActionDictate) {
@@ -740,11 +740,11 @@ func TestOtherAudioIsLoweredOnlyWhileTheMicrophoneIsOpen(t *testing.T) {
 	h := newHarness(t, false)
 	h.lowerAudio(true)
 
-	h.dictation.Toggle(true)
+	h.dictation.Dictate(true)
 	if seen := h.audio.seen(); !slices.Equal(seen, []string{"lower"}) {
 		t.Fatalf("while recording: %v", seen)
 	}
-	h.dictation.Toggle(false)
+	h.dictation.Dictate(false)
 	if seen := h.audio.seen(); !slices.Equal(seen, []string{"lower", "restore"}) {
 		t.Fatalf("after the release: %v", seen)
 	}
@@ -774,7 +774,7 @@ func TestOtherAudioComesBackWhenTheMicrophoneFails(t *testing.T) {
 	h.lowerAudio(true)
 	h.speech.startErr = errors.New("no microphone")
 
-	h.dictation.Toggle(true)
+	h.dictation.Dictate(true)
 	h.expectReport(t, h.speech.startErr)
 	if seen := h.audio.seen(); !slices.Equal(seen, []string{"lower", "restore"}) {
 		t.Fatalf("got %v", seen)
@@ -784,7 +784,7 @@ func TestOtherAudioComesBackWhenTheMicrophoneFails(t *testing.T) {
 func TestClosingRestoresOtherAudio(t *testing.T) {
 	h := newHarness(t, false)
 	h.lowerAudio(true)
-	h.dictation.Toggle(true)
+	h.dictation.Dictate(true)
 	h.dictation.Close()
 
 	if seen := h.audio.seen(); !slices.Contains(seen, "close") {

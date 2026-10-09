@@ -8,5 +8,5 @@
 [LinuxAndBSD]
   GenericName = "Writing Assistant"
   Categories = ["Utility", "Office"]
-  Comment = "Revise, translate and dictate text anywhere"
-  Keywords = ["text", "revision", "translate", "dictation", "speech", "ai"]
+  Comment = "Revise, translate and dictate text, and ask questions, with AI, anywhere"
+  Keywords = ["text", "revise", "translate", "dictate", "speech", "ask", "ai"]

@@ -1,4 +1,4 @@
-// Encre - AI-powered text revision tool
+// Encre revises, translates and dictates text, and answers questions, with AI, anywhere on your computer.
 // Author: Paradoxe Ng <contact@pngwasi.me>
 // Repository: https://github.com/paradoxe35/encre
 
