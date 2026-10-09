@@ -54,13 +54,11 @@ func FromSettings(name string, settings config.ProviderSettings, apiKey string, 
 	}
 	target.baseURL = strings.TrimRight(target.baseURL, "/")
 
-	// Anthropic has no reasoning parameter to send: its thinking is opt-in.
-	_, optIn := wire.(messages)
 	return &provider{
 		name:         name,
 		protocol:     wire,
 		endpoint:     target,
-		lowReasoning: settings.LowReasoning && !optIn,
+		lowReasoning: settings.LowReasoning,
 	}, nil
 }
 

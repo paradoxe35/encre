@@ -160,14 +160,18 @@ func TestOpenRouterGetsItsOwnShape(t *testing.T) {
 	}
 }
 
-func TestAnthropicNeverRetriesForReasoning(t *testing.T) {
-	server, seen := recordingServer[messagesRequest](t, badRequest)
+func TestClaudeIsAskedForLowEffortAndAnOlderModelIsAskedAgainWithout(t *testing.T) {
+	server, seen := recordingServer[messagesRequest](t, badRequest, reply(`{"content":[{"type":"text","text":"ok"}]}`))
 
-	if _, err := complete(t, build(t, config.BuiltInClaude, server.URL, true)); err == nil {
-		t.Fatal("expected the error to surface")
+	if _, err := complete(t, build(t, config.BuiltInClaude, server.URL, true)); err != nil {
+		t.Fatal(err)
 	}
-	if len(*seen) != 1 {
-		t.Fatalf("a model with no reasoning parameter was retried: %d requests", len(*seen))
+	if len(*seen) != 2 {
+		t.Fatalf("sent %d requests, want the refused effort retried once", len(*seen))
+	}
+	first, retry := (*seen)[0], (*seen)[1]
+	if first.OutputConfig == nil || first.OutputConfig.Effort != "low" || retry.OutputConfig != nil {
+		t.Fatalf("sent %+v then %+v, want low effort then none", first.OutputConfig, retry.OutputConfig)
 	}
 }
 

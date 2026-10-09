@@ -16,14 +16,20 @@ const (
 )
 
 type messagesRequest struct {
-	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"`
-	System      string             `json:"system,omitempty"`
-	Messages    []anthropicMessage `json:"messages"`
-	Tools       []anthropicTool    `json:"tools,omitempty"`
-	ToolChoice  *anthropicChoice   `json:"tool_choice,omitempty"`
-	Temperature float64            `json:"temperature"`
-	Stream      bool               `json:"stream,omitempty"`
+	Model        string             `json:"model"`
+	MaxTokens    int                `json:"max_tokens"`
+	System       string             `json:"system,omitempty"`
+	Messages     []anthropicMessage `json:"messages"`
+	Tools        []anthropicTool    `json:"tools,omitempty"`
+	ToolChoice   *anthropicChoice   `json:"tool_choice,omitempty"`
+	Temperature  float64            `json:"temperature"`
+	Stream       bool               `json:"stream,omitempty"`
+	OutputConfig *anthropicOutput   `json:"output_config,omitempty"`
+}
+
+// Effort covers thinking and text alike; models before Opus 4.5 and Sonnet 4.6 refuse it.
+type anthropicOutput struct {
+	Effort string `json:"effort"`
 }
 
 // anthropicMessage holds text, or the content blocks of tool calls and their results.
@@ -74,7 +80,7 @@ type messagesReply struct {
 
 const anthropicLengthLimit = "max_tokens"
 
-func (messages) request(ctx context.Context, target endpoint, prompt Prompt, stream, _ bool) (*http.Request, error) {
+func (messages) request(ctx context.Context, target endpoint, prompt Prompt, stream, lowReasoning bool) (*http.Request, error) {
 	body := messagesRequest{
 		Model:       target.model,
 		MaxTokens:   anthropicMaxTokens,
@@ -102,6 +108,9 @@ func (messages) request(ctx context.Context, target endpoint, prompt Prompt, str
 			anthropicMessage{Role: "assistant", Content: calls},
 			anthropicMessage{Role: "user", Content: results},
 		)
+	}
+	if lowReasoning {
+		body.OutputConfig = &anthropicOutput{Effort: "low"}
 	}
 	return newJSONRequest(ctx, target.baseURL+"/v1/messages", body, anthropicHeaders(target.apiKey))
 }

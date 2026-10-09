@@ -56,9 +56,8 @@ type ProviderSettings struct {
 	ProviderType string `json:"provider_type,omitempty"`
 	// NoAPIKey suits a model running on this machine. Absent means a key is required.
 	NoAPIKey bool `json:"no_api_key,omitempty"`
-	// LowReasoning asks a reasoning model to think less. Off by default: a model that does not
-	// reason rejects the parameter, and the retry that recovers from it costs a round trip.
-	LowReasoning bool `json:"low_reasoning,omitempty"`
+	// LowReasoning asks a reasoning model to think less. Always written, as it defaults to true.
+	LowReasoning bool `json:"low_reasoning"`
 }
 
 func (s ProviderSettings) RequiresAPIKey() bool {
@@ -133,24 +132,28 @@ func Default() *Config {
 func defaultProviders() map[string]ProviderSettings {
 	return map[string]ProviderSettings{
 		"openai": {
-			BaseURL:     "https://api.openai.com/v1",
-			Model:       "gpt-6-luna",
-			Temperature: 1.0,
+			BaseURL:      "https://api.openai.com/v1",
+			Model:        "gpt-6-luna",
+			Temperature:  1.0,
+			LowReasoning: true,
 		},
 		"claude": {
-			BaseURL:     "https://api.anthropic.com",
-			Model:       "claude-haiku-4-5",
-			Temperature: 1.0,
+			BaseURL:      "https://api.anthropic.com",
+			Model:        "claude-haiku-4-5",
+			Temperature:  1.0,
+			LowReasoning: true,
 		},
 		"gemini": {
-			BaseURL:     "https://generativelanguage.googleapis.com",
-			Model:       "gemini-3.1-flash-lite",
-			Temperature: 1.0,
+			BaseURL:      "https://generativelanguage.googleapis.com",
+			Model:        "gemini-3.1-flash-lite",
+			Temperature:  1.0,
+			LowReasoning: true,
 		},
 		"openrouter": {
-			BaseURL:     "https://openrouter.ai/api/v1",
-			Model:       "openai/gpt-6-luna",
-			Temperature: 1.0,
+			BaseURL:      "https://openrouter.ai/api/v1",
+			Model:        "openai/gpt-6-luna",
+			Temperature:  1.0,
+			LowReasoning: true,
 		},
 	}
 }

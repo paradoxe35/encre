@@ -36,6 +36,7 @@ type MainWindow struct {
 	apiKeyBinding         binding.String
 	modelBinding          binding.String
 	baseURLBinding        binding.String
+	lowReasoningBinding   binding.Bool
 	statusBinding         binding.String
 	startMinimizedBinding binding.Bool
 	startOnLoginBinding   binding.Bool
@@ -140,6 +141,7 @@ func (w *MainWindow) initBindings() {
 	w.apiKeyBinding = binding.NewString()
 	w.modelBinding = binding.NewString()
 	w.baseURLBinding = binding.NewString()
+	w.lowReasoningBinding = binding.NewBool()
 	w.statusBinding = binding.NewString()
 	w.startMinimizedBinding = binding.NewBool()
 	w.startOnLoginBinding = binding.NewBool()
@@ -174,6 +176,7 @@ func (w *MainWindow) initBindings() {
 
 	// One listener per binding covers both directions without Bind overwriting it.
 	w.startMinimizedBinding.AddListener(binding.NewDataListener(w.markDirty))
+	w.lowReasoningBinding.AddListener(binding.NewDataListener(w.markDirty))
 	w.voiceIndicator.AddListener(binding.NewDataListener(w.markDirty))
 	w.textIndicator.AddListener(binding.NewDataListener(w.markDirty))
 	w.startOnLoginBinding.AddListener(binding.NewDataListener(w.markDirty))

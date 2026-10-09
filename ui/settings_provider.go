@@ -24,6 +24,7 @@ func (w *MainWindow) loadProviderSettings(provider string) {
 	apiKey, _ := w.config.GetAPIKey(provider)
 	w.apiKeyBinding.Set(apiKey)
 	w.modelBinding.Set(settings.Model)
+	w.lowReasoningBinding.Set(settings.LowReasoning)
 
 	if w.config.IsCustomProvider(provider) {
 		w.baseURLBinding.Set(settings.BaseURL)
@@ -95,6 +96,9 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	browseModels.OnTapped = func() { w.browseProviderModels(w.statusProgress(browseModels)) }
 	modelRow := container.NewBorder(nil, nil, nil, browseModels, modelEntry)
 
+	lowReasoning := widget.NewCheck("Ask reasoning models to think less", nil)
+	lowReasoning.Bind(w.lowReasoningBinding)
+
 	// Only shown for custom providers, so the placeholder can say so outright.
 	baseURLLabel := widget.NewLabel("Base URL")
 	baseURLLabel.TextStyle.Bold = true
@@ -115,6 +119,7 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 		widget.NewSeparator(),
 		modelLabel,
 		modelRow,
+		lowReasoning,
 		w.baseURLContainer,
 	)
 }
@@ -267,8 +272,6 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 	})
 	requiresKey.SetChecked(true)
 
-	lowReasoning := widget.NewCheck("Ask reasoning models to think less", nil)
-
 	modelEntry := widget.NewEntry()
 	modelEntry.PlaceHolder = "Optional, e.g. gpt-4o or llama3"
 
@@ -289,7 +292,7 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 		widget.NewFormItem("Name", nameEntry),
 		widget.NewFormItem("Base URL", baseURLEntry),
 		widget.NewFormItem("API key", apiKeyEntry),
-		widget.NewFormItem("", container.NewVBox(requiresKey, lowReasoning)),
+		widget.NewFormItem("", requiresKey),
 		widget.NewFormItem("Model", container.NewBorder(nil, nil, nil, fetchModels, modelEntry)),
 		widget.NewFormItem("", fetchReport),
 	)
@@ -317,7 +320,7 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 			Temperature:  1.0,
 			ProviderType: config.ProviderTypeOpenAICompatible,
 			NoAPIKey:     !requiresKey.Checked,
-			LowReasoning: lowReasoning.Checked,
+			LowReasoning: true,
 		}
 
 		if err := w.config.AddCustomProvider(name, settings); err != nil {

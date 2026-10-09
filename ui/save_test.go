@@ -41,6 +41,7 @@ func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 	w.modelBinding = binding.NewString()
 	w.modelBinding.Set(cfg.GetProviderSettings(config.BuiltInOpenAI).Model)
 	w.baseURLBinding = binding.NewString() // built-ins leave this blank; see loadProviderSettings
+	w.lowReasoningBinding = binding.NewBool()
 
 	editor := &operationEditor{
 		prompt:   widget.NewMultiLineEntry(),
@@ -88,6 +89,7 @@ func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
 	w.modelBinding = binding.NewString()
 	w.modelBinding.Set(cfg.GetProviderSettings(config.BuiltInOpenAI).Model)
 	w.baseURLBinding = binding.NewString()
+	w.lowReasoningBinding = binding.NewBool()
 
 	w.hotkeyBindings = make(map[config.ActionKind]binding.String, len(config.ActionOrder))
 	w.enables = make(map[config.ActionKind]*widget.Check, len(config.ActionOrder))
@@ -171,5 +173,39 @@ func TestSavingAskKeepsItsSettingsAndRefusesBadOnes(t *testing.T) {
 	editor.ask.memory.SetText("101")
 	if err := w.applyActionSettings(); err == nil {
 		t.Error("101 remembered messages were saved, past the maximum of 100")
+	}
+}
+
+func TestThinkingLessIsOnByDefaultAndSavedPerProvider(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	utils.EnsureAppHomeDir()
+
+	cfg := config.Default()
+	w := &MainWindow{config: cfg}
+	w.providerBinding = binding.NewString()
+	w.apiKeyBinding = binding.NewString()
+	w.modelBinding = binding.NewString()
+	w.baseURLBinding = binding.NewString()
+	w.lowReasoningBinding = binding.NewBool()
+	thinksLess := func(provider string) bool {
+		w.providerBinding.Set(provider)
+		w.loadProviderSettings(provider)
+		low, _ := w.lowReasoningBinding.Get()
+		return low
+	}
+
+	if !thinksLess(config.BuiltInOpenAI) {
+		t.Fatal("a provider should ask reasoning models to think less by default")
+	}
+	w.lowReasoningBinding.Set(false)
+	if err := w.applyProviderSettings(); err != nil {
+		t.Fatal(err)
+	}
+
+	if thinksLess(config.BuiltInOpenAI) {
+		t.Error("unticking was not kept for the provider")
+	}
+	if !thinksLess(config.BuiltInGemini) {
+		t.Error("unticking one provider changed another")
 	}
 }

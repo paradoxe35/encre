@@ -64,6 +64,7 @@ func (w *MainWindow) applyProviderSettings() error {
 	apiKey, _ := w.apiKeyBinding.Get()
 	model, _ := w.modelBinding.Get()
 	baseURL, _ := w.baseURLBinding.Get()
+	lowReasoning, _ := w.lowReasoningBinding.Get()
 
 	existing := w.config.GetProviderSettings(provider)
 	isCustom := w.config.IsCustomProvider(provider)
@@ -72,9 +73,10 @@ func (w *MainWindow) applyProviderSettings() error {
 		return errors.New("base URL is required for custom providers")
 	}
 
-	// The form only owns the model, and the base URL for custom providers; the rest is kept as saved.
+	// The form owns the model, reasoning and, for custom providers, the base URL; the rest is kept as saved.
 	settings := existing
 	settings.Model = model
+	settings.LowReasoning = lowReasoning
 	if isCustom {
 		settings.BaseURL = baseURL
 	}

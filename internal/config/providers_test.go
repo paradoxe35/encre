@@ -120,3 +120,26 @@ func count(names []string, name string) int {
 	}
 	return n
 }
+
+func TestThinkingLessIsOnByDefaultAndTurningItOffSurvivesASave(t *testing.T) {
+	cfg := Default()
+	if !cfg.GetProviderSettings(BuiltInOpenAI).LowReasoning {
+		t.Fatal("a provider should ask reasoning models to think less by default")
+	}
+
+	settings := cfg.GetProviderSettings(BuiltInOpenAI)
+	settings.LowReasoning = false
+	cfg.SetProviderSettings(BuiltInOpenAI, settings)
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := loaded(t, string(raw))
+	if reloaded.GetProviderSettings(BuiltInOpenAI).LowReasoning {
+		t.Error("turning it off was lost on reload")
+	}
+	if !reloaded.GetProviderSettings(BuiltInGemini).LowReasoning {
+		t.Error("another provider lost its default on reload")
+	}
+}
