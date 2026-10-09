@@ -71,6 +71,26 @@ func TestEachProtocolStreams(t *testing.T) {
 	}
 }
 
+func TestEveryEventOfAStreamCountsAsActivityButAnError(t *testing.T) {
+	server := httptest.NewServer(sse(
+		`{"choices":[{"delta":{"content":"","reasoning":"Thinking"}}]}`,
+		`{"choices":[{"delta":{"content":"","reasoning":" hard"}}]}`,
+		`{"choices":[{"delta":{"content":"Bon"}}]}`,
+		`{"error":{"message":"upstream overloaded"}}`,
+	))
+	defer server.Close()
+	p, _ := FromSettings(config.BuiltInOpenRouter, config.ProviderSettings{BaseURL: server.URL}, "k", false)
+
+	events := 0
+	ctx := WithActivity(context.Background(), func() { events++ })
+	if _, err := p.Stream(ctx, Prompt{Text: "t"}, nil); err == nil {
+		t.Fatal("the error event went unreported")
+	}
+	if events != 3 {
+		t.Fatalf("counted %d events, want the 3 before the error", events)
+	}
+}
+
 func TestAnErrorMidStreamKeepsWhatArrived(t *testing.T) {
 	server := httptest.NewServer(sse(
 		`{"choices":[{"delta":{"content":"Bon"}}]}`,

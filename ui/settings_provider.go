@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -175,13 +176,7 @@ func (w *MainWindow) testAPIConnection(report progress) {
 	report.Busy("Testing the connection…")
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		_, err := testProvider.Complete(ctx, ai.Prompt{
-			System: "Reply with 'Connection successful' if you receive this message.",
-			Text:   "Hello",
-		})
+		err := answers(testProvider, 10*time.Second)
 
 		fyne.Do(func() {
 			if err != nil {
@@ -194,6 +189,29 @@ func (w *MainWindow) testAPIConnection(report progress) {
 			report.Done("Connection successful")
 		})
 	}()
+}
+
+var errAnswering = errors.New("answering")
+
+// answers waits only for the reply to begin: a reasoning model can think for a minute before its
+// first word, and the server streaming at all proves the address, key and model.
+func answers(provider ai.Provider, wait time.Duration) error {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	silence := time.AfterFunc(wait, func() { cancel(context.DeadlineExceeded) })
+	defer silence.Stop()
+
+	ctx = ai.WithActivity(ctx, func() { cancel(errAnswering) })
+	_, err := provider.Stream(ctx, ai.Prompt{System: "Reply with OK.", Text: "Hello"}, nil)
+	switch cause := context.Cause(ctx); {
+	case errors.Is(cause, errAnswering):
+		return nil
+	case errors.Is(cause, context.DeadlineExceeded):
+		return fmt.Errorf("no answer within %s", wait)
+	case err == nil:
+		return errors.New("the server sent nothing back - check the base URL")
+	}
+	return err
 }
 
 // Builds the provider from what is on screen, so settings can be tried before they are saved.

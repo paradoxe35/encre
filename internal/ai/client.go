@@ -90,8 +90,13 @@ func (p *provider) stream(ctx context.Context, prompt Prompt, onText func(string
 		defer resp.Body.Close()
 
 		streamed := &turn{onText: onText}
+		onEvent := activity(ctx)
 		err = readEvents(resp.Body, func(data []byte) (bool, error) {
-			return p.protocol.event(data, streamed)
+			done, err := p.protocol.event(data, streamed)
+			if err == nil {
+				onEvent()
+			}
+			return done, err
 		})
 		reply = streamed.reply()
 		if err != nil {

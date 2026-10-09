@@ -3,12 +3,28 @@ package ai
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"strings"
 )
 
 const maxEventSize = 1 << 20
+
+type activityKey struct{}
+
+// WithActivity has onEvent called for every event a streamed reply sends, thinking included, so
+// a caller can time silence: a reasoning model can think for a minute before it writes a word.
+func WithActivity(ctx context.Context, onEvent func()) context.Context {
+	return context.WithValue(ctx, activityKey{}, onEvent)
+}
+
+func activity(ctx context.Context) func() {
+	if onEvent, ok := ctx.Value(activityKey{}).(func()); ok {
+		return onEvent
+	}
+	return func() {}
+}
 
 // readEvents hands the data of each server-sent event to handle, until handle reports the stream
 // done or the body ends. Comments and fields other than data are skipped.
