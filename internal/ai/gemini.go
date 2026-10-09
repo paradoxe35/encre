@@ -12,9 +12,39 @@ import (
 type generateContent struct{}
 
 type geminiRequest struct {
-	SystemInstruction *geminiContent  `json:"systemInstruction,omitempty"`
-	Contents          []geminiContent `json:"contents"`
-	GenerationConfig  geminiConfig    `json:"generationConfig"`
+	SystemInstruction *geminiContent    `json:"systemInstruction,omitempty"`
+	Contents          []geminiContent   `json:"contents"`
+	Tools             []geminiTools     `json:"tools,omitempty"`
+	ToolConfig        *geminiToolConfig `json:"toolConfig,omitempty"`
+	GenerationConfig  geminiConfig      `json:"generationConfig"`
+}
+
+type geminiToolConfig struct {
+	FunctionCallingConfig struct {
+		Mode string `json:"mode"`
+	} `json:"functionCallingConfig"`
+}
+
+type geminiTools struct {
+	FunctionDeclarations []geminiFunction `json:"functionDeclarations"`
+}
+
+type geminiFunction struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+type geminiCall struct {
+	ID   string          `json:"id,omitempty"`
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args,omitempty"`
+}
+
+type geminiResult struct {
+	ID       string            `json:"id,omitempty"`
+	Name     string            `json:"name"`
+	Response map[string]string `json:"response"`
 }
 
 type geminiContent struct {
@@ -23,8 +53,11 @@ type geminiContent struct {
 }
 
 type geminiPart struct {
-	Text    string `json:"text"`
-	Thought bool   `json:"thought,omitempty"`
+	Text             string        `json:"text,omitempty"`
+	Thought          bool          `json:"thought,omitempty"`
+	FunctionCall     *geminiCall   `json:"functionCall,omitempty"`
+	FunctionResponse *geminiResult `json:"functionResponse,omitempty"`
+	ThoughtSignature string        `json:"thoughtSignature,omitempty"`
 }
 
 type geminiConfig struct {
@@ -50,6 +83,34 @@ func (generateContent) request(ctx context.Context, target endpoint, prompt Prom
 		SystemInstruction: &geminiContent{Parts: []geminiPart{{Text: prompt.System}}},
 		Contents:          geminiContents(prompt.conversation("model")),
 		GenerationConfig:  geminiConfig{Temperature: target.temperature},
+	}
+	if len(prompt.Tools) > 0 {
+		declarations := make([]geminiFunction, len(prompt.Tools))
+		for i, tool := range prompt.Tools {
+			declarations[i] = geminiFunction{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters}
+		}
+		body.Tools = []geminiTools{{FunctionDeclarations: declarations}}
+		if prompt.NoMoreCalls {
+			body.ToolConfig = &geminiToolConfig{}
+			body.ToolConfig.FunctionCallingConfig.Mode = "NONE"
+		}
+	}
+	for _, step := range prompt.Steps {
+		calls := make([]geminiPart, len(step.Calls))
+		results := make([]geminiPart, len(step.Results))
+		for i, call := range step.Calls {
+			calls[i] = geminiPart{
+				FunctionCall:     &geminiCall{ID: call.ID, Name: call.Name, Args: call.arguments()},
+				ThoughtSignature: call.signature,
+			}
+			results[i] = geminiPart{FunctionResponse: &geminiResult{
+				ID: call.ID, Name: call.Name, Response: map[string]string{"result": step.Results[i]},
+			}}
+		}
+		body.Contents = append(body.Contents,
+			geminiContent{Role: "model", Parts: calls},
+			geminiContent{Role: "user", Parts: results},
+		)
 	}
 	if lowReasoning {
 		body.GenerationConfig.ThinkingConfig = lowThinking(target.model)
@@ -91,9 +152,33 @@ func (generateContent) decode(body []byte) (string, error) {
 	return text, err
 }
 
-func (generateContent) event(data []byte) (string, bool, error) {
-	text, err := geminiText(data)
-	return text, false, err
+func (generateContent) event(data []byte, reply *turn) (bool, error) {
+	var chunk geminiReply
+	if err := json.Unmarshal(data, &chunk); err != nil {
+		return false, err
+	}
+	if err := chunk.Error.err(); err != nil {
+		return false, err
+	}
+	if len(chunk.Candidates) == 0 {
+		return false, nil
+	}
+	candidate := chunk.Candidates[0]
+	for _, part := range candidate.Content.Parts {
+		switch {
+		case part.FunctionCall != nil:
+			reply.add(ToolCall{
+				ID: part.FunctionCall.ID, Name: part.FunctionCall.Name,
+				Arguments: part.FunctionCall.Args, signature: part.ThoughtSignature,
+			})
+		case !part.Thought:
+			reply.write(part.Text)
+		}
+	}
+	if candidate.FinishReason == "MAX_TOKENS" {
+		return false, errLengthLimit
+	}
+	return false, nil
 }
 
 func geminiText(data []byte) (string, error) {

@@ -16,12 +16,39 @@ const (
 )
 
 type messagesRequest struct {
-	Model       string        `json:"model"`
-	MaxTokens   int           `json:"max_tokens"`
-	System      string        `json:"system,omitempty"`
-	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
-	Stream      bool          `json:"stream,omitempty"`
+	Model       string             `json:"model"`
+	MaxTokens   int                `json:"max_tokens"`
+	System      string             `json:"system,omitempty"`
+	Messages    []anthropicMessage `json:"messages"`
+	Tools       []anthropicTool    `json:"tools,omitempty"`
+	ToolChoice  *anthropicChoice   `json:"tool_choice,omitempty"`
+	Temperature float64            `json:"temperature"`
+	Stream      bool               `json:"stream,omitempty"`
+}
+
+// anthropicMessage holds text, or the content blocks of tool calls and their results.
+type anthropicMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"`
+}
+
+type anthropicBlock struct {
+	Type      string          `json:"type"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
+}
+
+type anthropicChoice struct {
+	Type string `json:"type"`
+}
+
+type anthropicTool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"input_schema"`
 }
 
 type textBlock struct {
@@ -31,15 +58,18 @@ type textBlock struct {
 
 type messagesDelta struct {
 	textBlock
-	StopReason string `json:"stop_reason"`
+	PartialJSON string `json:"partial_json"`
+	StopReason  string `json:"stop_reason"`
 }
 
 type messagesReply struct {
-	Type       string        `json:"type"`
-	Content    []textBlock   `json:"content"`
-	Delta      messagesDelta `json:"delta"`
-	StopReason string        `json:"stop_reason"`
-	Error      *replyError   `json:"error"`
+	Type         string         `json:"type"`
+	Index        int            `json:"index"`
+	ContentBlock anthropicBlock `json:"content_block"`
+	Content      []textBlock    `json:"content"`
+	Delta        messagesDelta  `json:"delta"`
+	StopReason   string         `json:"stop_reason"`
+	Error        *replyError    `json:"error"`
 }
 
 const anthropicLengthLimit = "max_tokens"
@@ -49,9 +79,29 @@ func (messages) request(ctx context.Context, target endpoint, prompt Prompt, str
 		Model:       target.model,
 		MaxTokens:   anthropicMaxTokens,
 		System:      prompt.System,
-		Messages:    prompt.conversation("assistant"),
 		Temperature: target.temperature,
 		Stream:      stream,
+	}
+	for _, message := range prompt.conversation("assistant") {
+		body.Messages = append(body.Messages, anthropicMessage{Role: message.Role, Content: message.Content})
+	}
+	for _, tool := range prompt.Tools {
+		body.Tools = append(body.Tools, anthropicTool{Name: tool.Name, Description: tool.Description, InputSchema: tool.Parameters})
+	}
+	if prompt.NoMoreCalls && len(body.Tools) > 0 {
+		body.ToolChoice = &anthropicChoice{Type: "none"}
+	}
+	for _, step := range prompt.Steps {
+		calls := make([]anthropicBlock, len(step.Calls))
+		results := make([]anthropicBlock, len(step.Results))
+		for i, call := range step.Calls {
+			calls[i] = anthropicBlock{Type: "tool_use", ID: call.ID, Name: call.Name, Input: call.arguments()}
+			results[i] = anthropicBlock{Type: "tool_result", ToolUseID: call.ID, Content: step.Results[i]}
+		}
+		body.Messages = append(body.Messages,
+			anthropicMessage{Role: "assistant", Content: calls},
+			anthropicMessage{Role: "user", Content: results},
+		)
 	}
 	return newJSONRequest(ctx, target.baseURL+"/v1/messages", body, anthropicHeaders(target.apiKey))
 }
@@ -87,25 +137,34 @@ func (messages) decode(body []byte) (string, error) {
 	return text.String(), nil
 }
 
-func (messages) event(data []byte) (string, bool, error) {
-	var reply messagesReply
-	if err := json.Unmarshal(data, &reply); err != nil {
-		return "", false, err
+func (messages) event(data []byte, reply *turn) (bool, error) {
+	var event messagesReply
+	if err := json.Unmarshal(data, &event); err != nil {
+		return false, err
 	}
 
-	switch reply.Type {
+	switch event.Type {
+	case "content_block_start":
+		if event.ContentBlock.Type == "tool_use" {
+			call := reply.call(event.Index)
+			call.ID, call.Name = event.ContentBlock.ID, event.ContentBlock.Name
+		}
 	case "content_block_delta":
-		if reply.Delta.Type == "text_delta" {
-			return reply.Delta.Text, false, nil
+		switch event.Delta.Type {
+		case "text_delta":
+			reply.write(event.Delta.Text)
+		case "input_json_delta":
+			call := reply.call(event.Index)
+			call.Arguments = append(call.Arguments, event.Delta.PartialJSON...)
 		}
 	case "message_delta":
-		if reply.Delta.StopReason == anthropicLengthLimit {
-			return "", false, errLengthLimit
+		if event.Delta.StopReason == anthropicLengthLimit {
+			return false, errLengthLimit
 		}
 	case "message_stop":
-		return "", true, nil
+		return true, nil
 	case "error":
-		return "", false, reply.Error.err()
+		return false, event.Error.err()
 	}
-	return "", false, nil
+	return false, nil
 }

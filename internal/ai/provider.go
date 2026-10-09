@@ -7,10 +7,17 @@ import (
 )
 
 // Prompt is one request: the instructions, the earlier turns of the conversation, and the text.
+// Context goes with the text rather than the instructions, which then stay the same from one
+// request to the next. Tools are what the model may call, unless NoMoreCalls says it must answer
+// now; Steps are the calls it already made and what they returned.
 type Prompt struct {
-	System  string
-	History []Turn
-	Text    string
+	System      string
+	History     []Turn
+	Text        string
+	Context     string
+	Tools       []Tool
+	Steps       []Step
+	NoMoreCalls bool
 }
 
 type Turn struct {
@@ -27,7 +34,11 @@ func (p Prompt) conversation(assistant string) []chatMessage {
 			chatMessage{Role: assistant, Content: turn.Answer},
 		)
 	}
-	return append(messages, chatMessage{Role: "user", Content: p.Text})
+	text := p.Text
+	if p.Context != "" {
+		text += "\n\n" + p.Context
+	}
+	return append(messages, chatMessage{Role: "user", Content: text})
 }
 
 type Provider interface {

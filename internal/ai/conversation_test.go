@@ -27,7 +27,11 @@ func TestEachProtocolSendsTheEarlierTurnsBeforeTheQuestion(t *testing.T) {
 		{"anthropic", messages{}, func(body []byte) []string {
 			var request messagesRequest
 			json.Unmarshal(body, &request)
-			return roles(request.Messages)
+			var got []string
+			for _, message := range request.Messages {
+				got = append(got, message.Role+": "+message.Content.(string))
+			}
+			return got
 		}},
 		{"gemini", generateContent{}, func(body []byte) []string {
 			var request geminiRequest

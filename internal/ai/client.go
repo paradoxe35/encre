@@ -15,8 +15,8 @@ import (
 type protocol interface {
 	request(ctx context.Context, target endpoint, prompt Prompt, stream, lowReasoning bool) (*http.Request, error)
 	decode(body []byte) (string, error)
-	// event reads one streamed event: its text, and whether the stream has ended.
-	event(data []byte) (text string, done bool, err error)
+	// event reads one streamed event into the reply, and reports whether the stream has ended.
+	event(data []byte, reply *turn) (done bool, err error)
 }
 
 type endpoint struct {
@@ -70,27 +70,36 @@ func (p *provider) Complete(ctx context.Context, prompt Prompt) (string, error) 
 }
 
 func (p *provider) Stream(ctx context.Context, prompt Prompt, onText func(string)) (string, error) {
-	return p.withReasoning(func(lowReasoning bool) (string, error) {
+	reply, err := p.stream(ctx, prompt, onText)
+	return reply.Text, err
+}
+
+func (p *provider) Turn(ctx context.Context, prompt Prompt, onText func(string)) (Reply, error) {
+	return withToolsFallback(p.endpoint.baseURL, p.endpoint.model, prompt, func(prompt Prompt) (Reply, error) {
+		return p.stream(ctx, prompt, onText)
+	})
+}
+
+func (p *provider) stream(ctx context.Context, prompt Prompt, onText func(string)) (Reply, error) {
+	var reply Reply
+	_, err := p.withReasoning(func(lowReasoning bool) (string, error) {
 		resp, err := p.send(ctx, prompt, true, lowReasoning)
 		if err != nil {
 			return "", err
 		}
 		defer resp.Body.Close()
 
-		var reply strings.Builder
+		streamed := &turn{onText: onText}
 		err = readEvents(resp.Body, func(data []byte) (bool, error) {
-			text, done, err := p.protocol.event(data)
-			if text != "" {
-				reply.WriteString(text)
-				onText(text)
-			}
-			return done, err
+			return p.protocol.event(data, streamed)
 		})
+		reply = streamed.reply()
 		if err != nil {
-			return reply.String(), fmt.Errorf("%s: %w", p.name, err)
+			return reply.Text, fmt.Errorf("%s: %w", p.name, err)
 		}
-		return reply.String(), nil
+		return reply.Text, nil
 	})
+	return reply, err
 }
 
 func (p *provider) withReasoning(attempt func(lowReasoning bool) (string, error)) (string, error) {

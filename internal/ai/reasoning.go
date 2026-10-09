@@ -19,7 +19,7 @@ func withReasoningFallback(endpoint, model string, wanted bool, send func(lowRea
 	}
 
 	result, err := send(true)
-	if err == nil || !refusedReasoning(err) {
+	if err == nil || !refusedRequest(err) {
 		return result, err
 	}
 
@@ -32,7 +32,8 @@ func withReasoningFallback(endpoint, model string, wanted bool, send func(lowRea
 	return result, nil
 }
 
-func refusedReasoning(err error) bool {
+// refusedRequest is a 400 or 422, which providers word differently.
+func refusedRequest(err error) bool {
 	apiErr, ok := errors.AsType[*APIError](err)
 	return ok && (apiErr.StatusCode == 400 || apiErr.StatusCode == 422)
 }
