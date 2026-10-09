@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use transcribe_cpp::{Feature, RunOptions, StreamOptions};
 
 use super::audio::SAMPLE_RATE;
-use super::speech::Speech;
+use super::speech::{Speech, halves};
 use super::take::{Live, Recognizer};
 
 /// Models without long-form support decode one window and quietly drop the rest
@@ -14,6 +14,9 @@ const PIECE_SECS: usize = 30;
 /// A piece that starts or ends mid-word can decode to nothing; a little silence on
 /// both sides keeps the decoder honest. One side alone is not enough.
 const SILENCE_PAD_SECS: f32 = 0.5;
+
+/// A truncated piece is halved and retried down to this length; shorter, its partial text is kept.
+const MIN_RETRY_SECS: usize = 4;
 
 /// Keeps the session resident between takes: loading costs seconds, a take costs
 /// milliseconds.
@@ -91,14 +94,75 @@ impl Engine {
         }
 
         let options = run_options(language);
-        join(pieces.into_iter().map(|piece| {
-            loaded
-                .session
-                .run(&padded(piece), &options)
-                .map(|out| out.text.trim().to_owned())
-                .map_err(|e| anyhow!("transcription failed: {e}"))
-        }))
+        let session = &mut loaded.session;
+        let mut decode = |piece: &[f32]| run_piece(session, piece, &options);
+        join(
+            pieces
+                .into_iter()
+                .map(|piece| transcribe_piece(&mut decode, piece)),
+        )
     }
+}
+
+enum Decoded {
+    Text(String),
+    /// The decode ran past the model's output budget, usually by repeating itself.
+    Truncated(String),
+}
+
+fn run_piece(
+    session: &mut transcribe_cpp::Session,
+    piece: &[f32],
+    options: &RunOptions,
+) -> Result<Decoded> {
+    match session.run(&padded(piece), options) {
+        Ok(out) => Ok(Decoded::Text(out.text.trim().to_owned())),
+        Err(error @ transcribe_cpp::Error::OutputTruncated { .. }) => {
+            tracing::warn!(
+                seconds = piece.len() / SAMPLE_RATE as usize,
+                "a piece ran past the output budget"
+            );
+            let partial = error.partial().map(|t| t.text.trim().to_owned());
+            Ok(Decoded::Truncated(partial.unwrap_or_default()))
+        }
+        Err(error) => Err(anyhow!("transcription failed: {error}")),
+    }
+}
+
+/// A truncated piece is split at its quietest point and retried, as shorter audio fits the budget
+/// and rarely loops; too short to split, it keeps the text it reached.
+fn transcribe_piece(
+    decode: &mut impl FnMut(&[f32]) -> Result<Decoded>,
+    piece: &[f32],
+) -> Result<String> {
+    match decode(piece)? {
+        Decoded::Text(text) => Ok(text),
+        Decoded::Truncated(partial) if piece.len() < 2 * MIN_RETRY_SECS * SAMPLE_RATE as usize => {
+            Ok(without_repetition(&partial))
+        }
+        Decoded::Truncated(_) => join(
+            halves(piece)
+                .into_iter()
+                .map(|half| transcribe_piece(decode, half)),
+        ),
+    }
+}
+
+/// Drops a phrase repeated at the end of the text, keeping it once: a decoder stuck in a loop
+/// says the same words until its budget runs out.
+fn without_repetition(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    for phrase in 1..=words.len() / 3 {
+        let end = &words[words.len() - phrase..];
+        let repeats = words
+            .rchunks_exact(phrase)
+            .take_while(|chunk| *chunk == end)
+            .count();
+        if repeats >= 3 {
+            return words[..words.len() - (repeats - 1) * phrase].join(" ");
+        }
+    }
+    words.join(" ")
 }
 
 fn piece_limit(long_form: bool) -> usize {
@@ -176,6 +240,65 @@ impl Live for transcribe_cpp::Stream<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn seconds(secs: f32) -> Vec<f32> {
+        vec![0.1; (secs * SAMPLE_RATE as f32) as usize]
+    }
+
+    #[test]
+    fn a_truncated_piece_is_retried_in_halves_until_it_fits() {
+        let mut decoded = Vec::new();
+        let mut decode = |piece: &[f32]| {
+            if piece.len() > 10 * SAMPLE_RATE as usize {
+                return Ok(Decoded::Truncated("so so so so".into()));
+            }
+            decoded.push(piece.len());
+            Ok(Decoded::Text(format!("part{}", decoded.len())))
+        };
+
+        let take = seconds(30.0);
+        let text = transcribe_piece(&mut decode, &take).unwrap();
+        let expected: Vec<String> = (1..=decoded.len()).map(|n| format!("part{n}")).collect();
+        assert_eq!(text, expected.join(" "));
+        assert!(decoded.len() > 1);
+        assert!(decoded.iter().all(|&len| len <= 10 * SAMPLE_RATE as usize));
+        assert_eq!(
+            decoded.iter().sum::<usize>(),
+            take.len(),
+            "every sample is decoded once"
+        );
+    }
+
+    #[test]
+    fn a_short_truncated_piece_keeps_what_it_said_without_the_loop() {
+        let mut decode = |_: &[f32]| {
+            Ok(Decoded::Truncated(
+                "what is the weather in paris paris paris paris".into(),
+            ))
+        };
+        let text = transcribe_piece(&mut decode, &seconds(6.0)).unwrap();
+        assert_eq!(text, "what is the weather in paris");
+    }
+
+    #[test]
+    fn a_failed_piece_still_fails_the_take() {
+        let mut decode = |_: &[f32]| Err(anyhow!("decoder crashed"));
+        assert!(transcribe_piece(&mut decode, &seconds(30.0)).is_err());
+    }
+
+    #[test]
+    fn only_a_phrase_repeated_three_times_or_more_is_a_loop() {
+        assert_eq!(
+            without_repetition("thank you thank you thank you thank you"),
+            "thank you"
+        );
+        assert_eq!(
+            without_repetition("it was very very good"),
+            "it was very very good"
+        );
+        assert_eq!(without_repetition("one two three"), "one two three");
+        assert_eq!(without_repetition(""), "");
+    }
 
     #[test]
     fn long_form_models_get_the_whole_take() {

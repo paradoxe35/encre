@@ -125,6 +125,12 @@ fn quiet_cuts(samples: &[f32], max: usize) -> Vec<&[f32]> {
 
 /// The middle of the quietest slice in the window ending at `target`, or `target` itself
 /// when the window is too short to judge.
+/// Splits at the quietest moment before the middle, so the second half does not start mid-word.
+pub(super) fn halves(samples: &[f32]) -> [&[f32]; 2] {
+    let (first, second) = samples.split_at(quietest_before(samples, samples.len() / 2));
+    [first, second]
+}
+
 fn quietest_before(samples: &[f32], target: usize) -> usize {
     let from = target.saturating_sub(SEARCH_WINDOW);
     if target - from < SLICE {
