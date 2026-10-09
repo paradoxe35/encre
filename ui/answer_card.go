@@ -37,7 +37,6 @@ type AnswerCard struct {
 	app     fyne.App
 	window  fyne.Window
 	visible bool
-	typing  bool
 	onAsk   func(question string)
 
 	// style is the window's; wanted is the one set, which waits for an open card to close.
@@ -165,7 +164,6 @@ func (c *AnswerCard) prompt() {
 		c.session = c.sessions.Add(1)
 		c.question, c.text, c.failure, c.done, c.stop = "", "", "", true, nil
 	}
-	c.typing = true
 	c.show()
 	c.window.Canvas().Focus(c.input)
 }
@@ -176,10 +174,6 @@ func (c *AnswerCard) open(id uint64, question string, stop func()) {
 	}
 	if !c.done && c.stop != nil {
 		c.stop()
-	}
-	// A spoken question is answered without the input; Prompt brings it in for a follow-up.
-	if !c.visible {
-		c.typing = false
 	}
 	c.session = id
 	c.question, c.text, c.failure, c.status, c.done, c.stop = question, "", "", "", false, stop
@@ -312,8 +306,6 @@ func (c *AnswerCard) render() {
 		c.reading.Show()
 	}
 	setVisible(c.copy, c.text != "")
-	setVisible(c.input, c.typing)
-	setVisible(c.send, c.typing)
 
 	if size := c.fit(); size != c.target {
 		c.resizeTo(size)

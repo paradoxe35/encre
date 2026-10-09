@@ -288,12 +288,12 @@ func TestRowsBreakBetweenWords(t *testing.T) {
 	}
 }
 
-func TestASpokenAnswerOpensWithoutTheInput(t *testing.T) {
+func TestASpokenAnswerOffersTheInputForAFollowUp(t *testing.T) {
 	card, _ := newCard(t)
 	answered(card, "spoken question", "Answer.")
 
-	if card.input.Visible() || card.send.Visible() {
-		t.Fatal("a voice answer shows the typing input")
+	if !card.input.Visible() || !card.send.Visible() {
+		t.Fatal("a voice answer hides the input")
 	}
 	if !card.copy.Visible() {
 		t.Fatal("a finished answer offers nothing to copy")
