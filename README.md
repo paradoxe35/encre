@@ -106,7 +106,7 @@ Only Revise selection and Revise everything are on at first. Switch the others o
 
 Hold the Dictate hotkey, talk, release: the transcript is typed at your cursor. To press once to start and again to stop instead, set `push_to_talk` to `false` for it in `config.json`.
 
-- Speech recognition runs **locally by default**, so audio never leaves your machine. Choose from 70+ speech models (Whisper, Parakeet, Moonshine, Voxtral and others), fastest on your machine first; some transcribe while you speak
+- Speech recognition runs **locally by default**, so audio never leaves your machine. Choose from about 70 speech models (Whisper, Parakeet, Moonshine, Voxtral and others), fastest on your machine first; some transcribe while you speak
 - Drop your own `.gguf` or `.bin` into `~/.encre/models` and it shows up in the list
 - Or use a hosted service: OpenAI, Groq, or anything OpenAI-compatible
 - Optionally clean the transcript up with your AI provider before it's typed

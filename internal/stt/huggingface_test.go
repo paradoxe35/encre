@@ -91,7 +91,7 @@ func infoJSON(languages any, meta string) string {
 	if meta == "" {
 		meta = "{}"
 	}
-	return fmt.Sprintf(`{"sha":%q,"cardData":{"language":%s,"license":"apache-2.0","transcribe_cpp":%s}}`, fakeSHA, langs, meta)
+	return fmt.Sprintf(`{"sha":%q,"gguf":{"architecture":"whisper"},"cardData":{"language":%s,"license":"apache-2.0","transcribe_cpp":%s}}`, fakeSHA, langs, meta)
 }
 
 func lfsFile(path string, size int64, sum string) string {
@@ -626,4 +626,22 @@ func TestSchedulerRefreshesWhileStaleAndStops(t *testing.T) {
 	startRefreshing(time.Hour)
 	StopRefreshing()
 	StopRefreshing()
+}
+
+func TestFetchCatalogLeavesOutModelsTheLibraryCannotTranscribeWith(t *testing.T) {
+	withArchitecture := func(architecture string) string {
+		return strings.Replace(infoJSON([]string{"en"}, ""), `"architecture":"whisper"`, `"architecture":"`+architecture+`"`, 1)
+	}
+	f := newFakeHub()
+	f.add("handy-computer/whisper-tiny-gguf", withArchitecture("whisper"), treeJSON(lfsFile("whisper-tiny-Q8_0.gguf", 40<<20, sumFor("whisper"))))
+	f.add("handy-computer/granite-turbo-gguf", withArchitecture("granite_speech5_ctc"), treeJSON(lfsFile("granite-turbo-Q8_0.gguf", 500<<20, sumFor("granite"))))
+	f.add("handy-computer/sortformer-gguf", withArchitecture("sortformer"), treeJSON(lfsFile("sortformer-Q8_0.gguf", 130<<20, sumFor("sortformer"))))
+
+	catalog, err := f.start(t).catalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 1 || catalog.Models[0].Slug != "whisper-tiny" {
+		t.Fatalf("listed %+v, want only the model the library can transcribe with", catalog.Models)
+	}
 }

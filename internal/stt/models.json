@@ -454,56 +454,6 @@
       "rank": 6
     },
     {
-      "id": "handy-computer/granite-speech-5.0-470m-turboctc-nc-gguf/granite-speech-5.0-470m-turboctc-nc-Q8_0.gguf",
-      "slug": "granite-speech-5.0-470m-turboctc-nc",
-      "name": "Granite Speech 5.0 470m Turboctc Nc",
-      "description": "Granite Speech 5.0 470m Turboctc Nc, en only.",
-      "repo": "handy-computer/granite-speech-5.0-470m-turboctc-nc-gguf",
-      "revision": "fb8091e2c1e50ef67d3e795ee9f84d703343d7c5",
-      "filename": "granite-speech-5.0-470m-turboctc-nc-Q8_0.gguf",
-      "quant": "Q8_0",
-      "size_bytes": 505885856,
-      "sha256": "383ab69dc940f441fb7064e8aa41f71ac2d24d5bc4c64b6d17167a044c68c03d",
-      "languages": [
-        "en"
-      ],
-      "license": "cc-by-nc-sa-4.0",
-      "translate": false,
-      "streaming": false,
-      "language_detect": false,
-      "word_error_rate": 1.29,
-      "realtime_factor": 17.25,
-      "speed_score": 0.43125,
-      "accuracy_score": 0.957,
-      "recommended": false,
-      "rank": 999
-    },
-    {
-      "id": "handy-computer/granite-speech-5.0-470m-turboctc-gguf/granite-speech-5.0-470m-turboctc-Q8_0.gguf",
-      "slug": "granite-speech-5.0-470m-turboctc",
-      "name": "Granite Speech 5.0 470m Turboctc",
-      "description": "Granite Speech 5.0 470m Turboctc, en only.",
-      "repo": "handy-computer/granite-speech-5.0-470m-turboctc-gguf",
-      "revision": "2b0b44d0d6c8b94a2e4f04a2cf3ec6a5c054463b",
-      "filename": "granite-speech-5.0-470m-turboctc-Q8_0.gguf",
-      "quant": "Q8_0",
-      "size_bytes": 505606496,
-      "sha256": "0408fe0b33be19af5be423d8ba6b43768608b6f065e1ac97b78c84b55c140738",
-      "languages": [
-        "en"
-      ],
-      "license": "apache-2.0",
-      "translate": false,
-      "streaming": false,
-      "language_detect": false,
-      "word_error_rate": 1.33,
-      "realtime_factor": 17.24,
-      "speed_score": 0.43099999999999994,
-      "accuracy_score": 0.9556666666666667,
-      "recommended": false,
-      "rank": 999
-    },
-    {
       "id": "handy-computer/canary-qwen-2.5b-gguf/canary-qwen-2.5b-Q8_0.gguf",
       "slug": "canary-qwen-2.5b",
       "name": "Canary Qwen 2.5b",
@@ -1688,31 +1638,6 @@
       "realtime_factor": 2.47,
       "speed_score": 0.061750000000000006,
       "accuracy_score": 0.503,
-      "recommended": false,
-      "rank": 999
-    },
-    {
-      "id": "handy-computer/diar_streaming_sortformer_4spk-v2.1-gguf/diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf",
-      "slug": "diar_streaming_sortformer_4spk-v2.1",
-      "name": "Diar Streaming Sortformer 4spk v2.1",
-      "description": "Diar Streaming Sortformer 4spk v2.1, en only.",
-      "repo": "handy-computer/diar_streaming_sortformer_4spk-v2.1-gguf",
-      "revision": "ae4afbb5c3d33b71cf2dbf600022b655ee706dd0",
-      "filename": "diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf",
-      "quant": "Q8_0",
-      "size_bytes": 139310336,
-      "sha256": "a5dacdc650790266c7a362e54e6bf51952015487edaa606c4e11632bc32442a9",
-      "languages": [
-        "en"
-      ],
-      "license": "other",
-      "translate": false,
-      "streaming": true,
-      "language_detect": false,
-      "word_error_rate": null,
-      "realtime_factor": 76.34,
-      "speed_score": 1.0,
-      "accuracy_score": 0.5,
       "recommended": false,
       "rank": 999
     },

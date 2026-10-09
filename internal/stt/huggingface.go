@@ -209,7 +209,10 @@ func (h *hub) catalog(ctx context.Context) (*Catalog, error) {
 }
 
 type repoInfo struct {
-	SHA      string `json:"sha"`
+	SHA  string `json:"sha"`
+	GGUF struct {
+		Architecture string `json:"architecture"`
+	} `json:"gguf"`
 	CardData struct {
 		Language      json.RawMessage `json:"language"`
 		License       json.RawMessage `json:"license"`
@@ -242,12 +245,17 @@ func (h *hub) resolve(ctx context.Context, repo string) (*Model, error) {
 	slug := strings.TrimSuffix(repo[strings.LastIndex(repo, "/")+1:], "-gguf")
 
 	var info repoInfo
-	if err := h.get(ctx, "/models/"+repo, &info); err != nil {
+	if err := h.get(ctx, "/models/"+repo+"?expand[]=sha&expand[]=cardData&expand[]=gguf", &info); err != nil {
 		if skippable(err) {
 			logger.Info("Skipping a model the hub no longer serves", "model", slug, "reason", err)
 			return nil, nil
 		}
 		return nil, err
+	}
+
+	if !runnable[info.GGUF.Architecture] {
+		logger.Info("Skipping a model the speech library cannot transcribe with", "model", slug, "architecture", info.GGUF.Architecture)
+		return nil, nil
 	}
 
 	var files []treeEntry
