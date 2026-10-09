@@ -298,10 +298,9 @@ func (c *AnswerCard) focusInput() {
 	c.window.Canvas().Focus(c.input)
 }
 
-// render keeps the end of the answer in view, unless the reader has scrolled away from it.
+// render leaves the reader where they are: an answer is read from its start, so text arriving past
+// the bottom of the card waits there rather than pulling the view down.
 func (c *AnswerCard) render() {
-	following := c.scroll.Offset.Y >= c.content.Size().Height-c.scroll.Size().Height-1
-
 	c.content.Segments = c.segments()
 	c.content.Refresh()
 	if len(c.content.Segments) == 0 {
@@ -313,9 +312,6 @@ func (c *AnswerCard) render() {
 
 	if size := c.fit(); size != c.target {
 		c.resizeTo(size)
-	}
-	if following {
-		c.scroll.ScrollToBottom()
 	}
 	c.rendered = time.Now()
 }

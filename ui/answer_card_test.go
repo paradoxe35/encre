@@ -204,6 +204,17 @@ func TestAReaderKeepsTheirPlaceWhileTheAnswerGrows(t *testing.T) {
 	}
 }
 
+// An answer is read from its start: text arriving past the bottom of the card waits there.
+func TestALongAnswerStaysAtItsStartAsItGrows(t *testing.T) {
+	card, stream := streamInto(t)
+	stream(100, false)
+	stream(200, false)
+	stream(400, true)
+	if card.scroll.Offset.Y != 0 {
+		t.Fatalf("the answer moved to %v as it grew past the card", card.scroll.Offset.Y)
+	}
+}
+
 func TestPromptPutsTheKeyboardInTheInput(t *testing.T) {
 	card, _ := newCard(t)
 
