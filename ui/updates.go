@@ -101,7 +101,6 @@ func megabytes(bytes int64) string {
 	return fmt.Sprintf("%.0f MB", math.Round(float64(bytes)/1e6))
 }
 
-// updatePanel is the Updates block of the System tab.
 type updatePanel struct {
 	updater      Updater
 	state        updateState

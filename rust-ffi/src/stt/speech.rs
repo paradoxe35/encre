@@ -36,7 +36,6 @@ impl Speech {
         dropped
     }
 
-    /// Appends a later burst, re-basing its pauses onto this one.
     pub fn append(&mut self, burst: Speech) {
         let offset = self.samples.len();
         self.pauses

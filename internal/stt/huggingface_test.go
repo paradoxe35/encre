@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// fakeHub serves the three hub endpoints the port reads from canned JSON.
+// fakeHub serves the three hub endpoints the catalogue is built from, from canned JSON.
 type fakeHub struct {
 	repos    []string
 	info     map[string]string // repo -> model info JSON

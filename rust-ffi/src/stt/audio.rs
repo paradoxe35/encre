@@ -392,9 +392,8 @@ fn preferred_config(device: &Device) -> Result<SelectedConfig> {
     let default = device.default_input_config()?;
     let rate = default.sample_rate();
 
-    // Only ALSA offers a choice of channel counts worth making. Windows answers the
-    // question by trying dozens of formats against the audio engine, ten milliseconds
-    // each, and then fixes the channel count anyway; macOS has no such problem.
+    // Only ALSA offers a channel choice worth making; on Windows enumerating configs
+    // probes dozens of formats at ~10 ms each and the channel count is fixed anyway.
     #[cfg(target_os = "linux")]
     if let Some(range) = choose_config(device.supported_input_configs()?, rate) {
         return Ok(SelectedConfig {
@@ -410,11 +409,9 @@ fn preferred_config(device: &Device) -> Result<SelectedConfig> {
 }
 
 #[cfg(target_os = "linux")]
-/// Fewest channels first, then the format that costs least to convert. The
-/// pipeline mixes down to mono anyway, and ALSA plugin devices (PipeWire,
-/// PulseAudio) advertise every channel count up to 64: opening the widest one
-/// makes the sound server upmix ~12 MB/s in its realtime thread, which on a
-/// modest machine froze the desktop.
+/// Fewest channels first, then the cheapest format. ALSA plugin devices (PipeWire,
+/// PulseAudio) advertise up to 64 channels, and opening the widest makes the sound
+/// server upmix ~12 MB/s in its realtime thread, which froze a modest desktop.
 fn choose_config(
     ranges: impl IntoIterator<Item = SupportedStreamConfigRange>,
     rate: u32,

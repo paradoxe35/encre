@@ -66,7 +66,7 @@ func (s ProviderSettings) RequiresAPIKey() bool {
 }
 
 type AIProviderConfig struct {
-	Provider  string                      `json:"provider"` // a built-in or custom provider name
+	Provider  string                      `json:"provider"`
 	Providers map[string]ProviderSettings `json:"providers"`
 }
 

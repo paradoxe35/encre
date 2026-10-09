@@ -13,7 +13,7 @@ import (
 // card, and windows paint colorNameWindow instead.
 const colorNameWindow fyne.ThemeColorName = "encreWindow"
 
-// appTheme is a variant, or the system's when variant is nil.
+// A nil variant follows the system.
 type appTheme struct {
 	variant *fyne.ThemeVariant
 }

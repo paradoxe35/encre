@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-// What can cheaply be learned about the computer, to rank models by whether they will keep up.
+// Only what can be learned cheaply: enough to rank models by whether they will keep up.
 type Machine struct {
 	Cores    int
 	MemoryMB int

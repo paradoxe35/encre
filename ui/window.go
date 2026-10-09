@@ -322,7 +322,6 @@ func trayUpdateLabel(rel *updater.Release) string {
 	return "Update to " + rel.Tag + "…"
 }
 
-// ShowUpdates opens the window on the System tab, where update progress is shown.
 func (w *MainWindow) ShowUpdates() {
 	w.ShowWindow()
 	if w.tabs == nil {

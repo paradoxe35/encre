@@ -225,7 +225,6 @@ func (h *harness) waitOverlay(t *testing.T, last string) []string {
 	return h.overlay.seen()
 }
 
-// A take is a press followed by a release.
 func (h *harness) take() {
 	h.dictation.Dictate(true)
 	h.dictation.Dictate(false)

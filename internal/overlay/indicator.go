@@ -64,7 +64,6 @@ func newIndicator(runOnMain func(func()), open func() (surface, error), now func
 	}
 }
 
-// Owner is one feature's handle on the indicator.
 type Owner struct {
 	indicator *Indicator
 }
@@ -199,7 +198,6 @@ func fade(alpha float64, in bool, dt time.Duration) float64 {
 	return clamp01(alpha - dt.Seconds()/fadeOut.Seconds())
 }
 
-// advance shifts the trace along and follows the new level at its end.
 func advance(trace [traceLen]float32, level float32) [traceLen]float32 {
 	copy(trace[:], trace[1:])
 	trace[traceLen-1] = follow(trace[traceLen-1], level)

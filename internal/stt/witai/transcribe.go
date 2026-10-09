@@ -104,7 +104,7 @@ func parseResponse(body []byte) (string, error) {
 	return r.Legacy, nil
 }
 
-// Halves the sample rate by averaging consecutive sample pairs.
+// Averages consecutive sample pairs.
 func downsample(pcm []byte) []byte {
 	samples := len(pcm) / bytesPerSample
 	out := make([]byte, 0, len(pcm)/2)

@@ -31,8 +31,8 @@ type wish struct {
 	done chan struct{}
 }
 
-// Ducker fades other audio down and back up on a worker of its own, so neither the microphone nor
-// the transcript waits for a fade, and a wish that comes mid-fade turns it around from where it is.
+// Fades run on a worker so neither the microphone nor the transcript waits for one; a wish that
+// arrives mid-fade turns it around from where it is.
 type Ducker struct {
 	open  func() (session, error)
 	step  time.Duration

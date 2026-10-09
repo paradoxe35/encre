@@ -21,9 +21,8 @@ const (
 
 var logName = regexp.MustCompile(`^encre-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.log$`)
 
-// rotatingFile writes one file per day, rolls to a numbered file when the day's file
-// reaches the cap, and prunes old files each time a new day starts. The file is opened
-// on the first write, so a quiet day leaves nothing behind.
+// One file per day, numbered once it reaches the cap, pruned on each new day. Opened on the
+// first write, so a quiet day leaves nothing behind.
 type rotatingFile struct {
 	dir      string
 	now      func() time.Time
@@ -132,7 +131,7 @@ type logFile struct {
 	index int
 }
 
-// listLogs returns the log files in the directory, oldest first.
+// Oldest first.
 func listLogs(dir string) []logFile {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -167,8 +166,8 @@ func highestIndex(dir, day string) int {
 	return highest
 }
 
-// prune removes files older than the retention window, then the oldest until the file
-// about to be opened fits under the count cap. It never logs: it runs under the writer's lock.
+// Also drops the oldest until the file about to be opened fits under maxFiles.
+// It never logs: it runs under the writer's lock.
 func prune(dir string, now time.Time, keepDays, maxFiles int) {
 	logs := listLogs(dir)
 	oldest := now.AddDate(0, 0, -keepDays).Format(dayLayout)

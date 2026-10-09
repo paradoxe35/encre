@@ -9,9 +9,8 @@ import (
 // per launch. Process-scoped: persisted, a stale rejection could outlive a model upgrade.
 var rejected sync.Map
 
-// Retries without the reasoning parameter on a 400 (matched on status: providers word the error
-// differently). The rejection is cached only once dropping the parameter fixes it, since a 400
-// has other causes.
+// Retries without the reasoning parameter on a 400 or 422, matched on status as providers word the
+// error differently. The rejection is cached only once the retry succeeds, since a 400 has other causes.
 func withReasoningFallback(endpoint, model string, wanted bool, send func(lowReasoning bool) (string, error)) (string, error) {
 	key := endpoint + "::" + model
 	if _, refused := rejected.Load(key); !wanted || refused {
@@ -32,7 +31,6 @@ func withReasoningFallback(endpoint, model string, wanted bool, send func(lowRea
 	return result, nil
 }
 
-// refusedRequest is a 400 or 422, which providers word differently.
 func refusedRequest(err error) bool {
 	apiErr, ok := errors.AsType[*APIError](err)
 	return ok && (apiErr.StatusCode == 400 || apiErr.StatusCode == 422)

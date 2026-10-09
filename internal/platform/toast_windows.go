@@ -27,7 +27,6 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('%s').Show($toast)
 `
 
-// Toast shows a toast under the app ID and reports whether it took the job.
 func Toast(id, title, content string) bool {
 	script := fmt.Sprintf(toastScript, psQuote(title), psQuote(content), psQuote(id))
 	go func() {

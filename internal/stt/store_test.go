@@ -213,7 +213,6 @@ func TestDownloadVerifiesCompletePartial(t *testing.T) {
 
 func TestDownloadStopsAtDeclaredSize(t *testing.T) {
 	body := payload(8192)
-	// The server sends more than it promised.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(append(body, payload(4096)...))
 	}))

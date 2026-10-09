@@ -29,8 +29,7 @@ const (
 
 	// RefreshTimeout bounds one whole rebuild: ~150 hub requests at six in
 	// flight normally finish in well under a minute.
-	RefreshTimeout = 3 * time.Minute
-	// How often the scheduler re-checks the cache's age while the app runs.
+	RefreshTimeout       = 3 * time.Minute
 	refreshCheckInterval = 3 * time.Hour
 )
 
@@ -163,10 +162,8 @@ func stale() bool {
 
 var refreshMu sync.Mutex
 
-// Refresh rebuilds the list from Hugging Face regardless of the cache's age.
-// The result goes through the same parser as the shipped file before it is
-// written, so a broken build never displaces a working list. Calls are
-// serialised: the scheduler and the settings button may overlap.
+// Refresh ignores the cache's age. The result is parsed like the shipped file before it is
+// written, so a broken build never displaces a working list; calls are serialised.
 func Refresh(ctx context.Context) error {
 	refreshMu.Lock()
 	defer refreshMu.Unlock()
@@ -182,8 +179,6 @@ func Refresh(ctx context.Context) error {
 	return adopt(data)
 }
 
-// adopt makes a fetched list current, caches it for the next launch and
-// tells the listeners.
 func adopt(data []byte) error {
 	fetched, err := parseCatalog(data)
 	if err != nil {
@@ -249,10 +244,8 @@ var (
 	schedulerDone chan struct{}
 )
 
-// StartRefreshing refreshes at launch when the cache is stale and keeps
-// checking while the app runs, so a machine left open for days still learns
-// about new models. Never blocks startup; failures are not surfaced since the
-// current list still works.
+// Keeps checking while the app runs so a machine left open for days still learns about new
+// models. Never blocks startup; failures are silent since the current list still works.
 func StartRefreshing() {
 	startRefreshing(refreshCheckInterval)
 }

@@ -18,9 +18,8 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-// Toast shows a notification as Encre, with its icon, once the user has allowed it, and through
-// AppleScript otherwise: that one shows without the icon but needs no permission, so a refusal or a
-// reinstall never silences Encre.
+// Without notification permission it falls back to AppleScript, which shows no icon but needs no
+// permission, so a refusal or a reinstall never silences Encre.
 func Toast(_, title, content string) bool {
 	cTitle, cContent := C.CString(title), C.CString(content)
 	defer C.free(unsafe.Pointer(cTitle))

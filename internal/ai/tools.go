@@ -48,7 +48,7 @@ func (c ToolCall) arguments() json.RawMessage {
 var refusedTools sync.Map
 
 // withToolsFallback retries without tools only on a first request: once a tool has run, the model has
-// taken tools, and a later 400 has another cause.
+// taken tools, and a later refusal has another cause.
 func withToolsFallback(endpoint, model string, prompt Prompt, send func(Prompt) (Reply, error)) (Reply, error) {
 	key := endpoint + "::" + model
 	if _, refused := refusedTools.Load(key); refused {

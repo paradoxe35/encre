@@ -318,9 +318,8 @@ impl ListenerState {
         }
     }
 
-    /// macOS: every event names the modifiers down as it was made, so the state follows that
-    /// instead of guessing edges from press and release events, which its own posted key-ups
-    /// would skew. Modifier changes arrive on their own, without a key.
+    /// macOS: state follows each event's modifier flags rather than press/release edges,
+    /// which our own posted key-ups would skew. Modifier changes arrive without a key.
     #[cfg(any(test, target_os = "macos"))]
     fn observe(
         &mut self,
@@ -633,8 +632,6 @@ fn manager<'a>(handle: HotkeyManagerHandle) -> Option<&'a mut SimpleHotkeyManage
     Some(unsafe { &mut *(handle as *mut SimpleHotkeyManager) })
 }
 
-/// The binding and action strings a registration call receives.
-///
 /// # Safety
 /// Non-null pointers must be valid null-terminated C strings.
 unsafe fn registration(
@@ -837,7 +834,6 @@ mod tests {
         ("ctrl+option+g", "translate_selection"),
     ];
 
-    /// Option arrives as `Key::Alt`, the space bar as "space".
     #[test]
     fn escape_alone_is_the_one_key_needing_no_modifier() {
         assert_eq!(
@@ -1232,7 +1228,7 @@ mod tests {
         }
     }
 
-    /// The list mirrors what `HotkeyRecorder.keyName` on the host side can produce.
+    /// The list mirrors what `keyNameToString` in ui/hotkey_capture.go can produce.
     #[test]
     fn every_name_the_recorder_can_produce_is_a_key_the_listener_knows() {
         let recorded = [

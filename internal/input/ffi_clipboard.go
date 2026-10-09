@@ -27,7 +27,6 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-// Distinguishes how a capture ended, so the user gets an accurate message.
 type CaptureOutcome int
 
 const (

@@ -61,7 +61,6 @@ var featuredModels = map[string]featured{
 	"whisper-medium":           {6, "Higher accuracy, noticeably slower on CPU."},
 }
 
-// hub is one Hugging Face API root and the client used against it.
 type hub struct {
 	api     string
 	client  *http.Client
@@ -529,7 +528,6 @@ func orderedObject(raw json.RawMessage) (orderedFields, error) {
 	return fields, nil
 }
 
-// displayName turns a repo slug into something a list can show.
 func displayName(slug string) string {
 	var words []string
 	for chunk := range strings.SplitSeq(strings.ReplaceAll(slug, "_", "-"), "-") {

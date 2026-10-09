@@ -8,7 +8,6 @@ import (
 	"github.com/paradoxe35/encre/internal/config"
 )
 
-// askEditor holds the settings only Ask has.
 type askEditor struct {
 	memory *widget.Entry
 	tools  *widget.Check

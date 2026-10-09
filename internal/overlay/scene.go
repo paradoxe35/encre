@@ -34,7 +34,6 @@ const (
 // Surface is the indicator's colour.
 var Surface = color.NRGBA{R: 22, G: 22, B: 26, A: 255}
 
-// Frame is everything a picture of the indicator depends on.
 type Frame struct {
 	Phase Phase
 	// Seconds since the indicator appeared.
