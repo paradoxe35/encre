@@ -634,7 +634,7 @@ func TestFetchCatalogLeavesOutModelsTheLibraryCannotTranscribeWith(t *testing.T)
 	}
 	f := newFakeHub()
 	f.add("handy-computer/whisper-tiny-gguf", withArchitecture("whisper"), treeJSON(lfsFile("whisper-tiny-Q8_0.gguf", 40<<20, sumFor("whisper"))))
-	f.add("handy-computer/granite-turbo-gguf", withArchitecture("granite_speech5_ctc"), treeJSON(lfsFile("granite-turbo-Q8_0.gguf", 500<<20, sumFor("granite"))))
+	f.add("handy-computer/future-asr-gguf", withArchitecture("future_asr"), treeJSON(lfsFile("future-asr-Q8_0.gguf", 500<<20, sumFor("future"))))
 	f.add("handy-computer/sortformer-gguf", withArchitecture("sortformer"), treeJSON(lfsFile("sortformer-Q8_0.gguf", 130<<20, sumFor("sortformer"))))
 
 	catalog, err := f.start(t).catalog(context.Background())

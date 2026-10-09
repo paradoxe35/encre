@@ -15,7 +15,7 @@ const PIECE_SECS: usize = 30;
 /// both sides keeps the decoder honest. One side alone is not enough.
 const SILENCE_PAD_SECS: f32 = 0.5;
 
-/// A truncated piece is halved and retried down to this length; shorter, its partial text is kept.
+/// An incomplete piece is halved and retried down to this length; shorter, its partial text is kept.
 const MIN_RETRY_SECS: usize = 4;
 
 /// Keeps the session resident between takes: loading costs seconds, a take costs
@@ -106,8 +106,8 @@ impl Engine {
 
 enum Decoded {
     Text(String),
-    /// The decode ran past the model's output budget, usually by repeating itself.
-    Truncated(String),
+    /// The decode stopped early, past the output budget or caught repeating itself.
+    Incomplete(String),
 }
 
 fn run_piece(
@@ -117,19 +117,22 @@ fn run_piece(
 ) -> Result<Decoded> {
     match session.run(&padded(piece), options) {
         Ok(out) => Ok(Decoded::Text(out.text.trim().to_owned())),
-        Err(error @ transcribe_cpp::Error::OutputTruncated { .. }) => {
+        Err(
+            error @ (transcribe_cpp::Error::OutputTruncated { .. }
+            | transcribe_cpp::Error::OutputRepetition { .. }),
+        ) => {
             tracing::warn!(
                 seconds = piece.len() / SAMPLE_RATE as usize,
-                "a piece ran past the output budget"
+                "a piece stopped before its end: {error}"
             );
             let partial = error.partial().map(|t| t.text.trim().to_owned());
-            Ok(Decoded::Truncated(partial.unwrap_or_default()))
+            Ok(Decoded::Incomplete(partial.unwrap_or_default()))
         }
         Err(error) => Err(anyhow!("transcription failed: {error}")),
     }
 }
 
-/// A truncated piece is split at its quietest point and retried, as shorter audio fits the budget
+/// An incomplete piece is split at its quietest point and retried, as shorter audio fits the budget
 /// and rarely loops; too short to split, it keeps the text it reached.
 fn transcribe_piece(
     decode: &mut impl FnMut(&[f32]) -> Result<Decoded>,
@@ -137,10 +140,10 @@ fn transcribe_piece(
 ) -> Result<String> {
     match decode(piece)? {
         Decoded::Text(text) => Ok(text),
-        Decoded::Truncated(partial) if piece.len() < 2 * MIN_RETRY_SECS * SAMPLE_RATE as usize => {
+        Decoded::Incomplete(partial) if piece.len() < 2 * MIN_RETRY_SECS * SAMPLE_RATE as usize => {
             Ok(without_repetition(&partial))
         }
-        Decoded::Truncated(_) => join(
+        Decoded::Incomplete(_) => join(
             halves(piece)
                 .into_iter()
                 .map(|half| transcribe_piece(decode, half)),
@@ -246,11 +249,11 @@ mod tests {
     }
 
     #[test]
-    fn a_truncated_piece_is_retried_in_halves_until_it_fits() {
+    fn an_incomplete_piece_is_retried_in_halves_until_it_fits() {
         let mut decoded = Vec::new();
         let mut decode = |piece: &[f32]| {
             if piece.len() > 10 * SAMPLE_RATE as usize {
-                return Ok(Decoded::Truncated("so so so so".into()));
+                return Ok(Decoded::Incomplete("so so so so".into()));
             }
             decoded.push(piece.len());
             Ok(Decoded::Text(format!("part{}", decoded.len())))
@@ -270,9 +273,9 @@ mod tests {
     }
 
     #[test]
-    fn a_short_truncated_piece_keeps_what_it_said_without_the_loop() {
+    fn a_short_incomplete_piece_keeps_what_it_said_without_the_loop() {
         let mut decode = |_: &[f32]| {
-            Ok(Decoded::Truncated(
+            Ok(Decoded::Incomplete(
                 "what is the weather in paris paris paris paris".into(),
             ))
         };

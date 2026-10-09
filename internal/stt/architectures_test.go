@@ -23,7 +23,7 @@ func TestTheShippedCatalogueListsOnlyRunnableModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, model := range shipped.Models {
-		if strings.Contains(model.Slug, "turboctc") || strings.Contains(model.Slug, "sortformer") {
+		if strings.Contains(model.Slug, "sortformer") {
 			t.Errorf("the shipped catalogue still lists %s, which the library cannot transcribe with", model.Slug)
 		}
 	}
