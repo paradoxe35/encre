@@ -114,7 +114,7 @@ func designFor(style config.CardStyle) cardDesign {
 	if design, ok := cardDesigns[style]; ok {
 		return design
 	}
-	return cardDesigns[config.CardStyleSolid]
+	return cardDesigns[config.CardStyleGlass]
 }
 
 func always(colors palette) func(fyne.ThemeVariant) palette {

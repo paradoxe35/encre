@@ -9,8 +9,8 @@ type AnswerCardConfig struct {
 type CardStyle string
 
 const (
-	CardStyleSolid    CardStyle = ""
-	CardStyleGlass    CardStyle = "glass"
+	CardStyleGlass    CardStyle = ""
+	CardStyleSolid    CardStyle = "solid"
 	CardStyleGraphite CardStyle = "graphite"
 	CardStyleMidnight CardStyle = "midnight"
 	CardStyleAurora   CardStyle = "aurora"
@@ -19,7 +19,7 @@ const (
 )
 
 var CardStyles = []CardStyle{
-	CardStyleSolid, CardStyleGlass, CardStyleGraphite, CardStyleMidnight,
+	CardStyleGlass, CardStyleSolid, CardStyleGraphite, CardStyleMidnight,
 	CardStyleAurora, CardStylePaper, CardStyleTerminal,
 }
 

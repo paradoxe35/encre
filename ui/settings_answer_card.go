@@ -14,8 +14,8 @@ var textSizeLabels = map[config.TextSize]string{
 }
 
 var cardStyleLabels = map[config.CardStyle]string{
-	config.CardStyleSolid:    "Solid",
 	config.CardStyleGlass:    "Glass",
+	config.CardStyleSolid:    "Solid",
 	config.CardStyleGraphite: "Graphite",
 	config.CardStyleMidnight: "Midnight",
 	config.CardStyleAurora:   "Aurora",

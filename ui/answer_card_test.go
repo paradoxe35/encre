@@ -406,11 +406,15 @@ func TestAStyleChangeWaitsForTheCardToClose(t *testing.T) {
 	answered(card, "Q", "A")
 	shown := card.window
 
-	card.SetStyle(config.CardStyleGlass)
+	if !designFor(card.style).glass {
+		t.Fatal("a new card is not glass, the default")
+	}
+
+	card.SetStyle(config.CardStyleSolid)
 	if card.window != shown {
 		t.Fatal("the card was rebuilt while it showed")
 	}
-	if designFor(card.style).glass {
+	if !designFor(card.style).glass {
 		t.Fatal("the open card took on the new style before it was rebuilt")
 	}
 
@@ -419,8 +423,8 @@ func TestAStyleChangeWaitsForTheCardToClose(t *testing.T) {
 	if card.window == shown {
 		t.Fatal("the card kept its old window after closing")
 	}
-	if !designFor(card.style).glass {
-		t.Fatal("the rebuilt card is not glass")
+	if designFor(card.style).glass {
+		t.Fatal("the rebuilt card is still glass")
 	}
 }
 
