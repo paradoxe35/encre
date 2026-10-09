@@ -211,14 +211,14 @@ func TestActionKindClassification(t *testing.T) {
 	}
 }
 
-// The 1000-character limit and 30-second timeout are defaults nobody touches, so a
+// The 1000-character limit and 60-second timeout are defaults nobody touches, so a
 // quiet change would go unnoticed.
 func TestShippedDefaultsAreUnchanged(t *testing.T) {
 	if DefaultCharacterLimit != 1000 {
 		t.Errorf("DefaultCharacterLimit = %d, want 1000", DefaultCharacterLimit)
 	}
-	if DefaultTimeoutSeconds != 30 {
-		t.Errorf("DefaultTimeoutSeconds = %d, want 30", DefaultTimeoutSeconds)
+	if DefaultTimeoutSeconds != 60 {
+		t.Errorf("DefaultTimeoutSeconds = %d, want 60", DefaultTimeoutSeconds)
 	}
 	if !Default().EnableProviderMentions {
 		t.Error("provider mentions were on by default and should stay on")

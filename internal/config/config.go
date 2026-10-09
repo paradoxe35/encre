@@ -25,7 +25,7 @@ const (
 	BuiltInOpenRouter = "openrouter"
 
 	DefaultCharacterLimit = 1000
-	DefaultTimeoutSeconds = 30
+	DefaultTimeoutSeconds = 60
 )
 
 type Config struct {
