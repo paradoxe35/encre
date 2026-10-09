@@ -13,9 +13,7 @@ const (
 	frostPasses = 3
 )
 
-// Frosted is the screen inside area, blurred, for a glass panel on a desktop that cannot blur behind
-// a window itself. It reports the part of area it covers, in screen pixels, and false where the
-// screen cannot be read.
+// Frosted is the screen inside area, blurred, and the part of area it covers, in screen pixels.
 func Frosted(area image.Rectangle) (image.Image, image.Rectangle, bool) {
 	shot := capture(area)
 	if shot == nil || shot.Bounds().Empty() {
@@ -24,8 +22,7 @@ func Frosted(area image.Rectangle) (image.Image, image.Rectangle, bool) {
 	return frost(shot), shot.Bounds(), true
 }
 
-// frost averages blocks of the image, then box-blurs the result a few times, which approaches a
-// Gaussian blur.
+// Box-blurring a few times approaches a Gaussian blur.
 func frost(src *image.RGBA) *image.RGBA {
 	bounds := src.Bounds()
 	small := image.NewRGBA(image.Rect(0, 0, max((bounds.Dx()+frostShrink-1)/frostShrink, 1), max((bounds.Dy()+frostShrink-1)/frostShrink, 1)))
@@ -53,8 +50,7 @@ func average(src *image.RGBA, block image.Rectangle) color.RGBA {
 	return color.RGBA{R: uint8(r / n), G: uint8(g / n), B: uint8(b / n), A: 0xff}
 }
 
-// boxBlur averages each pixel with its neighbours along one axis, the edge pixel standing in for
-// those past the edge.
+// boxBlur repeats the edge pixel past the edge.
 func boxBlur(src *image.RGBA, horizontal bool) *image.RGBA {
 	w, h := src.Rect.Dx(), src.Rect.Dy()
 	dst := image.NewRGBA(src.Rect)

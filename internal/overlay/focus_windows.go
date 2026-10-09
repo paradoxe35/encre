@@ -125,9 +125,8 @@ func keepOffTaskbar(window uintptr) {
 	}
 }
 
-// GlassBackdrop is the screen frosted by us: the acrylic Windows draws behind a window falls back to
-// a flat colour whenever the window loses the focus, and an OpenGL window is not reliably see-through.
-// It is opaque when the user turned transparency effects off.
+// GlassBackdrop is frosted by Encre: Windows' acrylic falls back to a flat colour whenever the window
+// loses the focus, and an OpenGL window is not reliably see-through.
 func GlassBackdrop() Backdrop {
 	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
 	if err == nil {
@@ -148,7 +147,6 @@ type bitmapInfoHeader struct {
 	colorsUsed, colorsImportant  uint32
 }
 
-// capture copies the screen inside area, clipped to the desktop, through GDI.
 func capture(area image.Rectangle) *image.RGBA {
 	metric := func(index uintptr) int {
 		v, _, _ := getSystemMetrics.Call(index)

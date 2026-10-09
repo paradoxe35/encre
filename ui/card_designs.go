@@ -20,16 +20,14 @@ const (
 
 type palette = map[fyne.ThemeColorName]color.Color
 
-// cardDesign is one style of the answer card.
 type cardDesign struct {
 	// variant pins the card light or dark; nil follows the app.
 	variant *fyne.ThemeVariant
 	colors  func(variant fyne.ThemeVariant) palette
-	// glass shows the desktop through the card.
-	glass bool
+	glass   bool
 	// monospace sets every text in the card in the monospace face, which Fyne measures as it draws.
 	monospace bool
-	// rounded softens the input and selections, for every design but the original.
+	// rounded softens the input and selections; only the original design stays square.
 	rounded bool
 	// glow is drawn under the card's fill, for a design of more than one colour.
 	glow func() []fyne.CanvasObject
@@ -213,7 +211,7 @@ func glassColors(variant fyne.ThemeVariant) palette {
 	return colors
 }
 
-// cardTheme is the app's theme under a card design: its colours, and its font.
+// cardTheme is the app's theme under a card design's colours.
 type cardTheme struct {
 	base    fyne.Theme
 	variant *fyne.ThemeVariant

@@ -25,7 +25,6 @@ var historyFilters = []struct {
 	{historyLabel(history.KindAsk), history.KindAsk},
 }
 
-// historyLabel names a kind after the operation that made it, as Settings > Actions does.
 func historyLabel(kind history.Kind) string {
 	return config.Operation(kind).Label()
 }

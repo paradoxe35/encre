@@ -26,8 +26,7 @@ func (Disabled) Show(Phase)    {}
 func (Disabled) Level(float32) {}
 func (Disabled) Hide()         {}
 
-// Look is how a panel is drawn: its corner radius in window pixels, and whether it is glass, which
-// shows the desktop through it and blurs it where the platform can.
+// Look is how a panel is drawn; Radius is in window pixels.
 type Look struct {
 	Radius int
 	Glass  bool
@@ -37,11 +36,10 @@ type Look struct {
 type Backdrop int
 
 const (
-	// BackdropNone is for a desktop that cannot show through a window, whose glass must be opaque.
+	// BackdropNone: the desktop cannot show through a window, so glass must be opaque.
 	BackdropNone Backdrop = iota
 	BackdropSharp
 	BackdropBlurred
-	// BackdropFrosted is a desktop that cannot blur behind a window, but whose screen can be read:
-	// the panel stays opaque and draws the screen behind it blurred, from Frosted.
+	// BackdropFrosted: the panel stays opaque and draws the screen behind it blurred, from Frosted.
 	BackdropFrosted
 )

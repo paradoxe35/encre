@@ -39,22 +39,19 @@ type AnswerCard struct {
 	visible bool
 	onAsk   func(question string)
 
-	// style is the window's; wanted is the one set, which waits for an open card to close.
+	// wanted becomes style once an open card closes, as a new style needs a new window.
 	style  config.CardStyle
 	wanted config.CardStyle
-	// created is whether the native window exists: a glass one must be made transparent from the start.
-	created bool
-	// restyle defers a change of style until the card is closed, since it needs a new window.
-	restyle bool
-	look    *container.ThemeOverride
-	// backdrop is what shows behind a glass card, found when its window is made.
+	// created: a see-through window must be made transparent from the start.
+	created  bool
+	restyle  bool
+	look     *container.ThemeOverride
 	backdrop overlay.Backdrop
 	fill     *themedFill
-	// frosted is the screen behind a glass card the desktop cannot blur, captured on opening; behind
-	// is where on the screen it was taken, in screen pixels.
+	// behind is where frosted was captured, in screen pixels.
 	frosted *canvas.Image
 	behind  image.Rectangle
-	// mapped is whether the native window is on screen, where a capture would catch it.
+	// mapped: the native window is on screen, where a capture would catch it.
 	mapped  bool
 	opacity float64
 	fading  *fyne.Animation
@@ -65,10 +62,9 @@ type AnswerCard struct {
 	question string
 	text     string
 	failure  string
-	// status says what is being looked up, until the answer starts.
-	status string
-	done   bool
-	stop   func()
+	status   string
+	done     bool
+	stop     func()
 
 	spot     overlay.Spot
 	placed   bool
@@ -210,8 +206,7 @@ func (c *AnswerCard) show() {
 	}
 }
 
-// hideFading takes down a card still fading out, so it comes back from nothing where it now
-// belongs, and reports whether it did.
+// hideFading reports whether it took down a card still fading out.
 func (c *AnswerCard) hideFading() bool {
 	if !c.mapped {
 		return false
@@ -240,8 +235,8 @@ func (c *AnswerCard) seeThrough() bool {
 	return designFor(c.style).glass && (c.backdrop == overlay.BackdropBlurred || c.backdrop == overlay.BackdropSharp)
 }
 
-// frost captures the screen the card may cover at its largest, before the card covers it. The
-// window may not know its screen's scale before it first shows, so the first capture allows for 2.
+// frost captures the screen the card may cover at its largest. Before its first show the window may
+// not know its screen's scale, so that capture allows for 2.
 func (c *AnswerCard) frost() {
 	c.fill.fill = colorNameCard
 	c.frosted.Hide()
@@ -298,8 +293,7 @@ func (c *AnswerCard) fail(reason string) {
 	c.focusInput()
 }
 
-// focusInput readies the card for a follow-up once its answer is in. It moves the focus within the
-// card only, so an app the user went back to keeps the keyboard.
+// focusInput moves the focus within the card only, so an app the user went back to keeps the keyboard.
 func (c *AnswerCard) focusInput() {
 	c.window.Canvas().Focus(c.input)
 }
@@ -380,7 +374,7 @@ func (c *AnswerCard) Hide() {
 	})
 }
 
-// fadeTo replaces any fade under way with one from the current opacity; done runs only if it finishes.
+// done runs only if the fade finishes.
 func (c *AnswerCard) fadeTo(opacity float64, done func()) {
 	if c.fading != nil {
 		c.fading.Stop()
@@ -402,7 +396,7 @@ func fadeWindow(from, to float64, apply func(float64), done func()) *fyne.Animat
 	return animation
 }
 
-// SetStyle switches between the solid and the glass card. It may be called from any goroutine.
+// SetStyle may be called from any goroutine.
 func (c *AnswerCard) SetStyle(style config.CardStyle) {
 	fyne.Do(func() {
 		c.wanted = style
@@ -492,7 +486,7 @@ func (c *AnswerCard) width() float32 {
 	return min(answerWidth*max(c.textScale, 1), maxAnswerWidth)
 }
 
-// SetTextSize sets the size the question and answer are read at. It may be called from any goroutine.
+// SetTextSize may be called from any goroutine.
 func (c *AnswerCard) SetTextSize(size config.TextSize) {
 	fyne.Do(func() {
 		scale, ok := textScales[size]
@@ -504,7 +498,6 @@ func (c *AnswerCard) SetTextSize(size config.TextSize) {
 	})
 }
 
-// retheme follows the app's theme, and the text size, into a card already built.
 func (c *AnswerCard) retheme() {
 	if c.window == nil {
 		return
@@ -529,9 +522,8 @@ func (c *AnswerCard) readingTheme() fyne.Theme {
 	return &scaledText{Theme: c.cardTheme(), scale: c.textScale}
 }
 
-// surface is the design's glow, or the frosted screen, under its fill, and the edge over all. Only
-// see-through glass is drawn rounded: any other card has its corners cut from the window, so its
-// edge follows the cut the system makes.
+// Only see-through glass is drawn rounded: any other card has its corners cut from the window, and its
+// edge follows that cut.
 func (c *AnswerCard) surface() fyne.CanvasObject {
 	design := designFor(c.style)
 	c.backdrop, c.frosted = overlay.BackdropNone, nil
@@ -567,7 +559,6 @@ func (c *AnswerCard) corner() float32 {
 	return overlay.Corner(answerRadius)
 }
 
-// resizeTo glides the card to a new size while it shows, and sets it at once while it does not.
 func (c *AnswerCard) resizeTo(size fyne.Size) {
 	c.target = size
 	// Refits the window's minimum to the content first: a window manager refuses a size below
@@ -707,7 +698,6 @@ var textScales = map[config.TextSize]float32{
 	config.TextSizeLarger:  1.3,
 }
 
-// scaledText is a theme with its text sizes multiplied.
 type scaledText struct {
 	fyne.Theme
 	scale float32

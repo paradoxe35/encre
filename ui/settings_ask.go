@@ -8,7 +8,7 @@ import (
 	"github.com/paradoxe35/encre/internal/config"
 )
 
-// askEditor holds the settings only Ask has, beside those every operation shares.
+// askEditor holds the settings only Ask has.
 type askEditor struct {
 	memory *widget.Entry
 	tools  *widget.Check
@@ -33,7 +33,6 @@ func (a *askEditor) items(w *MainWindow) []*widget.FormItem {
 	}
 }
 
-// apply writes the Ask settings into the operation, or says which of them is wrong.
 func (a *askEditor) apply(ask *config.OperationConfig) error {
 	if err := validateMemory(a.memory.Text); err != nil {
 		return fmt.Errorf("remembered messages %w", err)

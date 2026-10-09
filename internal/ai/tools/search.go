@@ -24,7 +24,6 @@ type searchResult struct {
 	title, url, snippet string
 }
 
-// engine searches the web for a query.
 type engine func(ctx context.Context, query string) ([]searchResult, error)
 
 type webSearchArgs struct {
@@ -72,7 +71,7 @@ func formatResults(query string, results []searchResult) string {
 
 var errChallenged = errors.New("DuckDuckGo asked for a check Encre cannot pass - try again in a while")
 
-// duckDuckGo reads DuckDuckGo's plain results page, posted as its own form does.
+// duckDuckGo posts its query as DuckDuckGo's own form does: a GET is challenged far more often.
 func duckDuckGo(endpoint string) engine {
 	return func(ctx context.Context, query string) ([]searchResult, error) {
 		form := url.Values{"q": {query}, "kl": {"wt-wt"}}
@@ -97,7 +96,6 @@ func duckDuckGo(endpoint string) engine {
 	}
 }
 
-// duckDuckGoResults reads each result's link and snippet, leaving out ads.
 func duckDuckGoResults(page []byte) []searchResult {
 	root, err := html.Parse(bytes.NewReader(page))
 	if err != nil {

@@ -13,7 +13,6 @@ import (
 // outgrow a small model's context.
 const memoryBudget = 24000
 
-// remembered is the earlier questions and answers Ask is set to send with a new question.
 func (p *Processor) remembered(cfg *config.Config) []ai.Turn {
 	turns := cfg.Operation(config.OpAsk).Remembered()
 	if turns == 0 {
@@ -22,8 +21,8 @@ func (p *Processor) remembered(cfg *config.Config) []ai.Turn {
 	return recall(p.history.Recent(history.KindAsk), turns)
 }
 
-// recall takes up to turns of the asked questions, newest first, and returns them oldest first. The
-// oldest are left out once the budget is spent.
+// recall takes the asked questions newest first and returns them oldest first, leaving out the oldest
+// once the budget is spent.
 func recall(asked []history.Entry, turns int) []ai.Turn {
 	var recalled []ai.Turn
 	spent := 0

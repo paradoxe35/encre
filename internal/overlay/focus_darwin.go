@@ -45,7 +45,7 @@ func Panel(window uintptr, frame image.Rectangle, look Look) {
 	C.encre_overlay_panel(C.uintptr_t(window), C.int(frame.Min.X), C.int(frame.Min.Y), C.int(look.Radius), C.int(glass))
 }
 
-// Corner is the radius a panel's corners are cut to, which is the one asked for.
+// Corner is the radius asked for: macOS rounds the window to it.
 func Corner(radius float32) float32 { return radius }
 
 // GlassBackdrop is blurred, unless the user asked macOS to reduce transparency.

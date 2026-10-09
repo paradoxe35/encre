@@ -48,7 +48,7 @@ func readEvents(body io.Reader, handle func(data []byte) (done bool, err error))
 	return err
 }
 
-// turn gathers one streamed reply: its text as it arrives, and the tool calls it builds up.
+// turn gathers one streamed reply: its text, and the tool calls it builds up.
 type turn struct {
 	onText func(string)
 	text   strings.Builder
@@ -67,7 +67,6 @@ func (t *turn) write(text string) {
 	}
 }
 
-// call is the call streaming under the protocol's index, begun on first sight.
 func (t *turn) call(index int) *ToolCall {
 	if t.pending == nil {
 		t.pending = make(map[int]int)
@@ -81,7 +80,6 @@ func (t *turn) call(index int) *ToolCall {
 	return &t.calls[at]
 }
 
-// add records a call that arrived whole.
 func (t *turn) add(call ToolCall) {
 	t.calls = append(t.calls, call)
 }

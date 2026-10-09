@@ -27,8 +27,7 @@ var guardedClient = &http.Client{
 	},
 }
 
-// localRanges are the addresses a computer or its network keeps to itself, beyond the ones netip
-// already knows as private, loopback or link-local.
+// localRanges are local addresses netip does not already know as private, loopback or link-local.
 var localRanges = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
@@ -128,7 +127,6 @@ var (
 	spaces     = regexp.MustCompile(`[ \t\r\f\v]+`)
 )
 
-// pageText is a page's title and readable text, without its scripts, styles and navigation.
 func pageText(body []byte) (string, string) {
 	root, err := html.Parse(bytes.NewReader(body))
 	if err != nil {

@@ -179,8 +179,7 @@ static int encre_overlay_locate(Display* display, int* x, int* y) {
     }
     return 0;
 }
-// Copies the screen inside the rectangle as RGBA, after clipping it to the root window, which
-// XGetImage requires. The clipped rectangle is written back; 0 if nothing could be read.
+// XGetImage needs the rectangle clipped to the root window; the clipped one is written back.
 static int encre_overlay_capture(Display* display, int* x, int* y, int* width, int* height, unsigned char** out) {
     Window root = DefaultRootWindow(display);
     int left = *x < 0 ? 0 : *x, top = *y < 0 ? 0 : *y;
@@ -289,11 +288,10 @@ func Panel(window uintptr, frame image.Rectangle, look Look) {
 	C.XFlush(display)
 }
 
-// Corner is the radius a panel's corners are cut to, which is the one asked for.
+// Corner is the radius asked for: X11 cuts it from the window.
 func Corner(radius float32) float32 { return radius }
 
-// GlassBackdrop is KWin's blur where it offers one, and otherwise the screen frosted by us. Under
-// XWayland the screen of other apps cannot be read, so glass there is only see-through.
+// Under XWayland the screen of other apps cannot be read, so glass there is only see-through.
 func GlassBackdrop() Backdrop {
 	if glfw.GetPlatform() != glfw.PlatformX11 {
 		return BackdropNone

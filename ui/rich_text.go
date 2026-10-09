@@ -13,9 +13,8 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// adopt hands text nested in lists and tables the theme of the rich text it shows in. Fyne only does
-// so for top-level text, leaving the rest in the app's theme, so lists become paragraph blocks made
-// once and their text is told which rich text holds it, and tables are drawn by cardTable.
+// adopt gives text nested in lists and tables the theme of the rich text it shows in, which Fyne gives
+// only to top-level text.
 func adopt(holder *widget.RichText, segments []widget.RichTextSegment) []widget.RichTextSegment {
 	adopted := make([]widget.RichTextSegment, len(segments))
 	for i, segment := range segments {
@@ -37,7 +36,6 @@ func adopt(holder *widget.RichText, segments []widget.RichTextSegment) []widget.
 	return adopted
 }
 
-// eachText runs on every text segment, those nested in blocks and table cells included.
 func eachText(segments []widget.RichTextSegment, do func(*widget.TextSegment)) {
 	for _, segment := range segments {
 		switch segment := segment.(type) {
@@ -63,8 +61,8 @@ func setHolder(text *widget.TextSegment, holder *widget.RichText) {
 	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(holder))
 }
 
-// cardTable draws a markdown table in the theme of the rich text holding it: Fyne's own fills its
-// cells from the app's theme, whose background is see-through for the glass card.
+// cardTable draws a markdown table in the card's theme: Fyne's own fills its cells from the app's
+// theme, whose background is see-through.
 type cardTable struct {
 	*widget.TableSegment
 	holder *widget.RichText
@@ -157,8 +155,7 @@ func tableCell(th fyne.Theme, variant fyne.ThemeVariant, segments []widget.RichT
 	return container.NewStack(canvas.NewRectangle(fill), container.NewPadded(content))
 }
 
-// tableLayout places cells row by row in columns as wide as their widest cell, with a line under
-// every row but the last. The lines follow the cells in the objects.
+// tableLayout puts a line under every row but the last; the lines follow the cells in the objects.
 type tableLayout struct {
 	cols, rows int
 }

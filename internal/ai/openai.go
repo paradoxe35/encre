@@ -40,8 +40,8 @@ type chatFunction struct {
 	Arguments   string         `json:"arguments,omitempty"`
 }
 
-// chatToolCall is a call in a reply, streamed in pieces under its index, or sent back in a request.
 type chatToolCall struct {
+	// Index is set only in a streamed reply.
 	Index    *int         `json:"index,omitempty"`
 	ID       string       `json:"id,omitempty"`
 	Type     string       `json:"type,omitempty"`
@@ -156,8 +156,8 @@ func (chatCompletions) event(data []byte, reply *turn) (bool, error) {
 	return false, nil
 }
 
-// chatCallIndex is where a streamed piece belongs. Some servers leave the index out: then a new ID
-// starts a new call, and a piece without one continues the last.
+// Some servers leave the index out: then a new ID starts a new call, and a piece without one
+// continues the last.
 func chatCallIndex(piece chatToolCall, reply *turn) int {
 	if piece.Index != nil {
 		return *piece.Index

@@ -7,8 +7,7 @@ import (
 	"strings"
 )
 
-// answerView shows a question and returns what fills in its answer, and what says what is being
-// looked up for it; closing the view calls stop.
+// answerView calls stop when it is closed.
 type answerView interface {
 	Open(question string, stop func()) (update func(text string, done bool), fail func(reason string), status func(line string))
 }

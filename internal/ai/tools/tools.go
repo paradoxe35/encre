@@ -13,14 +13,12 @@ import (
 	"github.com/paradoxe35/encre/internal/ai"
 )
 
-// Tool is a function the model may call, with what to show while it runs.
 type Tool struct {
 	ai.Tool
 	Status func(args json.RawMessage) string
 	Run    func(ctx context.Context, args json.RawMessage) (string, error)
 }
 
-// Set is the tools Ask offers.
 func Set() []Tool {
 	return []Tool{
 		webSearch(duckDuckGo(duckDuckGoURL)),
@@ -47,7 +45,6 @@ func get(ctx context.Context, httpClient *http.Client, url string) ([]byte, stri
 	return fetch(httpClient, req)
 }
 
-// fetch sends the request and reads a successful reply, up to maxDownload, and its content type.
 func fetch(httpClient *http.Client, req *http.Request) ([]byte, string, error) {
 	if req.Header.Get("User-Agent") == "" {
 		req.Header.Set("User-Agent", userAgent)

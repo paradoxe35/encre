@@ -285,8 +285,7 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 	return result, nil
 }
 
-// Ask streams the answer to onText as it is written, and what it looks up on the way to onStatus. It
-// is shown, not pasted, so its formatting stays.
+// Ask's answer is shown, not pasted, so its formatting stays.
 func (p *Processor) Ask(ctx context.Context, question string, onText, onStatus func(string)) (string, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
@@ -322,15 +321,13 @@ func (p *Processor) Ask(ctx context.Context, question string, onText, onStatus f
 	return answer, nil
 }
 
-// request is the text an operation works on, and what goes with it to the AI.
 type request struct {
 	op        config.Operation
 	mentioned string
 	text      string
-	// past turns go before the text, as a conversation.
-	past  []ai.Turn
-	tools []tools.Tool
-	// onText streams the reply when it is given; otherwise the whole reply is waited for.
+	past      []ai.Turn
+	tools     []tools.Tool
+	// onText streams the reply; without it the whole reply is waited for.
 	onText   func(string)
 	onStatus func(string)
 }
@@ -382,7 +379,6 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, req reques
 	return reply{text: answer, provider: name, model: provider.Model()}, nil
 }
 
-// generate waits for the whole reply, or streams it, with the tools when the provider can use them.
 func generate(ctx context.Context, provider ai.Provider, prompt ai.Prompt, req request, keepAlive func()) (string, error) {
 	if req.onText == nil {
 		return provider.Complete(ctx, prompt)

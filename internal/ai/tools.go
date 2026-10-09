@@ -6,11 +6,11 @@ import (
 	"sync"
 )
 
-// Tool describes a function the model may call, its parameters as a JSON schema object.
 type Tool struct {
 	Name        string
 	Description string
-	Parameters  map[string]any
+	// Parameters is a JSON schema object.
+	Parameters map[string]any
 }
 
 type ToolCall struct {
@@ -21,26 +21,22 @@ type ToolCall struct {
 	signature string
 }
 
-// Step is one round of tool calls and their results, Results[i] answering Calls[i].
+// Step is one round of tool calls; Results[i] answers Calls[i].
 type Step struct {
 	Calls   []ToolCall
 	Results []string
 }
 
-// Reply is a streamed turn: its text, and the tools it calls before it can answer.
 type Reply struct {
 	Text  string
 	Calls []ToolCall
 }
 
-// ToolUser is a provider that can offer the model tools.
 type ToolUser interface {
-	// Turn streams one reply, which ends either in an answer or in tool calls to run first. A model
-	// that refuses tools is asked again without them.
+	// Turn streams one reply. A model that refuses tools is asked again without them.
 	Turn(ctx context.Context, prompt Prompt, onText func(string)) (Reply, error)
 }
 
-// arguments is a call's arguments, an empty object when the model gave none.
 func (c ToolCall) arguments() json.RawMessage {
 	if len(c.Arguments) == 0 {
 		return json.RawMessage("{}")
@@ -48,13 +44,11 @@ func (c ToolCall) arguments() json.RawMessage {
 	return c.Arguments
 }
 
-// refusedTools holds the endpoint and model pairs that refused tools, so the wasted request happens
-// once per launch.
+// refusedTools remembers the models that refused tools, so the wasted request happens once per launch.
 var refusedTools sync.Map
 
-// withToolsFallback sends the prompt, and once more without its tools if the model refuses them. Only
-// a first request can show that: once a tool has run, the model has taken tools, and a later 400 has
-// another cause.
+// withToolsFallback retries without tools only on a first request: once a tool has run, the model has
+// taken tools, and a later 400 has another cause.
 func withToolsFallback(endpoint, model string, prompt Prompt, send func(Prompt) (Reply, error)) (Reply, error) {
 	key := endpoint + "::" + model
 	if _, refused := refusedTools.Load(key); refused {

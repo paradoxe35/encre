@@ -29,8 +29,7 @@ func (n *NotificationManager) ShowInfo(title, content string) {
 	logger.Info("Info notification shown", "title", title, "content", content)
 }
 
-// sentence capitalises a message built from an error, which starts in lower case. A first word
-// that is not a plain lower-case word, such as a hotkey or a name, is left as it is.
+// sentence capitalises an error message, leaving a first word such as a hotkey or a name as it is.
 func sentence(message string) string {
 	word, _, _ := strings.Cut(message, " ")
 	if word == "" || strings.IndexFunc(word, func(r rune) bool { return !unicode.IsLower(r) }) >= 0 {

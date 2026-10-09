@@ -53,8 +53,8 @@ func withAlpha(c color.Color, alpha float64) color.NRGBA {
 	return n
 }
 
-// themedFill is a rectangle that takes its colours from the theme it is drawn in, so it follows a
-// change of theme or variant as widgets do. An empty name leaves that part undrawn.
+// themedFill takes its colours from the theme it is drawn in, so it follows a change of theme as
+// widgets do. An empty name leaves that part undrawn.
 type themedFill struct {
 	widget.BaseWidget
 	fill, edge   fyne.ThemeColorName
