@@ -5,7 +5,7 @@ package overlay
 #include <stdint.h>
 void encre_overlay_no_focus(void* window);
 int encre_overlay_focus_point(int* x, int* y);
-void encre_overlay_panel(uintptr_t window, int x, int y, int radius, int glass);
+void encre_overlay_panel(uintptr_t window, int x, int y, int width, int height, int radius, int glass);
 void encre_overlay_opacity(uintptr_t window, double opacity);
 int encre_overlay_backdrop(void);
 */
@@ -42,7 +42,7 @@ func Panel(window uintptr, frame image.Rectangle, look Look) {
 	if look.Glass {
 		glass = 1
 	}
-	C.encre_overlay_panel(C.uintptr_t(window), C.int(frame.Min.X), C.int(frame.Min.Y), C.int(look.Radius), C.int(glass))
+	C.encre_overlay_panel(C.uintptr_t(window), C.int(frame.Min.X), C.int(frame.Min.Y), C.int(frame.Dx()), C.int(frame.Dy()), C.int(look.Radius), C.int(glass))
 }
 
 // Corner is the radius asked for: macOS rounds the window to it.

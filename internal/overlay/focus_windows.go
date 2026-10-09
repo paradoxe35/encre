@@ -105,7 +105,7 @@ func Panel(window uintptr, frame image.Rectangle, look Look) {
 
 	corner := uint32(dwmwcpRound)
 	dwmSetWindowAttribute.Call(window, dwmwaWindowCornerPreference, uintptr(unsafe.Pointer(&corner)), unsafe.Sizeof(corner))
-	setWindowPos.Call(window, 0, uintptr(frame.Min.X), uintptr(frame.Min.Y), 0, 0, swpNoSize|swpNoZOrder|swpNoActivate)
+	setWindowPos.Call(window, 0, uintptr(frame.Min.X), uintptr(frame.Min.Y), uintptr(frame.Dx()), uintptr(frame.Dy()), swpNoZOrder|swpNoActivate)
 }
 
 // The taskbar only rereads the style when a window is shown, so a visible one is shown again.

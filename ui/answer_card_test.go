@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -483,6 +484,38 @@ func TestASizeChangeGlidesWhileTheCardShows(t *testing.T) {
 	answered(card, "q", strings.Repeat("A longer answer that wraps. ", 10))
 	if len(glides) != 2 || glides[1].Height <= glides[0].Height {
 		t.Fatalf("growing did not glide from the old height to the new: %v", glides)
+	}
+}
+
+// A new question after a long answer gives most of the card's height up, which reads as a jump at the
+// speed the card grows.
+func TestTheCardShrinksMoreSlowlyThanItGrows(t *testing.T) {
+	small, large := fyne.NewSize(480, 140), fyne.NewSize(480, 440)
+	grow, growCurve := glideFor(small, large)
+	shrink, shrinkCurve := glideFor(large, small)
+	if shrink <= grow {
+		t.Fatalf("shrinking takes %v, growing %v", shrink, grow)
+	}
+	if reflect.ValueOf(shrinkCurve).Pointer() == reflect.ValueOf(growCurve).Pointer() {
+		t.Fatal("shrinking eases out like growing, starting with a jump")
+	}
+}
+
+func TestANewQuestionShrinksALongAnswersCardWithAGlide(t *testing.T) {
+	card, _ := newCard(t)
+	var glides []fyne.Size
+	card.animate = func(from, to fyne.Size, apply func(fyne.Size)) *fyne.Animation {
+		glides = append(glides, from, to)
+		apply(to)
+		return nil
+	}
+	answered(card, "q", strings.Repeat("A long answer that wraps over many lines. ", 60))
+	tall := card.size.Height
+
+	glides = nil
+	card.Open("and shorter?", func() {})
+	if len(glides) != 2 || glides[0].Height != tall || glides[1].Height >= tall {
+		t.Fatalf("the card did not glide down from %v: %v", tall, glides)
 	}
 }
 

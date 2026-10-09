@@ -65,7 +65,7 @@ void encre_overlay_opacity(uintptr_t window, double opacity) {
 }
 
 // GLFW places windows from the top left of the primary screen, Cocoa from its bottom left.
-void encre_overlay_panel(uintptr_t window, int x, int y, int radius, int glass) {
+void encre_overlay_panel(uintptr_t window, int x, int y, int width, int height, int radius, int glass) {
     NSWindow* w = (__bridge NSWindow*)(void*)window;
     [w setCollectionBehavior:[w collectionBehavior]
         | NSWindowCollectionBehaviorCanJoinAllSpaces
@@ -73,7 +73,7 @@ void encre_overlay_panel(uintptr_t window, int x, int y, int radius, int glass) 
         | NSWindowCollectionBehaviorFullScreenAuxiliary];
 
     CGFloat top = NSMaxY([[[NSScreen screens] firstObject] frame]);
-    [w setFrameTopLeftPoint:NSMakePoint(x, top - y)];
+    [w setFrame:NSMakeRect(x, top - y - height, width, height) display:YES];
 
     [w setOpaque:NO];
     [w setBackgroundColor:[NSColor clearColor]];

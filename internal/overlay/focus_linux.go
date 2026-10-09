@@ -62,6 +62,15 @@ static void encre_overlay_panel_state(Display* display, Window window) {
     XFlush(display);
 }
 
+// While a resize waits for its next frame, X keeps the window's old picture held to its bottom, as
+// the card is, rather than clearing it to black.
+static void encre_overlay_keep_picture(Display* display, Window window) {
+    XSetWindowAttributes attributes;
+    attributes.background_pixmap = None;
+    attributes.bit_gravity = SouthWestGravity;
+    XChangeWindowAttributes(display, window, CWBackPixmap | CWBitGravity, &attributes);
+}
+
 static void encre_overlay_round(Display* display, Window window, int width, int height, int radius) {
     Pixmap mask = XCreatePixmap(display, window, width, height, 1);
     GC gc = XCreateGC(display, mask, 0, NULL);
@@ -277,7 +286,8 @@ func Panel(window uintptr, frame image.Rectangle, look Look) {
 	display := (*C.Display)(unsafe.Pointer(glfw.GetX11Display()))
 	handle := C.Window(window)
 	C.encre_overlay_panel_state(display, handle)
-	C.XMoveWindow(display, handle, C.int(frame.Min.X), C.int(frame.Min.Y))
+	C.encre_overlay_keep_picture(display, handle)
+	C.XMoveResizeWindow(display, handle, C.int(frame.Min.X), C.int(frame.Min.Y), C.uint(frame.Dx()), C.uint(frame.Dy()))
 	// A blur behind the window would show past smooth corners, so only plain glass goes unshaped.
 	if look.Glass && C.encre_overlay_compositing(display) != 0 && C.encre_overlay_blurs(display) == 0 {
 		C.encre_overlay_unshape(display, handle)

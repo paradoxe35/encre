@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"math"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -28,7 +29,9 @@ const (
 	copiedFor       = 1500 * time.Millisecond
 	renderEvery     = 50 * time.Millisecond
 	resizeFor       = 140 * time.Millisecond
-	fadeFor         = 120 * time.Millisecond
+	// shrinkFor is longer: a card giving up most of its height reads as a jump at the speed it grows.
+	shrinkFor = 240 * time.Millisecond
+	fadeFor   = 120 * time.Millisecond
 )
 
 // AnswerCard shows answers where the indicator was, as they are written, and takes typed questions.
@@ -576,16 +579,42 @@ func (c *AnswerCard) resizeTo(size fyne.Size) {
 		c.float()
 		return
 	}
-	c.resizing = c.animate(c.size, size, c.window.Resize)
+	c.resizing = c.animate(c.size, size, c.applySize)
+}
+
+// applySize moves and sizes the native window in one step before Fyne follows: sized alone, a window
+// keeps its top edge until it is moved, so the card, held by its bottom, would jump and leave a strip
+// undrawn on the way.
+func (c *AnswerCard) applySize(size fyne.Size) {
+	c.size = c.wholePixels(size)
+	c.float()
+	c.window.Resize(c.size)
+}
+
+// wholePixels is size at the nearest whole pixels, so the window and Fyne round it alike: apart, each
+// would size the window to its own rounding in turn, without end.
+func (c *AnswerCard) wholePixels(size fyne.Size) fyne.Size {
+	scale := float64(c.window.Canvas().Scale())
+	round := func(v float32) float32 { return float32(math.Round(float64(v)*scale) / scale) }
+	return fyne.NewSize(round(size.Width), round(size.Height))
 }
 
 func glide(from, to fyne.Size, apply func(fyne.Size)) *fyne.Animation {
-	animation := fyne.NewAnimation(resizeFor, func(progress float32) {
+	duration, curve := glideFor(from, to)
+	animation := fyne.NewAnimation(duration, func(progress float32) {
 		apply(fyne.NewSize(from.Width+(to.Width-from.Width)*progress, from.Height+(to.Height-from.Height)*progress))
 	})
-	animation.Curve = fyne.AnimationEaseOut
+	animation.Curve = curve
 	animation.Start()
 	return animation
+}
+
+// glideFor is quick for a card growing as words arrive, and slower and even for one giving its height up.
+func glideFor(from, to fyne.Size) (time.Duration, fyne.AnimationCurve) {
+	if to.Height < from.Height {
+		return shrinkFor, fyne.AnimationEaseInOut
+	}
+	return resizeFor, fyne.AnimationEaseOut
 }
 
 // laidOut follows the size the window was actually given, so the frame always matches what is drawn.
@@ -652,7 +681,7 @@ func (c *AnswerCard) float() {
 		return
 	}
 	scale := c.window.Canvas().Scale()
-	frame := c.spot.Frame(int(c.size.Width*scale), int(c.size.Height*scale))
+	frame := c.spot.Frame(int(math.Round(float64(c.size.Width*scale))), int(math.Round(float64(c.size.Height*scale))))
 	look := overlay.Look{Radius: int(answerRadius * scale), Glass: c.seeThrough()}
 	c.onNative(func(handle uintptr) { overlay.Panel(handle, frame, look) })
 
