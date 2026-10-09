@@ -11,7 +11,6 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
 
 	"github.com/paradoxe35/encre/internal/logger"
 )
@@ -34,8 +33,6 @@ func RegisterNotifier(id, name string) {
 		logger.Warn("Could not register the notification sender", "shortcut", link, "error", err)
 		return
 	}
-	// Earlier builds registered through this key; Windows must not read the two side by side.
-	registry.DeleteKey(registry.CURRENT_USER, `Software\Classes\AppUserModelId\`+id)
 	logger.Info("Notification sender registered", "shortcut", link)
 }
 
