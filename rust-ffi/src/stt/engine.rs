@@ -32,6 +32,8 @@ struct Loaded {
     session: transcribe_cpp::Session,
     /// Whether the model handles audio longer than its window on its own.
     long_form: bool,
+    /// The language codes the model accepts, empty when it takes any.
+    languages: Vec<String>,
 }
 
 impl Engine {
@@ -75,6 +77,7 @@ impl Engine {
             path: path.to_path_buf(),
             session,
             long_form: model.supports(Feature::LongForm),
+            languages: model.capabilities().languages,
         })
     }
 
@@ -93,7 +96,7 @@ impl Engine {
             tracing::info!(pieces = pieces.len(), "transcribing the take in pieces");
         }
 
-        let options = run_options(language);
+        let options = run_options(&loaded.languages, language);
         let session = &mut loaded.session;
         let mut decode = |piece: &[f32]| run_piece(session, piece, &options);
         join(
@@ -200,11 +203,23 @@ fn join(parts: impl Iterator<Item = Result<String>>) -> Result<String> {
     Ok(text)
 }
 
-fn run_options(language: Option<&str>) -> RunOptions {
+fn run_options(accepted: &[String], language: Option<&str>) -> RunOptions {
     RunOptions {
-        language: language.map(str::to_owned),
+        language: language.map(|code| accepted_code(accepted, code)),
         ..Default::default()
     }
+}
+
+/// Some models name their languages by region (en-US) where Encre names them by language (en).
+fn accepted_code(accepted: &[String], code: &str) -> String {
+    if accepted.is_empty() || accepted.iter().any(|l| l == code) {
+        return code.to_owned();
+    }
+    accepted
+        .iter()
+        .find(|l| l.split_once('-').is_some_and(|(base, _)| base == code))
+        .cloned()
+        .unwrap_or_else(|| code.to_owned())
 }
 
 impl Recognizer for Engine {
@@ -215,9 +230,13 @@ impl Recognizer for Engine {
     }
 
     fn stream_begin(&mut self, language: Option<&str>) -> Result<Self::Live<'_>> {
-        self.loaded()?
+        let loaded = self.loaded()?;
+        loaded
             .session
-            .stream(&run_options(language), &StreamOptions::default())
+            .stream(
+                &run_options(&loaded.languages, language),
+                &StreamOptions::default(),
+            )
             .map_err(|e| anyhow!("failed to begin stream: {e}"))
     }
 }
@@ -302,6 +321,27 @@ mod tests {
         );
         assert_eq!(without_repetition("one two three"), "one two three");
         assert_eq!(without_repetition(""), "");
+    }
+
+    #[test]
+    fn a_language_is_passed_as_the_model_names_it() {
+        let regional = ["en-US".to_owned(), "en-GB".to_owned(), "fr-FR".to_owned()];
+        assert_eq!(accepted_code(&regional, "en"), "en-US");
+        assert_eq!(accepted_code(&regional, "fr"), "fr-FR");
+        assert_eq!(accepted_code(&regional, "en-GB"), "en-GB");
+        assert_eq!(
+            accepted_code(&regional, "de"),
+            "de",
+            "an unknown language is left for the model to refuse"
+        );
+
+        let plain = ["en".to_owned(), "fr".to_owned()];
+        assert_eq!(accepted_code(&plain, "en"), "en");
+        assert_eq!(
+            accepted_code(&[], "sw"),
+            "sw",
+            "a model listing no languages takes any"
+        );
     }
 
     #[test]
