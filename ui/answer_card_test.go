@@ -149,6 +149,31 @@ func TestLongAnswersStopGrowingTheCard(t *testing.T) {
 	}
 }
 
+// A reader at the top of a long answer scrolls it with the wheel at once, with no pointer move
+// first: a two-finger scroll moves none.
+func TestTheWheelScrollsAnAnswerThatOutgrewTheCard(t *testing.T) {
+	card, _ := newCard(t)
+	var batch func()
+	card.later = func(_ time.Duration, run func()) { batch = run }
+	paragraph := "A long paragraph that keeps going. "
+
+	update, _, _ := card.Open("q", func() {})
+	update(strings.Repeat(paragraph, 200), false)
+	batch()
+	card.scroll.ScrollToTop()
+	update(strings.Repeat(paragraph, 400), true)
+
+	if laidOut, needed := card.content.Size().Height, card.content.MinSize().Height; laidOut < needed {
+		t.Fatalf("the answer is laid out %v tall but needs %v, so the scroll sees nothing to scroll", laidOut, needed)
+	}
+	// Fyne aims the wheel at where it last saw the pointer, which may be anywhere on the card.
+	wheel := card.window.Content().(*fyne.Container).Objects[0].(fyne.Scrollable)
+	wheel.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.NewDelta(0, -100)})
+	if card.scroll.Offset.Y <= 0 {
+		t.Fatalf("the wheel left the answer at %v", card.scroll.Offset.Y)
+	}
+}
+
 func TestPromptPutsTheKeyboardInTheInput(t *testing.T) {
 	card, _ := newCard(t)
 

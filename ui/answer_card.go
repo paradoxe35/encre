@@ -459,7 +459,7 @@ func (c *AnswerCard) build() {
 	body := container.New(&answerLayout{scroll: c.reading, footer: c.footer}, c.reading, c.footer)
 	inset := container.New(layout.NewCustomPaddedLayout(answerInset, answerInset, answerInset, answerInset), body)
 	c.look = container.NewThemeOverride(container.NewStack(c.surface(), inset), c.cardTheme())
-	c.window.SetContent(container.New(&sizeWatch{onSize: c.laidOut}, c.look))
+	c.window.SetContent(container.New(&sizeWatch{onSize: c.laidOut}, newWheelCatch(c.look, c.scroll)))
 
 	c.window.SetCloseIntercept(c.Hide)
 	c.window.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
@@ -475,8 +475,11 @@ func (c *AnswerCard) fit() fyne.Size {
 	height := c.window.Content().MinSize().Height
 	width := c.width()
 	if c.reading.Visible() {
+		// Measuring resizes the answer; left so, the scroll would see nothing to scroll once the card
+		// stops growing, and ignore the wheel until the pointer moved over it.
 		c.content.Resize(fyne.NewSize(width-2*answerInset, 0))
 		height += max(c.content.MinSize().Height-c.scroll.MinSize().Height, 0)
+		c.scroll.Refresh()
 	}
 	return fyne.NewSize(width, min(height, answerMaxHeight))
 }
@@ -726,6 +729,29 @@ func (w *sizeWatch) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	objects[0].Resize(size)
 	objects[0].Move(fyne.NewPos(0, 0))
 	w.onSize(size)
+}
+
+// wheelCatch scrolls the answer from anywhere on the card. Fyne aims the wheel at where it last saw
+// the pointer, which is out of date once the card appears or grows under a pointer that has not moved,
+// as under a two-finger scroll. A scrollable deeper in the card, such as the input, still takes its own.
+type wheelCatch struct {
+	widget.BaseWidget
+	content fyne.CanvasObject
+	answer  fyne.Scrollable
+}
+
+func newWheelCatch(content fyne.CanvasObject, answer fyne.Scrollable) *wheelCatch {
+	catch := &wheelCatch{content: content, answer: answer}
+	catch.ExtendBaseWidget(catch)
+	return catch
+}
+
+func (w *wheelCatch) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(w.content)
+}
+
+func (w *wheelCatch) Scrolled(event *fyne.ScrollEvent) {
+	w.answer.Scrolled(event)
 }
 
 // questionEntry sends on Enter and breaks the line on Shift+Enter, as chat inputs do.
