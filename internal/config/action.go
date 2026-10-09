@@ -106,6 +106,8 @@ type OperationConfig struct {
 	// Memory is how many questions Ask sends, the new one included, the earlier ones with their
 	// answers; unset is 1, which remembers nothing.
 	Memory int `json:"memory,omitempty"`
+	// Tools lets Ask look things up on the web.
+	Tools bool `json:"tools,omitempty"`
 
 	// Empty means the default provider, so changing the default carries every operation with it.
 	ProviderID string `json:"provider_id,omitempty"`

@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/paradoxe35/encre/internal/ai"
+	"github.com/paradoxe35/encre/internal/ai/tools"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/history"
 	"github.com/paradoxe35/encre/internal/input"
@@ -268,7 +269,7 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 		return reply{}, fmt.Errorf("nothing to work with - the selection is empty")
 	}
 
-	result, err := p.complete(context.Background(), cfg, kind.Operation(), mentioned, source, nil, nil)
+	result, err := p.complete(context.Background(), cfg, request{op: kind.Operation(), mentioned: mentioned, text: source})
 	if err != nil {
 		return reply{}, err
 	}
@@ -284,15 +285,23 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 	return result, nil
 }
 
-// Ask streams the answer to onText as it is written. It is shown, not pasted, so its formatting stays.
-func (p *Processor) Ask(ctx context.Context, question string, onText func(string)) (string, error) {
+// Ask streams the answer to onText as it is written, and what it looks up on the way to onStatus. It
+// is shown, not pasted, so its formatting stays.
+func (p *Processor) Ask(ctx context.Context, question string, onText, onStatus func(string)) (string, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return "", ErrNoSpeech
 	}
 
 	cfg := p.currentConfig()
-	result, err := p.complete(ctx, cfg, config.OpAsk, "", question, p.remembered(cfg), onText)
+	result, err := p.complete(ctx, cfg, request{
+		op:       config.OpAsk,
+		text:     question,
+		past:     p.remembered(cfg),
+		tools:    askTools(cfg.Operation(config.OpAsk)),
+		onText:   onText,
+		onStatus: onStatus,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -313,17 +322,29 @@ func (p *Processor) Ask(ctx context.Context, question string, onText func(string
 	return answer, nil
 }
 
-// complete streams to onText when it is given, and waits for the whole reply otherwise. The past turns
-// go before the text, as a conversation.
-func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.Operation, mentioned, text string, past []ai.Turn, onText func(string)) (reply, error) {
+// request is the text an operation works on, and what goes with it to the AI.
+type request struct {
+	op        config.Operation
+	mentioned string
+	text      string
+	// past turns go before the text, as a conversation.
+	past  []ai.Turn
+	tools []tools.Tool
+	// onText streams the reply when it is given; otherwise the whole reply is waited for.
+	onText   func(string)
+	onStatus func(string)
+}
+
+func (p *Processor) complete(ctx context.Context, cfg *config.Config, req request) (reply, error) {
+	op := req.op
 	operation := cfg.Operation(op)
-	trimmed := strings.TrimSpace(text)
+	trimmed := strings.TrimSpace(req.text)
 
 	if err := checkCharacterLimit(trimmed, operation.CharacterLimit); err != nil {
 		return reply{}, err
 	}
 
-	name, provider, err := p.resolveProvider(cfg, op, mentioned)
+	name, provider, err := p.resolveProvider(cfg, op, req.mentioned)
 	if err != nil {
 		return reply{}, err
 	}
@@ -340,20 +361,17 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.
 		"provider", name,
 		"model", provider.Model(),
 		"characters", utf8.RuneCountInString(trimmed),
-		"remembered", len(past),
-		"streaming", onText != nil,
+		"remembered", len(req.past),
+		"tools", len(req.tools),
+		"streaming", req.onText != nil,
 	)
 
-	request := ai.Prompt{System: systemPrompt(cfg, op, operation), History: past, Text: trimmed}
-	var answer string
-	if onText != nil {
-		answer, err = provider.Stream(ctx, request, func(text string) {
-			silence.Reset(timeout)
-			onText(text)
-		})
-	} else {
-		answer, err = provider.Complete(ctx, request)
+	prompt := ai.Prompt{System: systemPrompt(cfg, op, operation), History: req.past, Text: trimmed}
+	if op == config.OpAsk {
+		prompt.Context = askContext(time.Now())
 	}
+	keepAlive := func() { silence.Reset(timeout) }
+	answer, err := generate(ctx, provider, prompt, req, keepAlive)
 	if errors.Is(context.Cause(ctx), errTimedOut) {
 		return reply{}, fmt.Errorf("no reply within %ds - raise the timeout in Settings > Actions > %s",
 			operation.TimeoutSeconds, op.Label())
@@ -362,6 +380,22 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, op config.
 		return reply{}, err
 	}
 	return reply{text: answer, provider: name, model: provider.Model()}, nil
+}
+
+// generate waits for the whole reply, or streams it, with the tools when the provider can use them.
+func generate(ctx context.Context, provider ai.Provider, prompt ai.Prompt, req request, keepAlive func()) (string, error) {
+	if req.onText == nil {
+		return provider.Complete(ctx, prompt)
+	}
+	onText := func(text string) {
+		keepAlive()
+		req.onText(text)
+	}
+	model, canUseTools := provider.(ai.ToolUser)
+	if !canUseTools || len(req.tools) == 0 {
+		return provider.Stream(ctx, prompt, onText)
+	}
+	return converse(ctx, model, prompt, req.tools, onText, req.onStatus, keepAlive)
 }
 
 func systemPrompt(cfg *config.Config, op config.Operation, operation config.OperationConfig) string {

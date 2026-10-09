@@ -69,7 +69,7 @@ func TestAskSendsAsManyEarlierQuestionsAsItIsSetToRemember(t *testing.T) {
 		p := &Processor{config: cfg, providerFactory: ai.NewProviderFactory(), history: history.NewStore()}
 		p.providerFactory.Register("OpenAI", recordingProvider{&prompts})
 		for _, question := range []string{"first", "second", "third"} {
-			if _, err := p.Ask(context.Background(), question, func(string) {}); err != nil {
+			if _, err := p.Ask(context.Background(), question, func(string) {}, func(string) {}); err != nil {
 				t.Fatal(err)
 			}
 		}

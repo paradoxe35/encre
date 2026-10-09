@@ -36,7 +36,7 @@ func newCard(t *testing.T) (*AnswerCard, fyne.App) {
 }
 
 func answered(card *AnswerCard, question, answer string) {
-	update, _ := card.Open(question, func() {})
+	update, _, _ := card.Open(question, func() {})
 	update(answer, true)
 }
 
@@ -76,7 +76,7 @@ func TestStreamedWordsAreBatchedAndTheLastOneShown(t *testing.T) {
 	var batch func()
 	card.later = func(_ time.Duration, run func()) { batch = run }
 
-	update, _ := card.Open("q", func() {})
+	update, _, _ := card.Open("q", func() {})
 	update("Paris", false)
 	update("Paris is", false)
 	if got := card.content.String(); strings.Contains(got, "Paris is") || batch == nil {
@@ -98,14 +98,14 @@ func TestClosingAnAnswerBeingWrittenStopsIt(t *testing.T) {
 	card, _ := newCard(t)
 
 	stopped := 0
-	update, _ := card.Open("q", func() { stopped++ })
+	update, _, _ := card.Open("q", func() { stopped++ })
 	update("Paris", false)
 	card.Hide()
 	if stopped != 1 {
 		t.Fatalf("stop ran %d times, want once", stopped)
 	}
 
-	update, _ = card.Open("q", func() { stopped++ })
+	update, _, _ = card.Open("q", func() { stopped++ })
 	update("Paris.", true)
 	card.Hide()
 	if stopped != 1 {
@@ -209,7 +209,7 @@ func TestAQuestionWaitingShowsThatAnAnswerIsComing(t *testing.T) {
 func TestAFailureShowsBelowWhatArrived(t *testing.T) {
 	card, _ := newCard(t)
 
-	update, fail := card.Open("q", func() {})
+	update, fail, _ := card.Open("q", func() {})
 	update("Paris is", false)
 	fail("connection lost")
 	got := card.content.String()
@@ -222,8 +222,8 @@ func TestANewerQuestionIgnoresTheOlderAnswer(t *testing.T) {
 	card, _ := newCard(t)
 
 	stopped := false
-	older, _ := card.Open("first", func() { stopped = true })
-	newer, _ := card.Open("second", func() {})
+	older, _, _ := card.Open("first", func() { stopped = true })
+	newer, _, _ := card.Open("second", func() {})
 	older("late words from the first answer", true)
 	newer("Second answer.", true)
 
@@ -579,5 +579,43 @@ func TestATableKeepsItsAlignmentLinksAndEmptyRows(t *testing.T) {
 	_, heights := layout.measure(grid.Objects)
 	if empty := heights[len(heights)-1]; empty < heights[0] {
 		t.Errorf("an empty row is %v high, want as tall as the header (%v)", empty, heights[0])
+	}
+}
+
+func TestTheCardShowsWhatIsLookedUpUntilTheAnswerStarts(t *testing.T) {
+	card, _ := newCard(t)
+	update, _, status := card.Open("Weather in Paris?", func() {})
+
+	status("Checking the weather in Paris\nLooking up “Paris” on Wikipedia")
+	got := card.content.String()
+	for _, line := range []string{"Checking the weather in Paris…", "Looking up “Paris” on Wikipedia…"} {
+		if !strings.Contains(got, line) {
+			t.Errorf("the card lacks %q:\n%s", line, got)
+		}
+	}
+	if strings.Contains(got, "Thinking") {
+		t.Error("the card says it is thinking while it looks things up")
+	}
+
+	update("Sunny, 21°C.", true)
+	if got := card.content.String(); strings.Contains(got, "Checking the weather") || !strings.Contains(got, "Sunny") {
+		t.Fatalf("after the answer the card reads %q", got)
+	}
+}
+
+func TestTheLookupLinesGoWhenTheAnswerEndsWithoutText(t *testing.T) {
+	card, _ := newCard(t)
+	update, _, status := card.Open("q", func() {})
+	status("Searching the web for “go”")
+	update("", true)
+	if got := card.content.String(); strings.Contains(got, "Searching") {
+		t.Fatalf("a finished card still reads %q", got)
+	}
+
+	_, fail, status := card.Open("q", func() {})
+	status("Searching the web for “go”")
+	fail("the service is having trouble")
+	if got := card.content.String(); strings.Contains(got, "Searching") || !strings.Contains(got, "The service is having trouble") {
+		t.Fatalf("a failed card reads %q", got)
 	}
 }

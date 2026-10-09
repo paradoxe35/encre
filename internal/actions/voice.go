@@ -28,7 +28,7 @@ type assistant interface {
 	CleanTranscript(text string) (string, error)
 	InsertText(text string) error
 	RecordDictation(raw, final string)
-	Ask(ctx context.Context, question string, onText func(string)) (string, error)
+	Ask(ctx context.Context, question string, onText, onStatus func(string)) (string, error)
 }
 
 type otherAudio interface {

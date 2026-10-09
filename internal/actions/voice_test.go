@@ -76,7 +76,7 @@ type fakeTypist struct {
 }
 
 // Ask streams the answer a word at a time, then fails with askErr if there is one.
-func (f *fakeTypist) Ask(ctx context.Context, question string, onText func(string)) (string, error) {
+func (f *fakeTypist) Ask(ctx context.Context, question string, onText, _ func(string)) (string, error) {
 	f.mu.Lock()
 	f.asked = append(f.asked, question)
 	answer, askErr, hold := f.answer, f.askErr, f.hold
@@ -539,7 +539,7 @@ type fakeView struct {
 	done     chan shownAnswer
 }
 
-func (v *fakeView) Open(question string, stop func()) (func(string, bool), func(string)) {
+func (v *fakeView) Open(question string, stop func()) (func(string, bool), func(string), func(string)) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.question, v.stop = question, stop
@@ -559,7 +559,7 @@ func (v *fakeView) Open(question string, stop func()) (func(string, bool), func(
 		defer v.mu.Unlock()
 		v.done <- shownAnswer{question: v.question, text: v.text, failure: reason}
 	}
-	return update, fail
+	return update, fail, func(string) {}
 }
 
 func (v *fakeView) counts() (opens, updates int) {

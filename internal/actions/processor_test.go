@@ -318,7 +318,7 @@ func askWith(t *testing.T, provider ai.Provider) error {
 
 	p := &Processor{config: cfg, providerFactory: ai.NewProviderFactory()}
 	p.providerFactory.Register("OpenAI", provider)
-	_, err := p.complete(context.Background(), cfg, config.OpAsk, "", "q", nil, func(string) {})
+	_, err := p.complete(context.Background(), cfg, request{op: config.OpAsk, text: "q", onText: func(string) {}})
 	return err
 }
 

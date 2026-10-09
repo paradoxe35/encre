@@ -140,7 +140,7 @@ func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
 	}
 }
 
-func TestSavingAsksMemoryKeepsTheNumberAndRefusesOneOutOfRange(t *testing.T) {
+func TestSavingAskKeepsItsSettingsAndRefusesBadOnes(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	utils.EnsureAppHomeDir()
 
@@ -151,23 +151,25 @@ func TestSavingAsksMemoryKeepsTheNumberAndRefusesOneOutOfRange(t *testing.T) {
 		limit:    widget.NewEntry(),
 		timeout:  widget.NewSlider(5, 300),
 		provider: widget.NewSelect(w.providerOptions(), nil),
-		memory:   widget.NewEntry(),
+		ask:      w.newAskEditor(config.OperationConfig{}),
 	}
 	editor.limit.SetText("1000")
 	editor.timeout.SetValue(30)
 	editor.provider.SetSelected(providerDefaultOption)
 	w.operationEditors = map[config.Operation]*operationEditor{config.OpAsk: editor}
 
-	editor.memory.SetText("5")
+	editor.ask.memory.SetText("5")
+	editor.ask.tools.SetChecked(true)
 	if err := w.applyActionSettings(); err != nil {
-		t.Fatalf("saving 5 remembered messages: %v", err)
+		t.Fatalf("saving: %v", err)
 	}
-	if got := cfg.Operation(config.OpAsk).Remembered(); got != 4 {
-		t.Fatalf("5 remembered messages send %d earlier questions, want 4", got)
+	ask := cfg.Operation(config.OpAsk)
+	if ask.Remembered() != 4 || !ask.Tools {
+		t.Fatalf("saved %+v", ask)
 	}
 
-	editor.memory.SetText("101")
+	editor.ask.memory.SetText("101")
 	if err := w.applyActionSettings(); err == nil {
-		t.Fatal("101 remembered messages saved, past the maximum of 100")
+		t.Error("101 remembered messages were saved, past the maximum of 100")
 	}
 }

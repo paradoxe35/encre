@@ -120,7 +120,10 @@ Ask the AI without leaving what you're doing. The answer streams into a small ca
 - **By typing**: press the Ask by typing hotkey and type. `Enter` sends, `Shift+Enter` adds a line
 - Follow up from the card's input, copy an answer with its button, and close it with `Esc` from any window
 - **Remembered messages**: Ask forgets by default. Set it to 2 to send the previous question and answer along with a new one, up to 100. The oldest drop out past about 24,000 characters, and Clear history in the History tab makes it forget
+- **Tools**: switch on "Let Ask look things up" and it can search the web, read a page, look things up on Wikipedia and check the weather, all free and with no API key. The card shows what it's looking up while it does
 - **Card style**: Solid, Glass, Graphite, Midnight, Aurora, Paper or Terminal, in four text sizes
+
+Ask always knows your local date, time and operating system. Tools are off until you switch them on; then searches go to DuckDuckGo, Wikipedia and Open-Meteo, and pages are fetched by Encre itself, which never reads addresses on your own computer or network. Tools need a model that can call them, as most current models can; one that can't is simply asked without them.
 
 All of it lives under Settings > Actions > Ask. The timeout counts silence, so a long answer is never cut off while it's still being written.
 

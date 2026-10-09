@@ -7,12 +7,13 @@ import (
 	"strings"
 )
 
-// answerView shows a question and returns what fills in its answer; closing the view calls stop.
+// answerView shows a question and returns what fills in its answer, and what says what is being
+// looked up for it; closing the view calls stop.
 type answerView interface {
-	Open(question string, stop func()) (update func(text string, done bool), fail func(reason string))
+	Open(question string, stop func()) (update func(text string, done bool), fail func(reason string), status func(line string))
 }
 
-type askFunc func(ctx context.Context, question string, onText func(string)) (string, error)
+type askFunc func(ctx context.Context, question string, onText, onStatus func(string)) (string, error)
 
 // streamAnswer writes the reply into view as it arrives. The view opens at once, or at the first words
 // after firstWords when that is given. Closing the view cancels the request, which is not an error, and
@@ -22,20 +23,29 @@ func streamAnswer(ask askFunc, view answerView, question string, firstWords func
 	defer stop()
 
 	var update func(string, bool)
-	var fail func(string)
-	open := func() { update, fail = view.Open(question, stop) }
+	var fail, status func(string)
+	open := func() { update, fail, status = view.Open(question, stop) }
 	if firstWords == nil {
 		open()
 	}
-
-	var written strings.Builder
-	reply, err := ask(ctx, question, func(text string) {
+	opened := func() {
 		if update == nil {
 			firstWords()
 			open()
 		}
+	}
+
+	var written strings.Builder
+	reply, err := ask(ctx, question, func(text string) {
+		opened()
 		written.WriteString(text)
 		update(written.String(), false)
+	}, func(line string) {
+		// The model looks something up before it answers, so what it wrote so far was not the answer.
+		opened()
+		written.Reset()
+		update("", false)
+		status(line)
 	})
 
 	switch {

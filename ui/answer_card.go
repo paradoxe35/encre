@@ -66,8 +66,10 @@ type AnswerCard struct {
 	question string
 	text     string
 	failure  string
-	done     bool
-	stop     func()
+	// status says what is being looked up, until the answer starts.
+	status string
+	done   bool
+	stop   func()
 
 	spot     overlay.Spot
 	placed   bool
@@ -126,7 +128,7 @@ func (c *AnswerCard) Prompt() {
 // Open shows question and returns what fills in its answer: update with the text so far, then a done
 // update or fail. Closing the card calls stop. All of them may be called from any goroutine; once a
 // newer question is shown, the older one's are ignored.
-func (c *AnswerCard) Open(question string, stop func()) (update func(text string, done bool), fail func(reason string)) {
+func (c *AnswerCard) Open(question string, stop func()) (update func(text string, done bool), fail func(reason string), status func(line string)) {
 	id := c.sessions.Add(1)
 	fyne.Do(func() { c.open(id, question, stop) })
 
@@ -144,7 +146,15 @@ func (c *AnswerCard) Open(question string, stop func()) (update func(text string
 			}
 		})
 	}
-	return update, fail
+	status = func(line string) {
+		fyne.Do(func() {
+			if c.session == id && c.visible {
+				c.status = line
+				c.render()
+			}
+		})
+	}
+	return update, fail, status
 }
 
 func (c *AnswerCard) prompt() {
@@ -172,7 +182,7 @@ func (c *AnswerCard) open(id uint64, question string, stop func()) {
 		c.typing = false
 	}
 	c.session = id
-	c.question, c.text, c.failure, c.done, c.stop = question, "", "", false, stop
+	c.question, c.text, c.failure, c.status, c.done, c.stop = question, "", "", "", false, stop
 	c.scroll.ScrollToTop()
 	c.show()
 }
@@ -262,6 +272,9 @@ func (c *AnswerCard) update(text string, done bool) {
 		return
 	}
 	c.text, c.done = text, done
+	if text != "" || done {
+		c.status = ""
+	}
 
 	wait := renderEvery - time.Since(c.rendered)
 	if done || wait <= 0 {
@@ -283,7 +296,7 @@ func (c *AnswerCard) fail(reason string) {
 	if !c.visible {
 		return
 	}
-	c.failure, c.done = sentence(reason), true
+	c.failure, c.status, c.done = sentence(reason), "", true
 	c.render()
 }
 
@@ -322,6 +335,10 @@ func (c *AnswerCard) segments() []widget.RichTextSegment {
 	switch {
 	case c.text != "":
 		segments = append(segments, adopt(c.content, widget.NewRichTextFromMarkdown(c.text).Segments)...)
+	case c.status != "":
+		for _, line := range strings.Split(c.status, "\n") {
+			segments = append(segments, &widget.TextSegment{Text: line + "…", Style: mutedStyle()})
+		}
 	case !c.done && c.question != "":
 		segments = append(segments, &widget.TextSegment{Text: "Thinking…", Style: mutedStyle()})
 	}
