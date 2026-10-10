@@ -8,8 +8,11 @@ import (
 	"github.com/paradoxe35/encre/internal/permissions"
 )
 
-const pendingPermissionsInfo = "Encre needs the following permissions to function properly. " +
-	"If Encre is not in the list, add it with +."
+// An unsigned Encre no longer matches an entry made for another copy, so the entry is replaced, not kept.
+const pendingPermissionsInfo = "Encre needs these permissions to work. For each one:\n" +
+	"1. Click Grant access.\n" +
+	"2. If Encre is already in the list, select it and remove it with −.\n" +
+	"3. Add Encre with + and switch it on."
 
 type permissionPrompt struct {
 	root                   *fyne.Container
