@@ -88,9 +88,9 @@ type webPageArgs struct {
 func webPage(httpClient *http.Client, renderer string) Tool {
 	return Tool{
 		Tool: aiTool("read_web_page",
-			"Read the text of a web page, given its full http or https address.",
+			"Read the text of a web page or an online PDF, given its full http or https address.",
 			object([]string{"url"}, map[string]any{
-				"url": stringParam("The page's full address, starting with http:// or https://."),
+				"url": stringParam("The page's or PDF's full address, starting with http:// or https://."),
 			})),
 		Status: func(args json.RawMessage) string {
 			parsed, _ := arguments[webPageArgs](args)
