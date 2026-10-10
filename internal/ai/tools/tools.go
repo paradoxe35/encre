@@ -22,7 +22,7 @@ type Tool struct {
 func Set() []Tool {
 	return []Tool{
 		webSearch(duckDuckGo(duckDuckGoURL)),
-		webPage(guardedClient),
+		webPage(guardedClient, renderingReader),
 		wikipedia(wikipediaBase),
 		weather(geocodingURL, forecastURL),
 	}

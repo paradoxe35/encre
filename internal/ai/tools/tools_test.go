@@ -84,27 +84,135 @@ func TestWeatherFindsThePlaceThenItsForecast(t *testing.T) {
 	expect(t, result, "Kinshasa, Kinshasa, DR Congo", "partly cloudy, 27°C (feels like 30°C)", "2026-10-09: light rain, 22°C to 31°C, 60% chance of rain")
 }
 
+// renderer stands in for the rendering reader, answering with text, or failing when there is none.
+func renderer(t *testing.T, text string) (*httptest.Server, *[]*http.Request) {
+	t.Helper()
+	var asked []*http.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r)
+		if text == "" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Write([]byte(text))
+	}))
+	t.Cleanup(server.Close)
+	return server, &asked
+}
+
+var article = strings.Repeat("Exports are twice as fast in this release. ", 8)
+
 func TestAWebPageIsReadWithoutItsScriptsAndNavigation(t *testing.T) {
 	server := serve(t, map[string]string{"/article": `<html><head><title>Release notes</title><script>track()</script></head>
-		<body><nav>Home | Blog</nav><h1>Version 2</h1><p>Exports are   twice as fast.</p><ul><li>New dashboard</li></ul><footer>© 2026</footer></body></html>`})
+		<body><nav>Home | Blog</nav><h1>Version 2</h1><p>` + article + `</p><ul><li>New dashboard</li></ul><footer>© 2026</footer></body></html>`})
+	reader, asked := renderer(t, "rendered")
 
-	result := run(t, webPage(http.DefaultClient), `{"url":"`+server.URL+`/article"}`)
-	expect(t, result, "Release notes", "Version 2", "Exports are twice as fast.", "- New dashboard")
+	result := run(t, webPage(http.DefaultClient, reader.URL+"/"), `{"url":"`+server.URL+`/article"}`)
+	expect(t, result, "Release notes", "Version 2", "Exports are twice as fast in this release.", "- New dashboard")
 	for _, unwanted := range []string{"track()", "Home | Blog", "© 2026"} {
 		if strings.Contains(result, unwanted) {
 			t.Errorf("the page text kept %q:\n%s", unwanted, result)
 		}
 	}
+	if len(*asked) != 0 {
+		t.Error("a page read here was also sent to the rendering reader")
+	}
+}
+
+func TestOnlyTheMainContentIsReadWhenThePageMarksIt(t *testing.T) {
+	server := serve(t, map[string]string{
+		"/main":    `<html><body><div>Accept all cookies</div><main><p>` + article + `</p></main><div>Related stories</div></body></html>`,
+		"/article": `<html><body><div>Accept all cookies</div><article><p>` + article + `</p></article></body></html>`,
+		"/listing": `<html><body><h1>Latest</h1><article><p>` + article + `</p></article><article><p>Second story.</p></article></body></html>`,
+	})
+	reader, _ := renderer(t, "")
+	read := webPage(http.DefaultClient, reader.URL+"/")
+
+	for _, path := range []string{"/main", "/article"} {
+		result := run(t, read, `{"url":"`+server.URL+path+`"}`)
+		expect(t, result, "Exports are twice as fast")
+		if strings.Contains(result, "cookies") || strings.Contains(result, "Related") {
+			t.Errorf("%s kept what surrounds its content:\n%s", path, result)
+		}
+	}
+	expect(t, run(t, read, `{"url":"`+server.URL+`/listing"}`), "Latest", "Second story.")
+}
+
+func TestAPageInAnotherCharacterSetReadsCorrectly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=windows-1252")
+		w.Write([]byte("<p>Caf\xe9 cr\xe8me, " + article + "</p>"))
+	}))
+	t.Cleanup(server.Close)
+	reader, _ := renderer(t, "")
+
+	expect(t, run(t, webPage(http.DefaultClient, reader.URL+"/"), `{"url":"`+server.URL+`"}`), "Café crème")
+}
+
+func TestAPageItsScriptsBuildIsReadThroughTheRenderingReader(t *testing.T) {
+	server := serve(t, map[string]string{"/app": `<html><head><title>App</title></head><body><div id="root"></div><script>render()</script></body></html>`})
+	reader, asked := renderer(t, "Title: App\n\nMarkdown Content:\nThe rendered dashboard.")
+
+	result := run(t, webPage(http.DefaultClient, reader.URL+"/"), `{"url":"`+server.URL+`/app"}`)
+	expect(t, result, "The rendered dashboard.")
+	if len(*asked) != 1 || (*asked)[0].URL.Path != "/"+server.URL+"/app" || (*asked)[0].Header.Get("DNT") != "1" {
+		t.Fatalf("the rendering reader was asked %d times, last for %v", len(*asked), *asked)
+	}
+}
+
+func TestABarePageIsKeptWhenTheRenderingReaderFails(t *testing.T) {
+	server := serve(t, map[string]string{"/short": `<html><head><title>Short</title></head><body><p>Just a line.</p></body></html>`})
+	reader, _ := renderer(t, "")
+
+	expect(t, run(t, webPage(http.DefaultClient, reader.URL+"/"), `{"url":"`+server.URL+`/short"}`), "Short", "Just a line.")
+}
+
+func TestOnlyABlockedOrPDFPageGoesToTheRenderingReader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/blocked":
+			http.Error(w, "challenge", http.StatusForbidden)
+		case "/paper.pdf":
+			w.Header().Set("Content-Type", "application/pdf")
+			w.Write([]byte("%PDF-1.7"))
+		case "/photo.png":
+			w.Header().Set("Content-Type", "image/png")
+			w.Write([]byte("png"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	reader, asked := renderer(t, "Rendered through the reader.")
+	read := webPage(http.DefaultClient, reader.URL+"/")
+
+	for _, path := range []string{"/blocked", "/paper.pdf"} {
+		expect(t, run(t, read, `{"url":"`+server.URL+path+`"}`), "Rendered through the reader.")
+	}
+	for _, path := range []string{"/missing", "/photo.png"} {
+		if _, err := read.Run(context.Background(), json.RawMessage(`{"url":"`+server.URL+path+`"}`)); err == nil {
+			t.Errorf("%s was read", path)
+		}
+	}
+	if len(*asked) != 2 {
+		t.Fatalf("the rendering reader was asked %d times, want only for the blocked page and the PDF", len(*asked))
+	}
 }
 
 func TestPagesOnThisComputerAreRefused(t *testing.T) {
 	server := serve(t, map[string]string{"/admin": "<p>secret</p>"})
-	_, err := webPage(guardedClient).Run(context.Background(), json.RawMessage(`{"url":"`+server.URL+`/admin"}`))
+	reader, asked := renderer(t, "rendered")
+	read := webPage(guardedClient, reader.URL+"/")
+
+	_, err := read.Run(context.Background(), json.RawMessage(`{"url":"`+server.URL+`/admin"}`))
 	if err == nil || !strings.Contains(err.Error(), "cannot be read") {
 		t.Fatalf("a page on this computer was read, or refused unclearly: %v", err)
 	}
-	if _, err := webPage(guardedClient).Run(context.Background(), json.RawMessage(`{"url":"file:///etc/passwd"}`)); err == nil {
+	if _, err := read.Run(context.Background(), json.RawMessage(`{"url":"file:///etc/passwd"}`)); err == nil {
 		t.Fatal("a file address was read")
+	}
+	if len(*asked) != 0 {
+		t.Fatal("a page on this computer was sent to the rendering reader")
 	}
 }
 

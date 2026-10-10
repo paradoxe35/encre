@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -14,8 +15,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/charset"
 )
 
 // Checked once resolved, so a page cannot steer the model into reading a router or local service.
@@ -64,11 +67,25 @@ func isLocal(address string) bool {
 	return false
 }
 
+// renderingReader loads a page in a browser and returns its text; it is free without a key, at 20 pages a minute.
+const renderingReader = "https://r.jina.ai/"
+
+// minPageText is less than any real article has, so a page this bare is waiting on its scripts.
+const minPageText = 200
+
+var errBarePage = errors.New("the page has almost no text before its scripts run")
+
+type unreadableError struct{ contentType string }
+
+func (e *unreadableError) Error() string {
+	return "the page is " + e.contentType + ", which cannot be read as text"
+}
+
 type webPageArgs struct {
 	URL string `json:"url"`
 }
 
-func webPage(httpClient *http.Client) Tool {
+func webPage(httpClient *http.Client, renderer string) Tool {
 	return Tool{
 		Tool: aiTool("read_web_page",
 			"Read the text of a web page, given its full http or https address.",
@@ -87,16 +104,32 @@ func webPage(httpClient *http.Client) Tool {
 			if err != nil {
 				return "", err
 			}
-			return read(ctx, httpClient, parsed.URL)
+			return read(ctx, httpClient, renderer, parsed.URL)
 		},
 	}
 }
 
-func read(ctx context.Context, httpClient *http.Client, address string) (string, error) {
+// read stays on this computer unless a browser would get what a plain download could not.
+func read(ctx context.Context, httpClient *http.Client, renderer, address string) (string, error) {
 	page, err := url.Parse(address)
 	if err != nil || (page.Scheme != "http" && page.Scheme != "https") || page.Host == "" {
 		return "", fmt.Errorf("%q is not an http or https address", address)
 	}
+
+	text, err := readDirectly(ctx, httpClient, page)
+	if !renderingHelps(err) {
+		return text, err
+	}
+	if rendered, renderErr := readRendered(ctx, httpClient, renderer, page); renderErr == nil {
+		return rendered, nil
+	}
+	if errors.Is(err, errBarePage) {
+		return text, nil
+	}
+	return "", err
+}
+
+func readDirectly(ctx context.Context, httpClient *http.Client, page *url.URL) (string, error) {
 	body, contentType, err := get(ctx, httpClient, page.String())
 	if err != nil {
 		return "", err
@@ -104,12 +137,59 @@ func read(ctx context.Context, httpClient *http.Client, address string) (string,
 
 	switch {
 	case strings.Contains(contentType, "html"):
-		title, text := pageText(body)
-		return truncate(title + "\n" + page.String() + "\n\n" + text), nil
+		title, text := pageText(decoded(body, contentType))
+		result := truncate(title + "\n" + page.String() + "\n\n" + text)
+		if utf8.RuneCountInString(text) < minPageText {
+			return result, errBarePage
+		}
+		return result, nil
 	case strings.HasPrefix(contentType, "text/"), strings.Contains(contentType, "json"):
-		return truncate(string(body)), nil
+		return truncate(string(decoded(body, contentType))), nil
 	}
-	return "", fmt.Errorf("the page is %s, which cannot be read as text", contentType)
+	return "", &unreadableError{contentType: contentType}
+}
+
+// renderingHelps with text that scripts build, a wall against plain downloads, and PDFs.
+func renderingHelps(err error) bool {
+	var status *statusError
+	var unreadable *unreadableError
+	switch {
+	case errors.Is(err, errBarePage):
+		return true
+	case errors.As(err, &status):
+		return status.code == http.StatusForbidden || status.code == http.StatusTooManyRequests ||
+			status.code == http.StatusServiceUnavailable
+	case errors.As(err, &unreadable):
+		return strings.Contains(unreadable.contentType, "pdf")
+	}
+	return false
+}
+
+func readRendered(ctx context.Context, httpClient *http.Client, renderer string, page *url.URL) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, renderer+page.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("DNT", "1")
+	req.Header.Set("X-Retain-Images", "none")
+	body, _, err := fetch(httpClient, req)
+	if err != nil {
+		return "", err
+	}
+	return truncate(string(body)), nil
+}
+
+// decoded is the body in UTF-8, whatever character set the page declares.
+func decoded(body []byte, contentType string) []byte {
+	reader, err := charset.NewReader(bytes.NewReader(body), contentType)
+	if err != nil {
+		return body
+	}
+	text, err := io.ReadAll(reader)
+	if err != nil {
+		return body
+	}
+	return text
 }
 
 var (
@@ -156,13 +236,35 @@ func pageText(body []byte) (string, string) {
 			text.WriteString("\n")
 		}
 	}
-	walk(root)
+	walk(mainContent(root))
 
 	lines := strings.Split(text.String(), "\n")
 	for i, line := range lines {
 		lines[i] = strings.TrimSpace(line)
 	}
 	return pageTitle(root), strings.TrimSpace(blankLines.ReplaceAllString(strings.Join(lines, "\n"), "\n\n"))
+}
+
+// mainContent leaves out banners and side panels when the page marks its content; several articles make a listing.
+func mainContent(root *html.Node) *html.Node {
+	if main := elements(root, "main"); len(main) > 0 {
+		return main[0]
+	}
+	if articles := elements(root, "article"); len(articles) == 1 {
+		return articles[0]
+	}
+	return root
+}
+
+func elements(node *html.Node, name string) []*html.Node {
+	if node.Type == html.ElementNode && node.Data == name {
+		return []*html.Node{node}
+	}
+	var found []*html.Node
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		found = append(found, elements(child, name)...)
+	}
+	return found
 }
 
 func pageTitle(node *html.Node) string {
