@@ -190,9 +190,9 @@ func glassColors(variant fyne.ThemeVariant) palette {
 		theme.ColorNameButton:            hex(0x3a3a3c),
 		theme.ColorNameHover:             withAlpha(hex(0xffffff), 0.08),
 		theme.ColorNamePressed:           withAlpha(hex(0xffffff), 0.14),
-		theme.ColorNamePlaceHolder:       hex(0xbdbdc2),
-		theme.ColorNameHyperlink:         hex(0x99c2ff),
-		theme.ColorNameError:             hex(0xffaba3),
+		theme.ColorNamePlaceHolder:       hex(0xd2d2d7),
+		theme.ColorNameHyperlink:         hex(0xb8d8ff),
+		theme.ColorNameError:             hex(0xffc0b9),
 		theme.ColorNameDisabled:          hex(0x636366),
 		theme.ColorNameSeparator:         hex(0x38383a),
 		theme.ColorNameOverlayBackground: hex(0x2c2c2e),
@@ -222,7 +222,7 @@ func glassColors(variant fyne.ThemeVariant) palette {
 			colorNameCardEdge:                withAlpha(hex(0x000000), 0.1),
 		}
 	}
-	colors[colorNameGlass] = withAlpha(colors[colorNameCard], 0.9)
+	colors[colorNameGlass] = withAlpha(colors[colorNameCard], 0.8)
 	colors[colorNameFrost] = withAlpha(colors[colorNameCard], 0.95)
 	return colors
 }

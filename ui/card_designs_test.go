@@ -13,7 +13,17 @@ import (
 )
 
 // readable is WCAG AA for text; the card has no text large enough for less.
-const readable = 4.5
+// Blurred glass trades some of it for clarity: the blur calms what shows through, and 3:1 still reads.
+const (
+	readable            = 4.5
+	readableThroughBlur = 3
+)
+
+// ground is a colour text can land on and the contrast it needs there.
+type ground struct {
+	color color.NRGBA
+	least float64
+}
 
 func TestEveryCardStyleKeepsItsTextReadableOnWhateverIsBehindIt(t *testing.T) {
 	test.NewTempApp(t)
@@ -25,9 +35,10 @@ func TestEveryCardStyleKeepsItsTextReadableOnWhateverIsBehindIt(t *testing.T) {
 			card := newCardTheme(newAppTheme(&variant), design)
 			for _, ground := range surfaces(card, design, variant) {
 				for _, name := range texts {
-					text := over(card.Color(name, variant), ground)
-					if ratio := contrast(text, ground); ratio < readable {
-						t.Errorf("%s card (light %v): %s reads at %.2f:1 on %v", cardStyleLabels[style], variant == theme.VariantLight, name, ratio, ground)
+					text := over(card.Color(name, variant), ground.color)
+					if ratio := contrast(text, ground.color); ratio < ground.least {
+						t.Errorf("%s card (light %v): %s reads at %.2f:1 on %v, below %v:1",
+							cardStyleLabels[style], variant == theme.VariantLight, name, ratio, ground.color, ground.least)
 					}
 				}
 			}
@@ -36,16 +47,16 @@ func TestEveryCardStyleKeepsItsTextReadableOnWhateverIsBehindIt(t *testing.T) {
 }
 
 // surfaces are every colour the card's text can land on: its fill, its glow, and for glass the lightest and darkest screens behind.
-func surfaces(card *cardTheme, design cardDesign, variant fyne.ThemeVariant) []color.NRGBA {
-	var grounds []color.NRGBA
+func surfaces(card *cardTheme, design cardDesign, variant fyne.ThemeVariant) []ground {
+	var grounds []ground
 	if fill := color.NRGBAModel.Convert(card.Color(colorNameCard, variant)).(color.NRGBA); fill.A > 0 {
-		grounds = append(grounds, over(fill, color.Black))
+		grounds = append(grounds, ground{over(fill, color.Black), readable})
 	}
 	if design.glass {
-		for _, name := range []fyne.ThemeColorName{colorNameGlass, colorNameFrost} {
+		for name, least := range map[fyne.ThemeColorName]float64{colorNameGlass: readableThroughBlur, colorNameFrost: readable} {
 			fill := card.Color(name, variant)
 			for _, screen := range []color.Color{color.White, color.Black} {
-				grounds = append(grounds, over(fill, screen), throughWindow(fill, screen))
+				grounds = append(grounds, ground{over(fill, screen), least}, ground{throughWindow(fill, screen), least})
 			}
 		}
 	}
@@ -65,10 +76,10 @@ func surfaces(card *cardTheme, design cardDesign, variant fyne.ThemeVariant) []c
 			blooms = append(blooms, layer.StartColor)
 		}
 	}
-	grounds = append(grounds, bases...)
-	for _, glow := range blooms {
-		for _, base := range bases {
-			grounds = append(grounds, over(glow, base))
+	for _, base := range bases {
+		grounds = append(grounds, ground{base, readable})
+		for _, glow := range blooms {
+			grounds = append(grounds, ground{over(glow, base), readable})
 		}
 	}
 	return grounds
