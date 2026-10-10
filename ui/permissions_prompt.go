@@ -30,7 +30,6 @@ func newPermissionPrompt() *permissionPrompt {
 	title := widget.NewLabelWithStyle("Permissions required", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	info := widget.NewLabel(pendingPermissionsInfo)
-	info.Wrapping = fyne.TextWrapWord
 
 	accessibilityButton := newPermissionButton("Grant access", func() {
 		permissions.OpenPreference(permissions.Accessibility)
@@ -77,7 +76,6 @@ func newPermissionPrompt() *permissionPrompt {
 	body := container.NewVBox(
 		title,
 		info,
-		widget.NewLabel(""),
 		dividerAbove,
 		accessibilitySection,
 		inputMonitoringSection,
