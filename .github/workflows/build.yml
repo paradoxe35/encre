@@ -625,28 +625,49 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" Encre.app/Contents/Info.plist
           /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" Encre.app/Contents/Info.plist
 
-      - name: Ad-hoc sign app bundle (inside-out approach)
+      # A certificate keeps the designated requirement stable, so macOS permissions survive updates;
+      # ad-hoc pins it to this build's hash. See scripts/generate-mac-signing-cert.sh
+      - name: Sign app bundle (inside-out approach)
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
-          echo "Ad-hoc signing Encre.app (without hardened runtime/entitlements)..."
+          SIGN=(--sign -)
+          if [ -n "$MACOS_CERTIFICATE" ]; then
+            KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+            KEYCHAIN_PASSWORD="$(uuidgen)"
+            CERTIFICATE="$RUNNER_TEMP/certificate.p12"
+
+            echo "$MACOS_CERTIFICATE" | base64 --decode > "$CERTIFICATE"
+            security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+            security set-keychain-settings -lut 21600 "$KEYCHAIN"
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+            security import "$CERTIFICATE" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+            rm -f "$CERTIFICATE"
+
+            # No -v: it hides a self-signed identity, which codesign still accepts.
+            IDENTITY="$(security find-identity -p codesigning "$KEYCHAIN" | awk '/^ *[0-9]+\)/ { print $2; exit }')"
+            if [ -z "$IDENTITY" ]; then
+              echo "::error::MACOS_CERTIFICATE holds no code-signing identity"
+              exit 1
+            fi
+            SIGN=(--sign "$IDENTITY" --keychain "$KEYCHAIN")
+            echo "Signing with certificate $IDENTITY"
+          else
+            echo "::warning::No MACOS_CERTIFICATE secret: ad-hoc signing, so macOS permissions reset on every update"
+          fi
 
           EXEC=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" Encre.app/Contents/Info.plist)
-          echo "CFBundleExecutable=$EXEC"
 
           # Inside-out, as Apple wants: frameworks, executable, then the bundle.
-          echo "Signing frameworks (if any)..."
-          find Encre.app/Contents/Frameworks -name "*.framework" -exec codesign --force --sign - {} \; 2>/dev/null || true
-
-          echo "Signing executable: ${EXEC}"
-          codesign --force --sign - "Encre.app/Contents/MacOS/${EXEC}"
-
+          find Encre.app/Contents/Frameworks -name "*.framework" -exec codesign --force "${SIGN[@]}" {} \; 2>/dev/null || true
+          codesign --force "${SIGN[@]}" "Encre.app/Contents/MacOS/${EXEC}"
           # No --deep: the contents are signed already.
-          echo "Signing app bundle..."
-          codesign --force --sign - Encre.app
+          codesign --force "${SIGN[@]}" Encre.app
 
-          echo "Verifying signature..."
-          codesign --verify --verbose=4 Encre.app
-
-          echo "Ad-hoc signing completed successfully"
+          codesign --verify --strict --verbose=4 Encre.app
+          codesign --display --requirements - Encre.app
 
       - name: Remove quarantine attributes
         run: |
