@@ -12,6 +12,7 @@ import (
 	"github.com/paradoxe35/encre/internal/ai"
 	"github.com/paradoxe35/encre/internal/ai/tools"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/prompt"
 )
 
 type scriptedModel struct {
@@ -111,6 +112,20 @@ func TestWhatTheModelWroteBeforeLookingUpIsNotShownAsTheAnswer(t *testing.T) {
 	}
 	if shown := <-view.done; shown.text != "Sunny." {
 		t.Fatalf("the card shows %q", shown.text)
+	}
+}
+
+func TestAskWithToolsIsToldWhenToLookThingsUp(t *testing.T) {
+	model := &scriptedModel{turns: []ai.Reply{{Text: "Sunny."}}}
+	weather := fakeTool("get_weather", func(json.RawMessage) (string, error) { return "", nil })
+
+	if _, err := converse(context.Background(), model, ai.Prompt{System: "My own Ask prompt.", Text: "Weather?"}, []tools.Tool{weather},
+		func(string) {}, func(string) {}, func() {}); err != nil {
+		t.Fatal(err)
+	}
+	sent := model.prompts[0]
+	if sent.ToolUse != prompt.AskTools || sent.System != "My own Ask prompt." {
+		t.Fatalf("sent tool use %q with system %q", sent.ToolUse, sent.System)
 	}
 }
 

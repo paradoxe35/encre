@@ -66,7 +66,7 @@ type chatReply struct {
 func (chatCompletions) request(ctx context.Context, target endpoint, prompt Prompt, stream, lowReasoning bool) (*http.Request, error) {
 	body := chatRequest{
 		Model:       target.model,
-		Messages:    append([]chatMessage{{Role: "system", Content: prompt.System}}, prompt.conversation("assistant")...),
+		Messages:    append([]chatMessage{{Role: "system", Content: prompt.system()}}, prompt.conversation("assistant")...),
 		Temperature: target.temperature,
 		Stream:      stream,
 	}

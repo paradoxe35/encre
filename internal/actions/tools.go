@@ -12,6 +12,7 @@ import (
 	"github.com/paradoxe35/encre/internal/ai"
 	"github.com/paradoxe35/encre/internal/ai/tools"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/prompt"
 )
 
 const maxLookupRounds = 4
@@ -38,29 +39,30 @@ func askContext(now time.Time) string {
 var errKeptLookingUp = errors.New("the model kept looking things up instead of answering - ask again, or turn off its tools")
 
 // keepAlive marks progress: lookups take time without the model writing anything.
-func converse(ctx context.Context, model ai.ToolUser, prompt ai.Prompt, toolset []tools.Tool, onText, onStatus func(string), keepAlive func()) (string, error) {
+func converse(ctx context.Context, model ai.ToolUser, ask ai.Prompt, toolset []tools.Tool, onText, onStatus func(string), keepAlive func()) (string, error) {
 	byName := make(map[string]tools.Tool, len(toolset))
 	for _, tool := range toolset {
-		prompt.Tools = append(prompt.Tools, tool.Tool)
+		ask.Tools = append(ask.Tools, tool.Tool)
 		byName[tool.Name] = tool
 	}
+	ask.ToolUse = prompt.AskTools
 
 	for round := 1; ; round++ {
-		prompt.NoMoreCalls = round > maxLookupRounds
-		reply, err := model.Turn(ctx, prompt, onText)
+		ask.NoMoreCalls = round > maxLookupRounds
+		reply, err := model.Turn(ctx, ask, onText)
 		switch {
 		case err != nil, len(reply.Calls) == 0:
 			return reply.Text, err
-		case prompt.NoMoreCalls && reply.Text != "":
+		case ask.NoMoreCalls && reply.Text != "":
 			return reply.Text, nil
-		case prompt.NoMoreCalls:
+		case ask.NoMoreCalls:
 			return "", errKeptLookingUp
 		}
 
 		keepAlive()
 		results := lookUp(ctx, byName, reply.Calls, onStatus)
 		keepAlive()
-		prompt.Steps = append(prompt.Steps, ai.Step{Calls: reply.Calls, Results: results})
+		ask.Steps = append(ask.Steps, ai.Step{Calls: reply.Calls, Results: results})
 	}
 }
 

@@ -84,7 +84,7 @@ func (messages) request(ctx context.Context, target endpoint, prompt Prompt, str
 	body := messagesRequest{
 		Model:       target.model,
 		MaxTokens:   anthropicMaxTokens,
-		System:      prompt.System,
+		System:      prompt.system(),
 		Temperature: target.temperature,
 		Stream:      stream,
 	}

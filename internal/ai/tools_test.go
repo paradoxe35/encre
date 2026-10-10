@@ -126,6 +126,30 @@ func TestAModelThatRefusesToolsIsAskedAgainWithoutThem(t *testing.T) {
 	}
 }
 
+func TestToolUseIsSentWithTheToolsAndDroppedWithThem(t *testing.T) {
+	var systems []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body chatRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		systems = append(systems, body.Messages[0].Content)
+		if len(body.Tools) > 0 {
+			http.Error(w, `{"error":{"message":"this model does not support tools"}}`, http.StatusBadRequest)
+			return
+		}
+		sse(`{"choices":[{"delta":{"content":"Sunny"}}]}`, `[DONE]`)(w, r)
+	}))
+	defer server.Close()
+	p, _ := FromSettings("local", config.ProviderSettings{BaseURL: server.URL + "/v1", Model: "refuses-tools"}, "", true)
+
+	prompt := Prompt{System: "Be brief.", ToolUse: "Look things up.", Text: "Weather?", Tools: []Tool{weatherTool}}
+	if _, err := p.(ToolUser).Turn(context.Background(), prompt, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(systems) != 2 || systems[0] != "Be brief.\n\nLook things up." || systems[1] != "Be brief." {
+		t.Fatalf("sent system messages %q, want the tool use with the tools only", systems)
+	}
+}
+
 func TestTheLastRoundForbidsToolCallsInEachProtocol(t *testing.T) {
 	prompt := Prompt{Text: "q", Tools: []Tool{weatherTool}, NoMoreCalls: true}
 	cases := []struct {
@@ -145,6 +169,22 @@ func TestTheLastRoundForbidsToolCallsInEachProtocol(t *testing.T) {
 		body, _ := io.ReadAll(request.Body)
 		if !strings.Contains(string(body), c.want) {
 			t.Errorf("%s: request lacks %s\n%s", c.name, c.want, body)
+		}
+	}
+}
+
+func TestEachProtocolSendsToolUseOnlyWithTools(t *testing.T) {
+	for name, wire := range map[string]protocol{"openai": chatCompletions{}, "anthropic": messages{}, "gemini": generateContent{}} {
+		for _, tools := range [][]Tool{{weatherTool}, nil} {
+			prompt := Prompt{System: "Be brief.", ToolUse: "Look things up.", Text: "q", Tools: tools}
+			request, err := wire.request(context.Background(), endpoint{baseURL: "http://example.test", model: "m"}, prompt, true, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(request.Body)
+			if sent := strings.Contains(string(body), "Look things up."); sent != (tools != nil) {
+				t.Errorf("%s with %d tools sent the tool use: %v", name, len(tools), sent)
+			}
 		}
 	}
 }

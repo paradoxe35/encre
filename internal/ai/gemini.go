@@ -80,7 +80,7 @@ type geminiReply struct {
 
 func (generateContent) request(ctx context.Context, target endpoint, prompt Prompt, stream, lowReasoning bool) (*http.Request, error) {
 	body := geminiRequest{
-		SystemInstruction: &geminiContent{Parts: []geminiPart{{Text: prompt.System}}},
+		SystemInstruction: &geminiContent{Parts: []geminiPart{{Text: prompt.system()}}},
 		Contents:          geminiContents(prompt.conversation("model")),
 		GenerationConfig:  geminiConfig{Temperature: target.temperature},
 	}

@@ -46,6 +46,11 @@ Rules:
 
 No preamble and no offers to help further.`
 
+// AskTools is added to the Ask prompt whenever its tools are sent, and only then; it cannot be edited away.
+const AskTools = `You can look things up. Use the tools when the answer depends on something current or specific you may not know reliably — news, prices, versions, schedules, people or places, the weather, or a page the user mentions — instead of guessing. Answer directly when you already know.
+If a question is ambiguous and looking it up would settle it, look it up; otherwise answer the most likely reading.
+Name the sources you used.`
+
 // A template naming neither placeholder gets the instruction appended, so the pair is never lost.
 func RenderTranslate(template, primary, secondary string) string {
 	if strings.Contains(template, PlaceholderPrimary) || strings.Contains(template, PlaceholderSecondary) {

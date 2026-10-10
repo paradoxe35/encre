@@ -8,13 +8,22 @@ import (
 
 // Context travels with the text, not the system prompt, so instructions stay identical per request.
 type Prompt struct {
-	System      string
-	History     []Turn
-	Text        string
-	Context     string
-	Tools       []Tool
+	System  string
+	History []Turn
+	Text    string
+	Context string
+	Tools   []Tool
+	// ToolUse is appended to System only while Tools are sent, so a retry without them drops it too.
+	ToolUse     string
 	Steps       []Step
 	NoMoreCalls bool
+}
+
+func (p Prompt) system() string {
+	if len(p.Tools) == 0 || p.ToolUse == "" {
+		return p.System
+	}
+	return p.System + "\n\n" + p.ToolUse
 }
 
 type Turn struct {
