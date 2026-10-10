@@ -644,6 +644,8 @@ jobs:
             security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
             security import "$CERTIFICATE" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
             security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+            # codesign looks identities up through the search list, even with --keychain.
+            security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
             rm -f "$CERTIFICATE"
 
             # No -v: it hides a self-signed identity, which codesign still accepts.
