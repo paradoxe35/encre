@@ -229,6 +229,24 @@ func TestALongAnswerStaysAtItsStartAsItGrows(t *testing.T) {
 	}
 }
 
+// The card scrolls only once an answer outgrows its largest size, not by a fraction of a pixel before.
+func TestAShortAnswerFitsWithoutScrolling(t *testing.T) {
+	for _, answer := range []string{
+		strings.Repeat("A short answer that wraps. ", 3),
+		strings.Repeat("A short answer that wraps. ", 8),
+		"Intro\n\n- one\n- two\n- three",
+		"1. first item\n2. second item that is long enough to wrap onto a second line in the card",
+	} {
+		card, _ := newCard(t)
+		update, _, _ := card.Open("q", func() {})
+		update("Thinking", false)
+		update(answer, true)
+		if content, scroll := card.content.MinSize().Height, card.scroll.Size().Height; content > scroll {
+			t.Errorf("%q is %v tall in a %v scroll", answer, content, scroll)
+		}
+	}
+}
+
 func TestPromptPutsTheKeyboardInTheInput(t *testing.T) {
 	card, _ := newCard(t)
 

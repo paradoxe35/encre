@@ -579,11 +579,11 @@ func (c *AnswerCard) applySize(size fyne.Size) {
 	c.window.Resize(c.size)
 }
 
-// wholePixels makes the window and Fyne round alike, or each resizes to its own rounding forever.
+// wholePixels rounds up as Fyne does, so they agree and the content never outgrows the card by a fraction.
 func (c *AnswerCard) wholePixels(size fyne.Size) fyne.Size {
 	scale := float64(c.window.Canvas().Scale())
-	round := func(v float32) float32 { return float32(math.Round(float64(v)*scale) / scale) }
-	return fyne.NewSize(round(size.Width), round(size.Height))
+	up := func(v float32) float32 { return float32(math.Ceil(float64(v)*scale-0.001) / scale) }
+	return fyne.NewSize(up(size.Width), up(size.Height))
 }
 
 func glide(from, to fyne.Size, apply func(fyne.Size)) *fyne.Animation {
