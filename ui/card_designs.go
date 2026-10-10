@@ -41,14 +41,16 @@ var (
 var cardDesigns = map[config.CardStyle]cardDesign{
 	config.CardStyleSolid: {
 		variant: &darkVariant,
-		colors:  always(palette{colorNameCard: overlay.Surface, colorNameCardEdge: color.Transparent}),
+		colors: always(palette{
+			colorNameCard: overlay.Surface, colorNameCardEdge: color.Transparent, theme.ColorNameHyperlink: hex(0x4c8dff),
+		}),
 	},
 	config.CardStyleGlass: {colors: glassColors, glass: true, rounded: true},
 	config.CardStyleGraphite: {
 		variant: &darkVariant,
 		rounded: true,
 		colors: always(swatch{
-			text: hex(0xececed), muted: hex(0x8a8f98), accent: hex(0xff6363),
+			text: hex(0xececed), muted: hex(0x959aa3), accent: hex(0xff6363), failure: hex(0xff7a70),
 			input: hex(0x1d1e21), line: withAlpha(hex(0xffffff), 0.09), edge: withAlpha(hex(0xffffff), 0.12),
 		}.palette()),
 		glow: func() []fyne.CanvasObject {
@@ -62,7 +64,7 @@ var cardDesigns = map[config.CardStyle]cardDesign{
 		variant: &darkVariant,
 		rounded: true,
 		colors: always(swatch{
-			text: hex(0xe8e7ff), muted: hex(0x8f8ec0), accent: hex(0x8b8cff),
+			text: hex(0xe8e7ff), muted: hex(0xa8a7ce), accent: hex(0x8b8cff), link: hex(0xa3a4ff), failure: hex(0xff8f86),
 			input: withAlpha(hex(0xffffff), 0.07), line: withAlpha(hex(0x8b8cff), 0.22), edge: withAlpha(hex(0x8b8cff), 0.38),
 		}.palette()),
 		glow: func() []fyne.CanvasObject {
@@ -76,7 +78,7 @@ var cardDesigns = map[config.CardStyle]cardDesign{
 		variant: &darkVariant,
 		rounded: true,
 		colors: always(swatch{
-			text: hex(0xf1f5f9), muted: hex(0x94a3b8), accent: hex(0x2dd4bf),
+			text: hex(0xf1f5f9), muted: hex(0xa5b2c4), accent: hex(0x2dd4bf), failure: hex(0xff958c),
 			input: withAlpha(hex(0xffffff), 0.07), line: withAlpha(hex(0xffffff), 0.11), edge: withAlpha(hex(0xffffff), 0.18),
 		}.palette()),
 		glow: func() []fyne.CanvasObject {
@@ -92,7 +94,7 @@ var cardDesigns = map[config.CardStyle]cardDesign{
 		rounded: true,
 		colors: always(swatch{
 			light: true,
-			text:  hex(0x2b2622), muted: hex(0x9a8f80), accent: hex(0xd97757),
+			text:  hex(0x2b2622), muted: hex(0x726a5f), accent: hex(0xd97757), link: hex(0xa15840), failure: hex(0xc0392b),
 			input: hex(0xffffff), line: hex(0xe7dfd2), edge: hex(0xdcd1bf),
 		}.palette()),
 		glow: func() []fyne.CanvasObject {
@@ -132,6 +134,8 @@ func bloom(c color.Color, x, y float64) *canvas.RadialGradient {
 type swatch struct {
 	light                                  bool
 	text, muted, accent, input, line, edge color.Color
+	// link is the accent unless the accent reads too faintly as text; failure replaces the app's error red.
+	link, failure color.Color
 	// card is the fill, left clear when the glow draws the surface.
 	card color.Color
 }
@@ -145,14 +149,18 @@ func (s swatch) palette() palette {
 	if card == nil {
 		card = color.Transparent
 	}
-	return palette{
+	link := s.link
+	if link == nil {
+		link = s.accent
+	}
+	colors := palette{
 		colorNameCard:                    card,
 		colorNameCardEdge:                s.edge,
 		theme.ColorNameForeground:        s.text,
 		theme.ColorNamePlaceHolder:       s.muted,
 		theme.ColorNameDisabled:          s.muted,
 		theme.ColorNamePrimary:           s.accent,
-		theme.ColorNameHyperlink:         s.accent,
+		theme.ColorNameHyperlink:         link,
 		theme.ColorNameFocus:             withAlpha(s.accent, 0.6),
 		theme.ColorNameSelection:         withAlpha(s.accent, 0.28),
 		theme.ColorNameInputBackground:   s.input,
@@ -164,6 +172,10 @@ func (s swatch) palette() palette {
 		theme.ColorNameScrollBar:         withAlpha(s.muted, 0.5),
 		theme.ColorNameOverlayBackground: s.input,
 	}
+	if s.failure != nil {
+		colors[theme.ColorNameError] = s.failure
+	}
+	return colors
 }
 
 // glassColors is Apple's system palette, over glass of the card's own colour.
@@ -178,7 +190,9 @@ func glassColors(variant fyne.ThemeVariant) palette {
 		theme.ColorNameButton:            hex(0x3a3a3c),
 		theme.ColorNameHover:             withAlpha(hex(0xffffff), 0.08),
 		theme.ColorNamePressed:           withAlpha(hex(0xffffff), 0.14),
-		theme.ColorNamePlaceHolder:       hex(0x8e8e93),
+		theme.ColorNamePlaceHolder:       hex(0xbdbdc2),
+		theme.ColorNameHyperlink:         hex(0x99c2ff),
+		theme.ColorNameError:             hex(0xffaba3),
 		theme.ColorNameDisabled:          hex(0x636366),
 		theme.ColorNameSeparator:         hex(0x38383a),
 		theme.ColorNameOverlayBackground: hex(0x2c2c2e),
@@ -197,7 +211,9 @@ func glassColors(variant fyne.ThemeVariant) palette {
 			theme.ColorNameButton:            hex(0xe5e5ea),
 			theme.ColorNameHover:             withAlpha(hex(0x000000), 0.05),
 			theme.ColorNamePressed:           withAlpha(hex(0x000000), 0.1),
-			theme.ColorNamePlaceHolder:       hex(0x8e8e93),
+			theme.ColorNamePlaceHolder:       hex(0x48484d),
+			theme.ColorNameHyperlink:         hex(0x15429a),
+			theme.ColorNameError:             hex(0x8c2219),
 			theme.ColorNameDisabled:          hex(0xaeaeb2),
 			theme.ColorNameSeparator:         hex(0xd1d1d6),
 			theme.ColorNameOverlayBackground: hex(0xffffff),
@@ -206,8 +222,8 @@ func glassColors(variant fyne.ThemeVariant) palette {
 			colorNameCardEdge:                withAlpha(hex(0x000000), 0.1),
 		}
 	}
-	colors[colorNameGlass] = withAlpha(colors[colorNameCard], 0.72)
-	colors[colorNameFrost] = withAlpha(colors[colorNameCard], 0.9)
+	colors[colorNameGlass] = withAlpha(colors[colorNameCard], 0.9)
+	colors[colorNameFrost] = withAlpha(colors[colorNameCard], 0.95)
 	return colors
 }
 
