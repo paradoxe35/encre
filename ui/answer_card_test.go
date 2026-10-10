@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -1047,5 +1049,41 @@ func TestOnlyWebAndMailLinksCanBeOpened(t *testing.T) {
 	}
 	if text := card.content.String(); !strings.Contains(text, "passwords") || !strings.Contains(text, "settings") {
 		t.Fatalf("the text of a refused link was lost: %q", text)
+	}
+}
+
+// A fractional size is rounded one way by Fyne and the other by the native placement, and the card shakes between them.
+func TestTheCardOpensAtAWholeNumberOfPixels(t *testing.T) {
+	for _, size := range config.TextSizes {
+		for _, style := range config.CardStyles {
+			for _, question := range []string{"q", strings.Repeat("what do you think about the plan ", 7)} {
+				t.Run(fmt.Sprintf("%s-%s-%d", size, style, len(question)), func(t *testing.T) {
+					card, app := newCard(t)
+					app.Settings().SetTheme(newAppTheme(nil))
+					card.SetStyle(style)
+					card.SetTextSize(size)
+					answered(card, question, "The plan is sound but the timeline is tight.")
+					if h := card.size.Height; h != float32(math.Ceil(float64(h))) {
+						t.Fatalf("the card opened %v tall", h)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestALengthOnWholePixelsConvertsTheSameWayBackAndForth(t *testing.T) {
+	for _, scale := range []float32{1, 1.25, 1.3, 1.5, 1.75, 2, 2.25} {
+		for pixels := 1; pixels <= 1200; pixels++ {
+			reported := float32(pixels) / scale
+			if got := screenPixels(onPixel(reported, scale), scale); got != pixels {
+				t.Fatalf("scale %v: a window %d pixels tall is laid out at %v, which Fyne sizes to %d pixels", scale, pixels, reported, got)
+			}
+		}
+		for v := float32(50); v < 600; v += 0.37 {
+			if length := onPixel(v, scale); onPixel(length, scale) != length {
+				t.Fatalf("scale %v: %v snaps to %v, then again to %v", scale, v, length, onPixel(length, scale))
+			}
+		}
 	}
 }

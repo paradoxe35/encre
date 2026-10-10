@@ -648,9 +648,7 @@ func (c *AnswerCard) resizeTo(size fyne.Size) {
 		c.resizing = nil
 	}
 	if !c.visible || c.size.IsZero() {
-		c.size = size
-		c.window.Resize(size)
-		c.float()
+		c.applySize(size)
 		return
 	}
 	c.resizing = c.animate(c.size, size, c.applySize)
@@ -667,9 +665,26 @@ func (c *AnswerCard) applySize(size fyne.Size) {
 
 // wholePixels rounds up as Fyne does, so they agree and the content never outgrows the card by a fraction.
 func (c *AnswerCard) wholePixels(size fyne.Size) fyne.Size {
-	scale := float64(c.window.Canvas().Scale())
-	up := func(v float32) float32 { return float32(math.Ceil(float64(v)*scale-0.001) / scale) }
-	return fyne.NewSize(up(size.Width), up(size.Height))
+	scale := c.window.Canvas().Scale()
+	return fyne.NewSize(onPixel(size.Width, scale), onPixel(size.Height, scale))
+}
+
+// screenPixels converts as Fyne does; sized any other way, the native frame and Fyne's request differ by a pixel and chase each other.
+func screenPixels(v, scale float32) int {
+	return int(math.Ceil(float64(v * scale)))
+}
+
+// onPixel is the length that spans a whole number of pixels, the same number here as in Fyne.
+func onPixel(v, scale float32) float32 {
+	pixels := int(math.Ceil(float64(v*scale) - 0.001))
+	length := float32(pixels) / scale
+	for screenPixels(length, scale) > pixels {
+		length = math.Nextafter32(length, 0)
+	}
+	for screenPixels(length, scale) < pixels {
+		length = math.Nextafter32(length, math.MaxFloat32)
+	}
+	return length
 }
 
 func glide(from, to fyne.Size, apply func(fyne.Size)) *fyne.Animation {
@@ -691,6 +706,7 @@ func glideFor(from, to fyne.Size) (time.Duration, fyne.AnimationCurve) {
 
 // laidOut follows the size the window was actually given, so the frame always matches what is drawn.
 func (c *AnswerCard) laidOut(size fyne.Size) {
+	size = c.wholePixels(size)
 	if !c.visible || size == c.size {
 		return
 	}
@@ -753,7 +769,7 @@ func (c *AnswerCard) float() {
 		return
 	}
 	scale := c.window.Canvas().Scale()
-	frame := c.spot.Frame(int(math.Round(float64(c.size.Width*scale))), int(math.Round(float64(c.size.Height*scale))))
+	frame := c.spot.Frame(screenPixels(c.size.Width, scale), screenPixels(c.size.Height, scale))
 	look := overlay.Look{Radius: int(answerRadius * scale), Glass: c.seeThrough()}
 	c.onNative(func(handle uintptr) { overlay.Panel(handle, frame, look) })
 
