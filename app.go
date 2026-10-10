@@ -12,6 +12,7 @@ import (
 	"fyne.io/systray"
 	"github.com/paradoxe35/encre/internal/actions"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/history"
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/overlay"
@@ -90,6 +91,7 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	application.answers.SetOnClosed(yieldFocus)
 	application.answers.SetTextSize(cfg.AnswerCardSettings().TextSize)
 	application.answers.SetStyle(cfg.AnswerCardSettings().Style)
+	application.answers.SetHistory(func() []history.Entry { return processor.History().Recent(history.KindAsk) })
 	application.answers.SetOnAsk(func(question string) {
 		go processor.AnswerTyped(application.answers, question)
 	})

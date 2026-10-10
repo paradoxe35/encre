@@ -102,7 +102,7 @@ func TestAModelThatIgnoresTheLimitStops(t *testing.T) {
 
 func TestWhatTheModelWroteBeforeLookingUpIsNotShownAsTheAnswer(t *testing.T) {
 	view := &fakeView{done: make(chan shownAnswer, 1)}
-	ask := func(_ context.Context, _ string, onText, onStatus func(string)) (string, error) {
+	ask := func(_ context.Context, _ Question, onText, onStatus func(string)) (string, error) {
 		onText("Let me check.")
 		onStatus("Checking the weather in Paris")
 		onText("Sunny.")

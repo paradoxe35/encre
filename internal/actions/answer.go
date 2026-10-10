@@ -5,23 +5,28 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	"github.com/paradoxe35/encre/internal/history"
 )
 
 // answerView calls stop when it is closed.
 type answerView interface {
-	Open(question string, stop func()) (update func(text string, done bool), fail func(reason string), status func(line string))
+	// Following is the exchange on view, which a new question continues; empty for a fresh one.
+	Following() string
+	Open(question, id string, stop func()) (update func(text string, done bool), fail func(reason string), status func(line string))
 }
 
-type askFunc func(ctx context.Context, question string, onText, onStatus func(string)) (string, error)
+type askFunc func(ctx context.Context, asked Question, onText, onStatus func(string)) (string, error)
 
 // Returns only errors the view could not show; closing the view cancels without an error.
 func streamAnswer(ask askFunc, view answerView, question string, firstWords func()) error {
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 
+	asked := Question{Text: question, ID: history.NewID(), Follows: view.Following()}
 	var update func(string, bool)
 	var fail, status func(string)
-	open := func() { update, fail, status = view.Open(question, stop) }
+	open := func() { update, fail, status = view.Open(question, asked.ID, stop) }
 	if firstWords == nil {
 		open()
 	}
@@ -33,7 +38,7 @@ func streamAnswer(ask askFunc, view answerView, question string, firstWords func
 	}
 
 	var written strings.Builder
-	reply, err := ask(ctx, question, func(text string) {
+	reply, err := ask(ctx, asked, func(text string) {
 		opened()
 		written.WriteString(text)
 		update(written.String(), false)

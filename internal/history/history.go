@@ -35,7 +35,11 @@ type Entry struct {
 	Model      string    `json:"model,omitempty"`
 	Provider   string    `json:"provider,omitempty"`
 	Characters int       `json:"characters"`
+	// Follows is the exchange this one continues, so an Ask conversation can branch.
+	Follows string `json:"follows,omitempty"`
 }
+
+func NewID() string { return time.Now().Format("20060102150405.000000000") }
 
 // Reads load the whole file, which the MaxEntries cap keeps small.
 type Store struct {
@@ -70,7 +74,7 @@ func (s *Store) Add(entry Entry) {
 		entry.At = time.Now()
 	}
 	if entry.ID == "" {
-		entry.ID = entry.At.Format("20060102150405.000000000")
+		entry.ID = NewID()
 	}
 
 	file, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)

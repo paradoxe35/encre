@@ -283,9 +283,16 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 	return result, nil
 }
 
+// Question is named before it is asked, so the view can follow up on its answer.
+type Question struct {
+	Text    string
+	ID      string
+	Follows string
+}
+
 // Ask's answer is shown, not pasted, so its formatting stays.
-func (p *Processor) Ask(ctx context.Context, question string, onText, onStatus func(string)) (string, error) {
-	question = strings.TrimSpace(question)
+func (p *Processor) Ask(ctx context.Context, asked Question, onText, onStatus func(string)) (string, error) {
+	question := strings.TrimSpace(asked.Text)
 	if question == "" {
 		return "", ErrNoSpeech
 	}
@@ -294,7 +301,7 @@ func (p *Processor) Ask(ctx context.Context, question string, onText, onStatus f
 	result, err := p.complete(ctx, cfg, request{
 		op:       config.OpAsk,
 		text:     question,
-		past:     p.remembered(cfg),
+		past:     p.remembered(cfg, asked.Follows),
 		tools:    askTools(cfg.Operation(config.OpAsk)),
 		onText:   onText,
 		onStatus: onStatus,
@@ -309,7 +316,9 @@ func (p *Processor) Ask(ctx context.Context, question string, onText, onStatus f
 	}
 
 	p.history.Add(history.Entry{
+		ID:         asked.ID,
 		Kind:       history.KindAsk,
+		Follows:    asked.Follows,
 		Original:   question,
 		Result:     answer,
 		Provider:   result.provider,

@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"math"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/history"
 	"github.com/paradoxe35/encre/internal/overlay"
 )
 
@@ -40,6 +42,7 @@ type AnswerCard struct {
 	window  fyne.Window
 	visible bool
 	onAsk   func(question string)
+	asked   func() []history.Entry
 
 	// wanted becomes style once an open card closes, as a new style needs a new window.
 	style  config.CardStyle
@@ -61,12 +64,16 @@ type AnswerCard struct {
 
 	sessions atomic.Uint64
 	session  uint64
-	question string
-	text     string
-	failure  string
-	status   string
-	done     bool
-	stop     func()
+	// exchange is the session's own; shown, the stored one on the card; following, what a new question continues.
+	exchange  string
+	shown     string
+	following atomic.Pointer[string]
+	question  string
+	text      string
+	failure   string
+	status    string
+	done      bool
+	stop      func()
 
 	spot     overlay.Spot
 	placed   bool
@@ -122,15 +129,32 @@ func (c *AnswerCard) SetOnAsk(onAsk func(question string)) {
 	c.onAsk = onAsk
 }
 
+// SetHistory gives the asked questions, newest first, for the arrow keys to go through.
+func (c *AnswerCard) SetHistory(asked func() []history.Entry) {
+	c.asked = asked
+}
+
+// Following may be called from any goroutine.
+func (c *AnswerCard) Following() string {
+	if id := c.following.Load(); id != nil {
+		return *id
+	}
+	return ""
+}
+
+func (c *AnswerCard) follow(id string) {
+	c.following.Store(&id)
+}
+
 // Prompt may be called from any goroutine.
 func (c *AnswerCard) Prompt() {
 	fyne.Do(c.prompt)
 }
 
 // Closing the card calls stop; callbacks are goroutine-safe and ignored once a newer question shows.
-func (c *AnswerCard) Open(question string, stop func()) (update func(text string, done bool), fail func(reason string), status func(line string)) {
+func (c *AnswerCard) Open(question, exchange string, stop func()) (update func(text string, done bool), fail func(reason string), status func(line string)) {
 	id := c.sessions.Add(1)
-	fyne.Do(func() { c.open(id, question, stop) })
+	fyne.Do(func() { c.open(id, question, exchange, stop) })
 
 	update = func(text string, done bool) {
 		fyne.Do(func() {
@@ -162,14 +186,20 @@ func (c *AnswerCard) prompt() {
 		c.build()
 	}
 	if !c.visible {
-		c.session = c.sessions.Add(1)
-		c.question, c.text, c.failure, c.done, c.stop = "", "", "", true, nil
+		c.clear()
 	}
 	c.show()
 	c.focusInput()
 }
 
-func (c *AnswerCard) open(id uint64, question string, stop func()) {
+func (c *AnswerCard) clear() {
+	c.session = c.sessions.Add(1)
+	c.question, c.text, c.failure, c.status, c.done, c.stop = "", "", "", "", true, nil
+	c.exchange, c.shown = "", ""
+	c.follow("")
+}
+
+func (c *AnswerCard) open(id uint64, question, exchange string, stop func()) {
 	if c.window == nil {
 		c.build()
 	}
@@ -178,6 +208,7 @@ func (c *AnswerCard) open(id uint64, question string, stop func()) {
 	}
 	c.session = id
 	c.question, c.text, c.failure, c.status, c.done, c.stop = question, "", "", "", false, stop
+	c.exchange, c.shown = exchange, ""
 	c.scroll.ScrollToTop()
 	c.show()
 }
@@ -273,6 +304,8 @@ func (c *AnswerCard) update(text string, done bool) {
 	if done || wait <= 0 {
 		c.render()
 		if done {
+			c.shown = c.exchange
+			c.follow(c.exchange)
 			c.focusInput()
 		}
 		return
@@ -358,6 +391,7 @@ func (c *AnswerCard) Hide() {
 		c.stop()
 	}
 	c.stop = nil
+	c.follow("")
 	if c.onHide != nil {
 		c.onHide()
 	}
@@ -448,7 +482,7 @@ func (c *AnswerCard) build() {
 	c.scroll = container.NewVScroll(c.content)
 	c.reading = container.NewThemeOverride(c.scroll, c.readingTheme())
 
-	c.input = newQuestionEntry(c.submit, c.Hide)
+	c.input = newQuestionEntry(c.submit, c.Hide, c.browse)
 	c.input.TextStyle.Monospace = designFor(c.style).monospace
 	c.input.SetPlaceHolder("Ask anything")
 	c.input.OnChanged = c.inputChanged
@@ -470,6 +504,35 @@ func (c *AnswerCard) build() {
 		}
 	})
 	c.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { c.copyAnswer() })
+}
+
+// browse steps to an older exchange, or a newer one and past the newest to a fresh card, which a new question then continues.
+func (c *AnswerCard) browse(older bool) {
+	if !c.done || c.asked == nil {
+		return
+	}
+	asked := c.asked()
+	at := -1
+	if c.shown != "" {
+		at = slices.IndexFunc(asked, func(entry history.Entry) bool { return entry.ID == c.shown })
+	}
+	if older {
+		at++
+	} else {
+		at--
+	}
+	switch {
+	case at < -1 || at >= len(asked):
+		return
+	case at == -1:
+		c.clear()
+	default:
+		c.clear()
+		c.question, c.text, c.shown = asked[at].Original, asked[at].Result, asked[at].ID
+		c.follow(c.shown)
+	}
+	c.scroll.ScrollToTop()
+	c.render()
 }
 
 // fit is the layout's own minimum, grown by whatever the answer needs beyond the scroll's, up to the cap.
@@ -583,7 +646,9 @@ func (c *AnswerCard) resizeTo(size fyne.Size) {
 
 // applySize moves and sizes in one step: sized alone, the bottom-anchored card would jump.
 func (c *AnswerCard) applySize(size fyne.Size) {
-	c.size = c.wholePixels(size)
+	// Below the content's minimum, Fyne pushes the window back up and the two sizes chase each other forever.
+	least := c.window.Content().MinSize()
+	c.size = c.wholePixels(fyne.NewSize(max(size.Width, least.Width), max(size.Height, least.Height)))
 	c.float()
 	c.window.Resize(c.size)
 }
@@ -780,10 +845,11 @@ type questionEntry struct {
 	shift  bool
 	send   func()
 	cancel func()
+	browse func(older bool)
 }
 
-func newQuestionEntry(send, cancel func()) *questionEntry {
-	entry := &questionEntry{send: send, cancel: cancel}
+func newQuestionEntry(send, cancel func(), browse func(older bool)) *questionEntry {
+	entry := &questionEntry{send: send, cancel: cancel, browse: browse}
 	entry.MultiLine = true
 	entry.Wrapping = fyne.TextWrapWord
 	entry.SetMinRowsVisible(1)
@@ -811,6 +877,9 @@ func (e *questionEntry) TypedKey(key *fyne.KeyEvent) {
 		e.cancel()
 	case (key.Name == fyne.KeyReturn || key.Name == fyne.KeyEnter) && !e.shift:
 		e.send()
+	// Only an empty input browses, so the arrows still move through a question being written.
+	case (key.Name == fyne.KeyUp || key.Name == fyne.KeyDown) && e.Text == "":
+		e.browse(key.Name == fyne.KeyUp)
 	default:
 		e.Entry.TypedKey(key)
 	}

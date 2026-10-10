@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/history"
 )
 
 // Batches run only when a test calls them.
@@ -37,7 +38,7 @@ func newCard(t *testing.T) (*AnswerCard, fyne.App) {
 }
 
 func answered(card *AnswerCard, question, answer string) {
-	update, _, _ := card.Open(question, func() {})
+	update, _, _ := card.Open(question, "", func() {})
 	update(answer, true)
 }
 
@@ -77,7 +78,7 @@ func TestStreamedWordsAreBatchedAndTheLastOneShown(t *testing.T) {
 	var batch func()
 	card.later = func(_ time.Duration, run func()) { batch = run }
 
-	update, _, _ := card.Open("q", func() {})
+	update, _, _ := card.Open("q", "", func() {})
 	update("Paris", false)
 	update("Paris is", false)
 	if got := card.content.String(); strings.Contains(got, "Paris is") || batch == nil {
@@ -99,14 +100,14 @@ func TestClosingAnAnswerBeingWrittenStopsIt(t *testing.T) {
 	card, _ := newCard(t)
 
 	stopped := 0
-	update, _, _ := card.Open("q", func() { stopped++ })
+	update, _, _ := card.Open("q", "", func() { stopped++ })
 	update("Paris", false)
 	card.Hide()
 	if stopped != 1 {
 		t.Fatalf("stop ran %d times, want once", stopped)
 	}
 
-	update, _, _ = card.Open("q", func() { stopped++ })
+	update, _, _ = card.Open("q", "", func() { stopped++ })
 	update("Paris.", true)
 	card.Hide()
 	if stopped != 1 {
@@ -157,7 +158,7 @@ func TestTheWheelScrollsAnAnswerThatOutgrewTheCard(t *testing.T) {
 	card.later = func(_ time.Duration, run func()) { batch = run }
 	paragraph := "A long paragraph that keeps going. "
 
-	update, _, _ := card.Open("q", func() {})
+	update, _, _ := card.Open("q", "", func() {})
 	update(strings.Repeat(paragraph, 200), false)
 	batch()
 	card.scroll.ScrollToTop()
@@ -179,7 +180,7 @@ func streamInto(t *testing.T) (*AnswerCard, func(paragraphs int, done bool)) {
 	card, _ := newCard(t)
 	var batch func()
 	card.later = func(_ time.Duration, run func()) { batch = run }
-	update, _, _ := card.Open("q", func() {})
+	update, _, _ := card.Open("q", "", func() {})
 	return card, func(paragraphs int, done bool) {
 		update(strings.Repeat("A long paragraph that keeps going. ", paragraphs), done)
 		if !done {
@@ -238,7 +239,7 @@ func TestAShortAnswerFitsWithoutScrolling(t *testing.T) {
 		"1. first item\n2. second item that is long enough to wrap onto a second line in the card",
 	} {
 		card, _ := newCard(t)
-		update, _, _ := card.Open("q", func() {})
+		update, _, _ := card.Open("q", "", func() {})
 		update("Thinking", false)
 		update(answer, true)
 		if content, scroll := card.content.MinSize().Height, card.scroll.Size().Height; content > scroll {
@@ -298,7 +299,7 @@ func TestEscapeInTheInputClosesTheCard(t *testing.T) {
 func TestAQuestionWaitingShowsThatAnAnswerIsComing(t *testing.T) {
 	card, _ := newCard(t)
 
-	card.Open("capital of france?", func() {})
+	card.Open("capital of france?", "", func() {})
 	if got := card.content.String(); !strings.Contains(got, "Thinking") {
 		t.Fatalf("card reads %q", got)
 	}
@@ -307,7 +308,7 @@ func TestAQuestionWaitingShowsThatAnAnswerIsComing(t *testing.T) {
 func TestAFailureShowsBelowWhatArrived(t *testing.T) {
 	card, _ := newCard(t)
 
-	update, fail, _ := card.Open("q", func() {})
+	update, fail, _ := card.Open("q", "", func() {})
 	update("Paris is", false)
 	fail("connection lost")
 	got := card.content.String()
@@ -320,8 +321,8 @@ func TestANewerQuestionIgnoresTheOlderAnswer(t *testing.T) {
 	card, _ := newCard(t)
 
 	stopped := false
-	older, _, _ := card.Open("first", func() { stopped = true })
-	newer, _, _ := card.Open("second", func() {})
+	older, _, _ := card.Open("first", "", func() { stopped = true })
+	newer, _, _ := card.Open("second", "", func() {})
 	older("late words from the first answer", true)
 	newer("Second answer.", true)
 
@@ -522,7 +523,7 @@ func TestANewQuestionShrinksALongAnswersCardWithAGlide(t *testing.T) {
 	tall := card.size.Height
 
 	glides = nil
-	card.Open("and shorter?", func() {})
+	card.Open("and shorter?", "", func() {})
 	if len(glides) != 2 || glides[0].Height != tall || glides[1].Height >= tall {
 		t.Fatalf("the card did not glide down from %v: %v", tall, glides)
 	}
@@ -798,7 +799,7 @@ func TestATableKeepsItsAlignmentLinksAndEmptyRows(t *testing.T) {
 
 func TestTheCardShowsWhatIsLookedUpUntilTheAnswerStarts(t *testing.T) {
 	card, _ := newCard(t)
-	update, _, status := card.Open("Weather in Paris?", func() {})
+	update, _, status := card.Open("Weather in Paris?", "", func() {})
 
 	status("Checking the weather in Paris\nLooking up “Paris” on Wikipedia")
 	got := card.content.String()
@@ -819,14 +820,14 @@ func TestTheCardShowsWhatIsLookedUpUntilTheAnswerStarts(t *testing.T) {
 
 func TestTheLookupLinesGoWhenTheAnswerEndsWithoutText(t *testing.T) {
 	card, _ := newCard(t)
-	update, _, status := card.Open("q", func() {})
+	update, _, status := card.Open("q", "", func() {})
 	status("Searching the web for “go”")
 	update("", true)
 	if got := card.content.String(); strings.Contains(got, "Searching") {
 		t.Fatalf("a finished card still reads %q", got)
 	}
 
-	_, fail, status := card.Open("q", func() {})
+	_, fail, status := card.Open("q", "", func() {})
 	status("Searching the web for “go”")
 	fail("the service is having trouble")
 	if got := card.content.String(); strings.Contains(got, "Searching") || !strings.Contains(got, "The service is having trouble") {
@@ -836,7 +837,7 @@ func TestTheLookupLinesGoWhenTheAnswerEndsWithoutText(t *testing.T) {
 
 func TestTheInputIsReadyOnceAnAnswerIsIn(t *testing.T) {
 	card, _ := newCard(t)
-	update, _, _ := card.Open("spoken question", func() {})
+	update, _, _ := card.Open("spoken question", "", func() {})
 	update("Half an ans", false)
 	if card.window.Canvas().Focused() == card.input {
 		t.Fatal("the input took the focus before the answer was in")
@@ -847,9 +848,126 @@ func TestTheInputIsReadyOnceAnAnswerIsIn(t *testing.T) {
 	}
 
 	card.window.Canvas().Unfocus()
-	_, fail, _ := card.Open("another", func() {})
+	_, fail, _ := card.Open("another", "", func() {})
 	fail("the service is having trouble")
 	if card.window.Canvas().Focused() != card.input {
 		t.Fatal("a failed answer leaves the input without the cursor")
+	}
+}
+
+func withAsked(card *AnswerCard, pairs ...string) {
+	var asked []history.Entry
+	for i := 0; i < len(pairs); i += 2 {
+		asked = append(asked, history.Entry{ID: pairs[i], Original: pairs[i], Result: pairs[i+1]})
+	}
+	card.SetHistory(func() []history.Entry { return asked })
+}
+
+func press(card *AnswerCard, key fyne.KeyName) {
+	card.input.TypedKey(&fyne.KeyEvent{Name: key})
+}
+
+func TestUpGoesBackThroughWhatWasAskedAndDownComesBackToAFreshCard(t *testing.T) {
+	card, _ := newCard(t)
+	withAsked(card, "newest", "c", "middle", "b", "oldest", "a")
+	card.Prompt()
+
+	for _, step := range []struct {
+		key       fyne.KeyName
+		following string
+	}{
+		{fyne.KeyUp, "newest"}, {fyne.KeyUp, "middle"}, {fyne.KeyUp, "oldest"}, {fyne.KeyUp, "oldest"},
+		{fyne.KeyDown, "middle"}, {fyne.KeyDown, "newest"}, {fyne.KeyDown, ""}, {fyne.KeyDown, ""},
+	} {
+		press(card, step.key)
+		if got := card.Following(); got != step.following {
+			t.Fatalf("after %s the card follows %q, want %q", step.key, got, step.following)
+		}
+		if shown := card.content.String(); step.following != "" && !strings.HasPrefix(shown, step.following) {
+			t.Fatalf("after %s the card reads %q", step.key, shown)
+		}
+	}
+	if card.content.String() != "" || card.reading.Visible() {
+		t.Fatalf("past the newest the card still reads %q", card.content.String())
+	}
+}
+
+func TestTheArrowsMoveThroughAQuestionBeingWritten(t *testing.T) {
+	card, _ := newCard(t)
+	withAsked(card, "earlier", "a")
+	card.Prompt()
+
+	test.Type(card.input, "half a question")
+	press(card, fyne.KeyUp)
+	if card.Following() != "" || card.content.String() != "" {
+		t.Fatalf("up browsed away from a question being written: following %q", card.Following())
+	}
+}
+
+func TestTheArrowsWaitForTheAnswer(t *testing.T) {
+	card, _ := newCard(t)
+	withAsked(card, "earlier", "a")
+	card.Open("still answering", "now", func() {})
+
+	press(card, fyne.KeyUp)
+	if !strings.HasPrefix(card.content.String(), "still answering") {
+		t.Fatalf("up replaced an answer still coming: %q", card.content.String())
+	}
+}
+
+func TestTheNextQuestionFollowsTheAnswerJustGiven(t *testing.T) {
+	card, _ := newCard(t)
+	update, _, _ := card.Open("q", "just-asked", func() {})
+	update("a", true)
+	if card.Following() != "just-asked" {
+		t.Fatalf("following %q", card.Following())
+	}
+
+	withAsked(card, "just-asked", "a", "before", "b")
+	press(card, fyne.KeyUp)
+	if card.Following() != "before" {
+		t.Fatalf("up from the answer just given went to %q, want the one before it", card.Following())
+	}
+}
+
+func TestAFailedQuestionLeavesTheThreadWhereItWas(t *testing.T) {
+	card, _ := newCard(t)
+	withAsked(card, "earlier", "a")
+	card.Prompt()
+	press(card, fyne.KeyUp)
+
+	_, fail, _ := card.Open("q", "failed", func() {})
+	fail("no provider")
+	if card.Following() != "earlier" {
+		t.Fatalf("after a failure the card follows %q", card.Following())
+	}
+}
+
+func TestAReopenedCardStartsFresh(t *testing.T) {
+	card, _ := newCard(t)
+	update, _, _ := card.Open("q", "asked", func() {})
+	update("a", true)
+
+	card.Hide()
+	if card.Following() != "" {
+		t.Fatalf("a closed card still follows %q", card.Following())
+	}
+	card.Prompt()
+	if card.Following() != "" || card.content.String() != "" {
+		t.Fatalf("the reopened card follows %q and reads %q", card.Following(), card.content.String())
+	}
+}
+
+func TestTheCardNeverGlidesBelowWhatItsContentNeeds(t *testing.T) {
+	card, _ := newCard(t)
+	card.Prompt()
+	card.animate = func(from, _ fyne.Size, apply func(fyne.Size)) *fyne.Animation {
+		apply(fyne.NewSize(from.Width, from.Height+1))
+		return nil
+	}
+
+	answered(card, "q", "a")
+	if least := card.window.Content().MinSize().Height; card.size.Height < least {
+		t.Fatalf("the card glided to %v, below the %v its content needs", card.size.Height, least)
 	}
 }

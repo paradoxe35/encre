@@ -76,9 +76,9 @@ type fakeTypist struct {
 }
 
 // Ask streams the answer a word at a time, then fails with askErr if there is one.
-func (f *fakeTypist) Ask(ctx context.Context, question string, onText, _ func(string)) (string, error) {
+func (f *fakeTypist) Ask(ctx context.Context, asked Question, onText, _ func(string)) (string, error) {
 	f.mu.Lock()
-	f.asked = append(f.asked, question)
+	f.asked = append(f.asked, asked.Text)
 	answer, askErr, hold := f.answer, f.askErr, f.hold
 	f.mu.Unlock()
 
@@ -529,19 +529,27 @@ type shownAnswer struct {
 }
 
 type fakeView struct {
-	mu       sync.Mutex
-	question string
-	text     string
-	stop     func()
-	opens    int
-	updates  int
-	done     chan shownAnswer
+	mu        sync.Mutex
+	following string
+	exchange  string
+	question  string
+	text      string
+	stop      func()
+	opens     int
+	updates   int
+	done      chan shownAnswer
 }
 
-func (v *fakeView) Open(question string, stop func()) (func(string, bool), func(string), func(string)) {
+func (v *fakeView) Following() string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.question, v.stop = question, stop
+	return v.following
+}
+
+func (v *fakeView) Open(question, exchange string, stop func()) (func(string, bool), func(string), func(string)) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.question, v.exchange, v.stop = question, exchange, stop
 	v.opens++
 
 	update := func(text string, done bool) {
@@ -807,6 +815,22 @@ func TestATypedQuestionOpensAtOnceAndStreams(t *testing.T) {
 	}
 	if opens, updates := view.counts(); opens != 1 || updates < 2 {
 		t.Fatalf("opened %d times with %d updates", opens, updates)
+	}
+}
+
+func TestAQuestionContinuesWhatTheViewShowsAndNamesItsOwnExchange(t *testing.T) {
+	view := &fakeView{following: "earlier", done: make(chan shownAnswer, 1)}
+	var asked Question
+	ask := func(_ context.Context, question Question, _, _ func(string)) (string, error) {
+		asked = question
+		return "Sure.", nil
+	}
+	if err := streamAnswer(ask, view, "and then?", nil); err != nil {
+		t.Fatal(err)
+	}
+	<-view.done
+	if asked.Follows != "earlier" || asked.ID == "" || asked.ID != view.exchange {
+		t.Fatalf("asked %+v, the view opened exchange %q", asked, view.exchange)
 	}
 }
 
