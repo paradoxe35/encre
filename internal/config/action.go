@@ -102,7 +102,7 @@ type OperationConfig struct {
 	SystemPrompt   string `json:"system_prompt,omitempty"`
 	CharacterLimit int    `json:"character_limit,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
-	// Memory counts the new question too; unset is 1, which remembers nothing.
+	// Memory counts the new question too; unset is DefaultMemory, and 1 remembers nothing.
 	Memory int  `json:"memory,omitempty"`
 	Tools  bool `json:"tools,omitempty"`
 
@@ -110,11 +110,18 @@ type OperationConfig struct {
 	ProviderID string `json:"provider_id,omitempty"`
 }
 
-const MaxMemory = 100
+const (
+	DefaultMemory = 10
+	MaxMemory     = 100
+)
 
 // Remembered is how many earlier questions and their answers go with a new one.
 func (o OperationConfig) Remembered() int {
-	return min(max(o.Memory, 1), MaxMemory) - 1
+	memory := o.Memory
+	if memory == 0 {
+		memory = DefaultMemory
+	}
+	return min(max(memory, 1), MaxMemory) - 1
 }
 
 // A blank prompt means the built-in, so Reset is clearing the field.
