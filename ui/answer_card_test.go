@@ -528,6 +528,40 @@ func TestANewQuestionShrinksALongAnswersCardWithAGlide(t *testing.T) {
 	}
 }
 
+func TestTheClosedHookRunsOnceTheCardIsGone(t *testing.T) {
+	card, _ := newCard(t)
+	var finish func()
+	card.fade = func(_, to float64, apply func(float64), done func()) *fyne.Animation {
+		apply(to)
+		if to == 0 {
+			finish = done
+		} else if done != nil {
+			done()
+		}
+		return nil
+	}
+	closed := 0
+	card.SetOnClosed(func() { closed++ })
+
+	answered(card, "q", "a")
+	card.Hide()
+	if closed != 0 {
+		t.Fatal("the hook ran while the card was still fading out")
+	}
+	finish()
+	if closed != 1 {
+		t.Fatalf("the hook ran %d times once the card was gone", closed)
+	}
+
+	answered(card, "q", "a")
+	card.Hide()
+	answered(card, "again", "a")
+	finish()
+	if closed != 1 {
+		t.Fatal("the hook ran for a card reopened before its fade ended")
+	}
+}
+
 func TestAStyleChangeWaitsForTheCardToClose(t *testing.T) {
 	card, _ := newCard(t)
 	answered(card, "Q", "A")

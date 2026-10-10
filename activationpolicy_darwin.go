@@ -25,22 +25,17 @@ void SetActivationPolicyAccessory(void) {
     });
 }
 
-static NSRunningApplication* previousApp = nil;
-
-// Without this, hiding our last window leaves the keyboard with Encre instead of the user's app.
-void RememberFrontmostApp(void) {
-    NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
-    if (front == nil || [front isEqual:[NSRunningApplication currentApplication]]) {
+// An active app with no window left keeps the keyboard; hidden, macOS hands it to the next app itself.
+void YieldFocus(void) {
+    if (![NSApp isActive]) {
         return;
     }
-    [previousApp release];
-    previousApp = [front retain];
-}
-
-void RestoreFrontmostApp(void) {
-    [previousApp activateWithOptions:0];
-    [previousApp release];
-    previousApp = nil;
+    for (NSWindow* window in [NSApp windows]) {
+        if ([window isVisible] && [window canBecomeKeyWindow]) {
+            return;
+        }
+    }
+    [NSApp hide:nil];
 }
 */
 import "C"
@@ -57,6 +52,4 @@ func hideFromDock() {
 	C.SetActivationPolicyAccessory()
 }
 
-func rememberFrontmostApp() { C.RememberFrontmostApp() }
-
-func restoreFrontmostApp() { C.RestoreFrontmostApp() }
+func yieldFocus() { C.YieldFocus() }

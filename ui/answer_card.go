@@ -88,8 +88,9 @@ type AnswerCard struct {
 	send      *widget.Button
 	copy      *widget.Button
 
-	onShow func()
-	onHide func()
+	onShow   func()
+	onHide   func()
+	onClosed func()
 }
 
 func NewAnswerCard(app fyne.App) *AnswerCard {
@@ -109,6 +110,11 @@ func NewAnswerCard(app fyne.App) *AnswerCard {
 func (c *AnswerCard) SetShowHideCallbacks(onShow, onHide func()) {
 	c.onShow = onShow
 	c.onHide = onHide
+}
+
+// SetOnClosed runs once the card's window is gone, after it fades out.
+func (c *AnswerCard) SetOnClosed(onClosed func()) {
+	c.onClosed = onClosed
 }
 
 // SetOnAsk's callback runs on the UI thread.
@@ -363,6 +369,9 @@ func (c *AnswerCard) Hide() {
 		c.mapped = false
 		if c.restyle {
 			c.discard()
+		}
+		if c.onClosed != nil {
+			c.onClosed()
 		}
 	})
 }

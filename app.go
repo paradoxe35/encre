@@ -86,13 +86,8 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 	application.mainWindow = mainWindow
 
 	application.answers = ui.NewAnswerCard(app)
-	application.answers.SetShowHideCallbacks(func() {
-		rememberFrontmostApp()
-		application.bindEscape()
-	}, func() {
-		application.unbindEscape()
-		restoreFrontmostApp()
-	})
+	application.answers.SetShowHideCallbacks(application.bindEscape, application.unbindEscape)
+	application.answers.SetOnClosed(yieldFocus)
 	application.answers.SetTextSize(cfg.AnswerCardSettings().TextSize)
 	application.answers.SetStyle(cfg.AnswerCardSettings().Style)
 	application.answers.SetOnAsk(func(question string) {

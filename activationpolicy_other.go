@@ -8,7 +8,5 @@ func showInDock() {
 func hideFromDock() {
 }
 
-// The window system hands focus back to the previous window by itself.
-func rememberFrontmostApp() {}
-
-func restoreFrontmostApp() {}
+// Windows and Linux move the keyboard on by themselves when a window goes.
+func yieldFocus() {}
