@@ -345,7 +345,7 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, req reques
 	trimmed := strings.TrimSpace(req.text)
 
 	if err := checkCharacterLimit(trimmed, operation.CharacterLimit); err != nil {
-		return reply{}, err
+		return reply{}, fmt.Errorf("%s %w - raise it in Settings > Actions > %s", limited(op), err, op.Label())
 	}
 
 	name, provider, err := p.resolveProvider(cfg, op, req.mentioned)
@@ -474,10 +474,21 @@ func findProvider(cfg *config.Config, name string) (string, bool) {
 	return "", false
 }
 
+// limited names what an operation's character limit applies to.
+func limited(op config.Operation) string {
+	switch op {
+	case config.OpAsk:
+		return "your question"
+	case config.OpDictate:
+		return "the transcript"
+	}
+	return "the selection"
+}
+
 // Counts runes, not bytes: len() would halve the limit for accented text.
 func checkCharacterLimit(text string, limit int) error {
 	if characters := utf8.RuneCountInString(text); characters > limit {
-		return fmt.Errorf("selection is %d characters, over the %d limit", characters, limit)
+		return fmt.Errorf("is %d characters, over the %d limit", characters, limit)
 	}
 	return nil
 }

@@ -28,6 +28,7 @@ const (
 	answerInset     = 12
 	answerRadius    = 14
 	maxInputRows    = 4
+	questionLines   = 3
 	copiedFor       = 1500 * time.Millisecond
 	renderEvery     = 50 * time.Millisecond
 	resizeFor       = 140 * time.Millisecond
@@ -352,11 +353,22 @@ func (c *AnswerCard) render() {
 	c.rendered = time.Now()
 }
 
+// shownQuestion is the start of a long question: the answer must show without scrolling past what was asked.
+func (c *AnswerCard) shownQuestion() string {
+	reading := c.readingTheme()
+	style := mutedStyle().TextStyle
+	style.Monospace = designFor(c.style).monospace
+	size := reading.Size(theme.SizeNameText)
+	width := c.width() - 2*answerInset - 2*reading.Size(theme.SizeNameInnerPadding)
+	fits := func(line string) bool { return fyne.MeasureText(line, size, style).Width <= width }
+	return clampLines(c.question, fits, questionLines)
+}
+
 func (c *AnswerCard) segments() []widget.RichTextSegment {
 	var segments []widget.RichTextSegment
 	if c.question != "" {
 		segments = append(segments,
-			&widget.TextSegment{Text: c.question, Style: mutedStyle()},
+			&widget.TextSegment{Text: c.shownQuestion(), Style: mutedStyle()},
 			&widget.SeparatorSegment{},
 		)
 	}
@@ -885,7 +897,7 @@ func (e *questionEntry) TypedKey(key *fyne.KeyEvent) {
 	}
 }
 
-// rows is how many lines text wraps to at the entry's width, breaking between words as the entry does.
+// rows is how many lines text wraps to at the entry's width, up to one past the most the input shows.
 func (e *questionEntry) rows(text string) int {
 	width := e.Size().Width - 2*(theme.InnerPadding()+theme.Padding())
 	if width <= 0 {
@@ -894,21 +906,7 @@ func (e *questionEntry) rows(text string) int {
 	fits := func(line string) bool {
 		return fyne.MeasureText(line, theme.TextSize(), e.TextStyle).Width <= width
 	}
-
-	rows := 0
-	for _, paragraph := range strings.Split(text, "\n") {
-		rows++
-		line := ""
-		for _, word := range strings.Fields(paragraph) {
-			if line != "" && !fits(line+" "+word) {
-				rows++
-				line = word
-				continue
-			}
-			line = strings.TrimPrefix(line+" "+word, " ")
-		}
-	}
-	return rows
+	return len(wrapLines(text, fits, maxInputRows))
 }
 
 func isShift(key *fyne.KeyEvent) bool {

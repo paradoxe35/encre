@@ -2,7 +2,9 @@ package ui
 
 import (
 	"image/color"
+	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 	"unsafe"
 
@@ -21,24 +23,85 @@ func adopt(holder *widget.RichText, segments []widget.RichTextSegment) []widget.
 
 // adoptWithin takes the theme from holder, and lays lists out across within, the rich text they sit in.
 func adoptWithin(holder, within *widget.RichText, segments []widget.RichTextSegment) []widget.RichTextSegment {
-	adopted := make([]widget.RichTextSegment, len(segments))
-	for i, segment := range segments {
+	adopted := make([]widget.RichTextSegment, 0, len(segments))
+	for _, segment := range segments {
 		switch segment := segment.(type) {
 		case *widget.ListSegment:
-			adopted[i] = newCardList(holder, within, segment)
+			adopted = append(adopted, newCardList(holder, within, segment))
 		case *widget.ParagraphSegment:
 			segment.Texts = adoptWithin(holder, within, segment.Texts)
-			adopted[i] = segment
+			adopted = append(adopted, segment)
 		case *widget.TableSegment:
-			adopted[i] = &cardTable{TableSegment: segment, holder: holder}
+			adopted = append(adopted, &cardTable{TableSegment: segment, holder: holder})
+		case *widget.ImageSegment:
+			adopted = append(adopted, imageLink(segment))
+		case *widget.HyperlinkSegment:
+			adopted = append(adopted, safeLink(segment))
 		case *widget.TextSegment:
-			setHolder(segment, holder)
-			adopted[i] = segment
+			for _, part := range linked(segment) {
+				if text, ok := part.(*widget.TextSegment); ok {
+					setHolder(text, holder)
+				}
+				adopted = append(adopted, part)
+			}
 		default:
-			adopted[i] = segment
+			adopted = append(adopted, segment)
 		}
 	}
 	return adopted
+}
+
+var bareAddress = regexp.MustCompile(`https?://[^\s<>"'` + "`" + `]+`)
+
+// linked makes the addresses in running text tappable, as models often cite sources bare; code keeps its text.
+func linked(text *widget.TextSegment) []widget.RichTextSegment {
+	if !text.Style.Inline || text.Style.TextStyle.Monospace {
+		return []widget.RichTextSegment{text}
+	}
+	var parts []widget.RichTextSegment
+	rest := text.Text
+	for _, span := range bareAddress.FindAllStringIndex(text.Text, -1) {
+		match := text.Text[span[0]:span[1]]
+		address := strings.TrimRight(match, ".,;:!?)]}'\"")
+		target, err := url.Parse(address)
+		if err != nil || target.Host == "" {
+			continue
+		}
+		before, after, _ := strings.Cut(rest, address)
+		if before != "" {
+			parts = append(parts, &widget.TextSegment{Text: before, Style: text.Style})
+		}
+		parts = append(parts, &widget.HyperlinkSegment{Text: address, URL: target})
+		rest = after
+	}
+	if len(parts) == 0 {
+		return []widget.RichTextSegment{text}
+	}
+	if rest != "" {
+		parts = append(parts, &widget.TextSegment{Text: rest, Style: text.Style})
+	}
+	return parts
+}
+
+// safeLink keeps a link only to the web or mail; the answer may repeat a page that aims one at a file or another app.
+func safeLink(link *widget.HyperlinkSegment) widget.RichTextSegment {
+	if link.URL != nil && (link.URL.Scheme == "http" || link.URL.Scheme == "https" || link.URL.Scheme == "mailto") {
+		return link
+	}
+	return &widget.TextSegment{Text: link.Text, Style: widget.RichTextStyleInline}
+}
+
+// imageLink stands in for an image the answer links to: fetching it would reach any address the model names, and a failed load crashes Fyne.
+func imageLink(image *widget.ImageSegment) widget.RichTextSegment {
+	label := "Image"
+	if title := strings.TrimSpace(image.Title); title != "" {
+		label += ": " + title
+	}
+	address, err := url.Parse(image.Source.String())
+	if err != nil || (address.Scheme != "http" && address.Scheme != "https") {
+		return &widget.TextSegment{Text: label, Style: widget.RichTextStyleInline}
+	}
+	return &widget.HyperlinkSegment{Text: label, URL: address}
 }
 
 func eachText(segments []widget.RichTextSegment, do func(*widget.TextSegment)) {

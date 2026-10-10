@@ -971,3 +971,81 @@ func TestTheCardNeverGlidesBelowWhatItsContentNeeds(t *testing.T) {
 		t.Fatalf("the card glided to %v, below the %v its content needs", card.size.Height, least)
 	}
 }
+
+func TestALongQuestionLeavesTheAnswerInView(t *testing.T) {
+	card, _ := newCard(t)
+	question := strings.Repeat("Please read this carefully and tell me what you think. ", 80)
+
+	update, fail, _ := card.Open(question, "", func() {})
+	update("Short answer.", true)
+	shown := card.content.Segments[0].(*widget.TextSegment).Text
+	if strings.Count(shown, "\n") >= questionLines || !strings.HasSuffix(shown, "…") || card.size.Height >= answerMaxHeight {
+		t.Fatalf("the question shows as %q in a card %v tall", shown, card.size.Height)
+	}
+
+	_, fail, _ = card.Open(question, "", func() {})
+	fail("your question is 4400 characters, over the 1000 limit")
+	if card.size.Height >= answerMaxHeight || !strings.Contains(card.content.String(), "over the 1000 limit") {
+		t.Fatalf("the failure is pushed out of a card %v tall", card.size.Height)
+	}
+}
+
+func TestAWordTooLongForTheInputGrowsIt(t *testing.T) {
+	card, _ := newCard(t)
+	card.Prompt()
+	card.input.SetText(strings.Repeat("Supercalifragilistic", 12))
+	if card.rows != maxInputRows {
+		t.Fatalf("an endless word shows in %d rows, want %d", card.rows, maxInputRows)
+	}
+}
+
+func links(segments []widget.RichTextSegment) map[string]string {
+	found := map[string]string{}
+	for _, segment := range segments {
+		switch segment := segment.(type) {
+		case *widget.HyperlinkSegment:
+			found[segment.Text] = segment.URL.String()
+		case *widget.ImageSegment:
+			found["downloaded image"] = segment.Source.String()
+		case widget.RichTextBlock:
+			for text, address := range links(segment.Segments()) {
+				found[text] = address
+			}
+		}
+	}
+	return found
+}
+
+func TestAnImageInAnAnswerIsALinkNotADownload(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", `A chart: ![chart](https://example.com/chart.png "Sales by month") and ![](https://example.com/logo.png).`)
+	if got := links(card.content.Segments); len(got) != 2 || got["Image: Sales by month"] != "https://example.com/chart.png" ||
+		got["Image"] != "https://example.com/logo.png" {
+		t.Fatalf("the image became %v", got)
+	}
+}
+
+func TestBareAddressesBecomeLinksButCodeKeepsItsText(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "Sources: https://go.dev/doc/devel/release, and (https://example.com/a?b=1).\n\nRun `curl https://example.com/api` to check.")
+	got := links(card.content.Segments)
+	want := map[string]string{"https://go.dev/doc/devel/release": "https://go.dev/doc/devel/release", "https://example.com/a?b=1": "https://example.com/a?b=1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("links are %v, want %v", got, want)
+	}
+	if text := card.content.String(); !strings.Contains(text, ", and (") || !strings.Contains(text, "curl https://example.com/api") {
+		t.Fatalf("the text around the links changed: %q", text)
+	}
+}
+
+func TestOnlyWebAndMailLinksCanBeOpened(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "[docs](https://go.dev) [mail](mailto:a@b.c) [passwords](file:///etc/passwd) [settings](ms-settings:privacy)")
+	got := links(card.content.Segments)
+	if len(got) != 2 || got["docs"] == "" || got["mail"] == "" {
+		t.Fatalf("openable links are %v", got)
+	}
+	if text := card.content.String(); !strings.Contains(text, "passwords") || !strings.Contains(text, "settings") {
+		t.Fatalf("the text of a refused link was lost: %q", text)
+	}
+}

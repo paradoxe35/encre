@@ -149,3 +149,11 @@ func TestAQuestionAskedFromAnOlderAnswerLeavesTheLaterOnesOut(t *testing.T) {
 		t.Fatalf("history kept %d questions, the newest following %q", len(kept), kept[0].Follows)
 	}
 }
+
+func TestAQuestionOverTheLimitSaysSoAndWhereToRaiseIt(t *testing.T) {
+	p, _ := askProcessor(t, 1)
+	_, err := p.Ask(context.Background(), Question{Text: strings.Repeat("a", 101), ID: "q"}, func(string) {}, func(string) {})
+	if err == nil || err.Error() != "your question is 101 characters, over the 100 limit - raise it in Settings > Actions > Ask" {
+		t.Fatalf("got %v", err)
+	}
+}
