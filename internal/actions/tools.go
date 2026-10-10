@@ -15,7 +15,7 @@ import (
 	"github.com/paradoxe35/encre/internal/prompt"
 )
 
-const maxLookupRounds = 4
+const maxLookupRounds = 6
 
 func askTools(ask config.OperationConfig) []tools.Tool {
 	if !ask.Tools {

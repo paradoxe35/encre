@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,7 @@ func TestAskRunsTheToolsTheModelCallsThenGivesItsAnswer(t *testing.T) {
 
 func TestOnceTheRoundsAreUsedUpTheModelMustAnswer(t *testing.T) {
 	looping := ai.Reply{Calls: []ai.ToolCall{call("unknown")}}
-	model := &scriptedModel{turns: []ai.Reply{looping, looping, looping, looping, {Text: "Done."}}}
+	model := &scriptedModel{turns: append(slices.Repeat([]ai.Reply{looping}, maxLookupRounds), ai.Reply{Text: "Done."})}
 
 	answer, err := converse(context.Background(), model, ai.Prompt{Text: "q"}, nil, func(string) {}, func(string) {}, func() {})
 	if err != nil || answer != "Done." {
@@ -94,8 +95,8 @@ func TestOnceTheRoundsAreUsedUpTheModelMustAnswer(t *testing.T) {
 func TestAModelThatIgnoresTheLimitStops(t *testing.T) {
 	model := &scriptedModel{turns: []ai.Reply{{Calls: []ai.ToolCall{call("unknown")}}}}
 	_, err := converse(context.Background(), model, ai.Prompt{Text: "q"}, nil, func(string) {}, func(string) {}, func() {})
-	if !errors.Is(err, errKeptLookingUp) || len(model.prompts) != maxLookupRounds+1 {
-		t.Fatalf("after %d requests got %v", len(model.prompts), err)
+	if !errors.Is(err, errKeptLookingUp) || len(model.prompts) != 7 {
+		t.Fatalf("got %v after %d requests, want 6 rounds of lookups and a last one forbidding them", err, len(model.prompts))
 	}
 }
 
