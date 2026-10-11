@@ -27,6 +27,10 @@ var remoteClient = &http.Client{Timeout: remoteRequestTimeout}
 
 // pcm is headerless 16-bit signed little-endian mono at remoteSampleRate.
 func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) (string, error) {
+	// Nothing was heard: a header-only file costs a request, and some services reject it as too short.
+	if len(pcm) == 0 {
+		return "", nil
+	}
 	wav := wavFile(pcm)
 	if protocolFor(cfg.RemoteProvider) == ProtocolGemini {
 		return geminiTranscribe(ctx, cfg, wav)

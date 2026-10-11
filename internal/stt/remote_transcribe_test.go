@@ -3,6 +3,8 @@ package stt
 import (
 	"context"
 	"encoding/binary"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -133,4 +135,35 @@ func TestRemoteAPIKeyDecrypts(t *testing.T) {
 	if got := remoteAPIKey(cfg); got != "sk-secret" {
 		t.Fatalf("got %q", got)
 	}
+}
+
+func TestNothingHeardIsNeverSentToTheService(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Write([]byte(`{"text":"invented"}`))
+	}))
+	defer server.Close()
+
+	for _, provider := range []string{"custom", geminiPresetID(t)} {
+		cfg := config.SpeechConfig{RemoteProvider: provider, RemoteBaseURL: server.URL, RemoteModel: "m", RemoteAPIKey: "k"}
+		text, err := RemoteTranscribe(context.Background(), cfg, nil)
+		if err != nil || text != "" {
+			t.Fatalf("%s: an empty take gave %q, %v", provider, text, err)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("an empty take was sent %d times", requests)
+	}
+}
+
+func geminiPresetID(t *testing.T) string {
+	t.Helper()
+	for _, preset := range RemotePresets {
+		if preset.Protocol == ProtocolGemini {
+			return preset.ID
+		}
+	}
+	t.Skip("no Gemini preset")
+	return ""
 }
