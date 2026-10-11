@@ -6,8 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func serve(t *testing.T, routes map[string]string) *httptest.Server {
@@ -290,5 +292,106 @@ func TestLocalAddressesAreRecognised(t *testing.T) {
 		if got := isLocal(address); got != local {
 			t.Errorf("%s: local %v, want %v", address, got, local)
 		}
+	}
+}
+
+type clock struct{ at time.Time }
+
+func (c *clock) now() time.Time { return c.at }
+
+// fakeGuard never sleeps: it records how long each search was held back.
+func fakeGuard(c *clock) (*searchGuard, *[]time.Duration) {
+	var waits []time.Duration
+	return &searchGuard{now: c.now, wait: func(_ context.Context, d time.Duration) error {
+		waits = append(waits, d)
+		return nil
+	}}, &waits
+}
+
+func countingEngine(results []searchResult, err error) (engine, *int) {
+	calls := 0
+	return func(context.Context, string) ([]searchResult, error) {
+		calls++
+		return results, err
+	}, &calls
+}
+
+var found = []searchResult{{title: "Go", url: "https://go.dev", snippet: "Go."}}
+
+func TestSearchesAskedTogetherGoOutSpacedApart(t *testing.T) {
+	c := &clock{at: time.Unix(1_000_000, 0)}
+	g, waits := fakeGuard(c)
+	search, _ := countingEngine(found, nil)
+	guarded := g.guarded(search)
+	for _, query := range []string{"one", "two", "three"} {
+		guarded(context.Background(), query)
+	}
+	if want := []time.Duration{0, searchSpacing, 2 * searchSpacing}; !reflect.DeepEqual(*waits, want) {
+		t.Fatalf("searches waited %v, want %v", *waits, want)
+	}
+}
+
+func TestARepeatedQueryIsAnsweredFromRecentResults(t *testing.T) {
+	c := &clock{at: time.Unix(1_000_000, 0)}
+	g, _ := fakeGuard(c)
+	search, calls := countingEngine(found, nil)
+	guarded := g.guarded(search)
+
+	guarded(context.Background(), "Go release")
+	results, _ := guarded(context.Background(), "  go   RELEASE ")
+	if *calls != 1 || len(results) != 1 {
+		t.Fatalf("a repeated query searched %d times", *calls)
+	}
+	c.at = c.at.Add(searchesKeptFor)
+	guarded(context.Background(), "go release")
+	if *calls != 2 {
+		t.Fatal("results older than the time they are kept for were reused")
+	}
+}
+
+func TestOnlyResultsAreKeptNotFailures(t *testing.T) {
+	c := &clock{at: time.Unix(1_000_000, 0)}
+	g, _ := fakeGuard(c)
+	for _, failing := range []struct {
+		results []searchResult
+		err     error
+	}{{nil, nil}, {nil, errors.New("offline")}} {
+		search, calls := countingEngine(failing.results, failing.err)
+		guarded := g.guarded(search)
+		guarded(context.Background(), "q")
+		guarded(context.Background(), "q")
+		if *calls != 2 {
+			t.Fatalf("a failed search (%v) was reused", failing.err)
+		}
+	}
+}
+
+func TestABlockIsWaitedOutWithoutAskingAgain(t *testing.T) {
+	c := &clock{at: time.Unix(1_000_000, 0)}
+	g, _ := fakeGuard(c)
+	search, calls := countingEngine(nil, errChallenged)
+	guarded := g.guarded(search)
+
+	guarded(context.Background(), "first")
+	c.at = c.at.Add(blockedFor - time.Second)
+	if _, err := guarded(context.Background(), "second"); !errors.Is(err, errChallenged) || *calls != 1 {
+		t.Fatalf("during a block: %v after %d searches", err, *calls)
+	}
+	c.at = c.at.Add(time.Second)
+	guarded(context.Background(), "third")
+	if *calls != 2 {
+		t.Fatal("searching did not resume once the block was over")
+	}
+}
+
+func TestOneAnswerSearchesAtMostThreeTimes(t *testing.T) {
+	search, calls := countingEngine(found, nil)
+	tool := webSearch(search)
+	var last string
+	for i := range searchesPerAnswer + 1 {
+		last = run(t, tool, `{"query":"q`+string(rune('a'+i))+`"}`)
+	}
+	if *calls != searchesPerAnswer || !strings.Contains(last, "No more web searches") {
+		t.Fatalf("searched %d times; the extra search answered %q", *calls, last)
 	}
 }
