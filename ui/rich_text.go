@@ -90,7 +90,7 @@ func linked(text *widget.TextSegment) []widget.RichTextSegment {
 		if before != "" {
 			parts = append(parts, &widget.TextSegment{Text: before, Style: text.Style})
 		}
-		parts = append(parts, &widget.HyperlinkSegment{Text: address, URL: target, SizeName: sizeNameCardLink})
+		parts = append(parts, &widget.HyperlinkSegment{Text: address, URL: target, SizeName: sizeNameCardLink, TextStyle: text.Style.TextStyle})
 		rest = after
 	}
 	if len(parts) == 0 {
@@ -187,13 +187,32 @@ func newCardList(holder, within *widget.RichText, outer fyne.Scrollable, list *w
 		}
 		text := widget.NewRichText()
 		text.Wrapping = fyne.TextWrapWord
-		// An item measures its text, links too, in its own theme; given the holder's while it is still
-		// empty, Fyne keeps only the item for it, and lets that go with its renderer.
-		themeLikeParent(text, holder)
-		text.Segments = adoptWithin(holder, text, outer, texts)
+		segments := adoptWithin(holder, text, outer, texts)
+		// An item measures its links in its own theme, the app's unless given the holder's: while it is
+		// still empty, so Fyne keeps only the item for it. That clears Fyne's text caches, so only an
+		// item whose links the app's size would measure wrong is given it.
+		if holdsLink(segments) && theme.SizeForWidget(theme.SizeNameText, holder) != theme.Current().Size(theme.SizeNameText) {
+			themeLikeParent(text, holder)
+		}
+		text.Segments = segments
 		l.items = append(l.items, listItem{marker: marker, text: text})
 	}
 	return l
+}
+
+// holdsLink looks only at an item's own text: a list nested in it measures its items itself.
+func holdsLink(segments []widget.RichTextSegment) bool {
+	for _, segment := range segments {
+		switch segment := segment.(type) {
+		case *widget.HyperlinkSegment:
+			return true
+		case *widget.ParagraphSegment:
+			if holdsLink(segment.Texts) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (l *cardList) Inline() bool { return false }
@@ -456,6 +475,20 @@ func (t *cardTable) Visual() fyne.CanvasObject {
 	return newSideScroll(grid, t.outer)
 }
 
+// unpadded lays a link without its inner padding, as Fyne does for one in a paragraph.
+type unpadded struct{ link fyne.Widget }
+
+func (u unpadded) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	pad := theme.SizeForWidget(theme.SizeNameInnerPadding, u.link)
+	objects[0].Move(fyne.NewPos(-pad, -pad))
+	objects[0].Resize(size.AddWidthHeight(2*pad, 2*pad))
+}
+
+func (u unpadded) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	pad := theme.SizeForWidget(theme.SizeNameInnerPadding, u.link)
+	return objects[0].MinSize().SubtractWidthHeight(2*pad, 2*pad)
+}
+
 func (t *cardTable) align(col int) fyne.TextAlign {
 	if col < len(t.Alignments) {
 		return t.Alignments[col]
@@ -484,7 +517,10 @@ func tableCell(th fyne.Theme, variant fyne.ThemeVariant, segments []widget.RichT
 		if link, ok := segment.(*widget.HyperlinkSegment); ok {
 			cell := widget.NewHyperlink(link.Text, link.URL)
 			cell.SizeName = sizeNameCardLink
-			texts = append(texts, cell)
+			cell.TextStyle = link.TextStyle
+			cell.TextStyle.Bold = cell.TextStyle.Bold || header
+			// Fyne unpads a link within a paragraph, so its text runs on from the words beside it.
+			texts = append(texts, &fyne.Container{Layout: unpadded{cell}, Objects: []fyne.CanvasObject{cell}})
 			continue
 		}
 		text, ok := segment.(*widget.TextSegment)
