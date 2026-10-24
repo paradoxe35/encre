@@ -1,16 +1,18 @@
 name: CI
 
+# Pull requests are tested once, and main again after a merge; a push to a PR branch is the PR's run.
 on:
   pull_request:
   push:
-    branches: ["**"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer push to the same PR or branch replaces the run still going.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -28,6 +30,7 @@ env:
 jobs:
   test-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
