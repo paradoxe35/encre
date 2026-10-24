@@ -346,9 +346,15 @@ struct ListenerState {
     /// The largest modifier set held since the last time every modifier was up.
     chord: Modifiers,
     interrupted: bool,
-    /// Tracked so auto-repeat is not read as a second press.
-    held_key: Option<&'static str>,
-    holding: Option<&'static str>,
+    /// Tracked by key, not name, so auto-repeat is not read as a second press and numpad 1 and the
+    /// top-row 1, which share a name, do not end each other's hold.
+    held_key: Option<Key>,
+    holding: Option<(Key, &'static str)>,
+    /// Windows types AltGr as a made-up left Ctrl then right Alt, which must not read as Ctrl+Alt.
+    altgr_is_ctrl_alt: bool,
+    left_ctrl: bool,
+    /// Set while an AltGr press is being read as typing, so its release is ignored too.
+    typing_altgr: bool,
     delivery_announced: bool,
     unmatched_announced: Vec<&'static str>,
     /// Asked before each key event, for a listener that can miss a modifier's release.
@@ -437,6 +443,15 @@ impl ListenerState {
     }
 
     fn on_press(&mut self, key: Key, bindings: &Mutex<Vec<HotkeyBinding>>) {
+        if key == Key::ControlLeft {
+            self.left_ctrl = true;
+        }
+        if key == Key::AltGr && self.altgr_is_ctrl_alt && self.left_ctrl {
+            self.held.set(Modifier::Ctrl, false);
+            self.typing_altgr = true;
+            self.interrupted = true;
+            return;
+        }
         if let Some(modifier) = Modifier::from_key(&key) {
             self.modifier_down(modifier);
             return;
@@ -446,10 +461,11 @@ impl ListenerState {
             self.interrupted = true;
             return;
         };
-        if self.held_key == Some(name) {
+        // Auto-repeat, or a second key of the same name (numpad and top-row 1) while the first is down.
+        if self.held_key.and_then(|held| key_name(&held)) == Some(name) {
             return;
         }
-        self.held_key = Some(name);
+        self.held_key = Some(key);
         self.interrupted = true;
 
         // Logged once, without naming the key, to prove key events arrive at all.
@@ -465,7 +481,7 @@ impl ListenerState {
                 fire(binding, true);
                 fired = true;
                 if binding.is_hold() {
-                    self.holding = Some(name);
+                    self.holding = Some((key, name));
                 }
             }
         }
@@ -475,14 +491,20 @@ impl ListenerState {
     }
 
     fn on_release(&mut self, key: Key, bindings: &Mutex<Vec<HotkeyBinding>>) {
+        if key == Key::ControlLeft {
+            self.left_ctrl = false;
+        }
+        if key == Key::AltGr && self.typing_altgr {
+            self.typing_altgr = false;
+            return;
+        }
         let Some(modifier) = Modifier::from_key(&key) else {
-            let name = key_name(&key);
-            if self.held_key == name {
+            if self.held_key == Some(key) {
                 self.held_key = None;
             }
             // A modifier released first is a slipped finger, not the end of the hold.
-            if let (Some(name), Some(holding)) = (name, self.holding)
-                && name == holding
+            if let Some((held, name)) = self.holding
+                && held == key
             {
                 self.holding = None;
                 for binding in bindings.lock().iter() {
@@ -599,6 +621,7 @@ impl SimpleHotkeyManager {
             #[cfg(target_os = "windows")]
             {
                 state.modifier_is_down = Some(modifier_is_down);
+                state.altgr_is_ctrl_alt = true;
             }
 
             #[cfg(target_os = "macos")]
@@ -917,17 +940,18 @@ mod tests {
     }
 
     fn fired(bindings: &[(&str, &str)], taps: &[Tap]) -> Vec<String> {
-        run(bindings, taps, None)
+        run(bindings, taps, None, false)
     }
 
     fn fired_on_windows(bindings: &[(&str, &str)], taps: &[Tap]) -> Vec<String> {
-        run(bindings, taps, Some(physically_down))
+        run(bindings, taps, Some(physically_down), true)
     }
 
     fn run(
         bindings: &[(&str, &str)],
         taps: &[Tap],
         modifier_is_down: Option<fn(Modifier) -> bool>,
+        altgr_is_ctrl_alt: bool,
     ) -> Vec<String> {
         let _serial = SERIAL.lock();
         FIRED.lock().clear();
@@ -942,6 +966,7 @@ mod tests {
 
         let mut state = ListenerState {
             modifier_is_down,
+            altgr_is_ctrl_alt,
             ..ListenerState::default()
         };
         for tap in taps {
@@ -1446,6 +1471,51 @@ mod tests {
                     record
                 )
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn typing_an_altgr_character_on_windows_is_not_ctrl_alt() {
+        let bindings = [("ctrl+alt+a", "ask")];
+        let altgr_a = [
+            Down(Key::ControlLeft),
+            Down(Key::AltGr),
+            Down(Key::KeyA),
+            Up(Key::KeyA),
+            Up(Key::AltGr),
+            Up(Key::ControlLeft),
+        ];
+        assert!(
+            fired_on_windows(&bindings, &altgr_a).is_empty(),
+            "AltGr+A ran the action"
+        );
+
+        let ctrl_alt_a = [Down(Key::ControlLeft), Down(Key::Alt), Down(Key::KeyA)];
+        assert_eq!(fired_on_windows(&bindings, &ctrl_alt_a), vec!["ask"]);
+    }
+
+    #[test]
+    fn letting_go_of_one_key_does_not_end_the_hold_of_another_with_its_name() {
+        let _serial = SERIAL.lock();
+        FIRED.lock().clear();
+        let mut manager = SimpleHotkeyManager::new();
+        manager
+            .register_hold("ctrl+1".to_string(), "dictate".to_string(), record_edge)
+            .unwrap();
+        let mut state = ListenerState::default();
+        for event in [
+            EventType::KeyPress(Key::ControlLeft),
+            EventType::KeyPress(Key::Kp1),
+            EventType::KeyPress(Key::Num1),
+            EventType::KeyRelease(Key::Num1),
+            EventType::KeyPress(Key::Kp1),
+        ] {
+            state.process(event, &manager.bindings);
+        }
+        assert_eq!(
+            *FIRED.lock(),
+            vec!["dictate:1"],
+            "the hold restarted or ended early"
         );
     }
 
