@@ -3,11 +3,13 @@ package ui
 import (
 	"fmt"
 	"hash/crc32"
+	"html"
 	"image/color"
 	"math"
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -17,6 +19,10 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	gtext "github.com/yuin/goldmark/text"
 )
 
 // adopt gives nested text the holder's theme, which Fyne gives only to top-level text.
@@ -49,6 +55,10 @@ func adoptWithin(holder, within *widget.RichText, segments []widget.RichTextSegm
 		case *widget.HyperlinkSegment:
 			adopted = append(adopted, safeLink(segment))
 		case *widget.TextSegment:
+			// Fyne decodes entities everywhere but in block quotes, where literalTags' entities would show.
+			if segment.Style.QuotingDepth > 0 && !segment.Style.TextStyle.Monospace {
+				segment.Text = html.UnescapeString(segment.Text)
+			}
 			for _, part := range linked(segment) {
 				if text, ok := part.(*widget.TextSegment); ok {
 					setHolder(text, holder)
@@ -540,125 +550,52 @@ func (l *tableLayout) Layout(objects []fyne.CanvasObject, _ fyne.Size) {
 	}
 }
 
-// literalTags writes '<' outside code as an entity, so a tag the model wrote as text shows instead of
-// vanishing: Fyne's Markdown renders no HTML, drops it with the rest of its block, and shows a
-// backslash escape as typed, but decodes entities. Code spans may cross lines, so prose is handled
-// a paragraph at a time; an indented line is escaped too, as inside a list it is not code.
+// literalTags writes '<' as an entity where the answer holds HTML, so a tag the model wrote as text
+// shows instead of vanishing: Fyne's Markdown renders no HTML and drops it, but decodes entities.
+// The HTML is found by parsing as Fyne does, so code, autolinks and everything else are left alone.
 func literalTags(markdown string) string {
-	var out, paragraph strings.Builder
-	flush := func() {
-		out.WriteString(escapeTagsInLine(paragraph.String()))
-		paragraph.Reset()
-	}
-	var fence string
-	for _, line := range strings.SplitAfter(markdown, "\n") {
-		trimmed := blockContent(line)
-		switch {
-		case fence != "":
-			out.WriteString(line)
-			if closesFence(trimmed, fence) {
-				fence = ""
+	source := []byte(markdown)
+	document := goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.TaskList, extension.Table)).
+		Parser().Parse(gtext.NewReader(source))
+
+	var spans [][2]int
+	ast.Walk(document, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch node := node.(type) {
+		case *ast.RawHTML:
+			for i := 0; i < node.Segments.Len(); i++ {
+				segment := node.Segments.At(i)
+				spans = append(spans, [2]int{segment.Start, segment.Stop})
 			}
-		case opensFence(trimmed) != "":
-			flush()
-			fence = opensFence(trimmed)
-			out.WriteString(line)
-		default:
-			// A code span cannot cross into another block, so each list item or heading starts afresh.
-			if trimmed != strings.TrimLeft(line, " ") || startsBlock(trimmed) {
-				flush()
+		case *ast.HTMLBlock:
+			lines := node.Lines()
+			for i := 0; i < lines.Len(); i++ {
+				segment := lines.At(i)
+				spans = append(spans, [2]int{segment.Start, segment.Stop})
 			}
-			paragraph.WriteString(line)
-			// A heading is one line, and so is a blank one.
-			if strings.TrimSpace(line) == "" || strings.HasPrefix(trimmed, "#") {
-				flush()
+			if node.HasClosure() {
+				spans = append(spans, [2]int{node.ClosureLine.Start, node.ClosureLine.Stop})
 			}
 		}
+		return ast.WalkContinue, nil
+	})
+	if len(spans) == 0 {
+		return markdown
 	}
-	flush()
-	return out.String()
-}
+	slices.SortFunc(spans, func(a, b [2]int) int { return a[0] - b[0] })
 
-var containerMarker = regexp.MustCompile(`^ {0,3}(?:[-*+]|\d{1,9}[.)]|>) ?`)
-
-// blockContent is a line without the list markers and quote marks that hold its block.
-func blockContent(line string) string {
-	content := strings.TrimLeft(line, " ")
-	for {
-		marker := containerMarker.FindString(content)
-		if marker == "" || (strings.TrimSpace(marker) != ">" && !strings.HasSuffix(marker, " ")) {
-			return content
-		}
-		content = strings.TrimLeft(content[len(marker):], " ")
-	}
-}
-
-func startsBlock(line string) bool {
-	return strings.HasPrefix(line, "#") || strings.Trim(line, "-*_ \t\r\n") == "" && len(strings.TrimSpace(line)) >= 3
-}
-
-// opensFence returns the run of three or more backticks or tildes a line opens a code block with.
-func opensFence(line string) string {
-	for _, mark := range []byte{'`', '~'} {
-		run := 0
-		for run < len(line) && line[run] == mark {
-			run++
-		}
-		if run >= 3 {
-			// A backtick fence's info string cannot hold a backtick.
-			if mark == '`' && strings.ContainsRune(line[run:], '`') {
-				return ""
-			}
-			return line[:run]
-		}
-	}
-	return ""
-}
-
-// closesFence is a run of the opening character at least as long, with nothing after it.
-func closesFence(line, fence string) bool {
-	run := 0
-	for run < len(line) && line[run] == fence[0] {
-		run++
-	}
-	return run >= len(fence) && strings.TrimSpace(line[run:]) == ""
-}
-
-// escapeTagsInLine leaves code spans and autolinks such as <https://example.org> as they are.
-func escapeTagsInLine(line string) string {
 	var out strings.Builder
-	for i := 0; i < len(line); {
-		if line[i] == '`' {
-			run := i
-			for run < len(line) && line[run] == '`' {
-				run++
-			}
-			ticks := line[i:run]
-			if end := strings.Index(line[run:], ticks); end >= 0 {
-				out.WriteString(line[i : run+end+len(ticks)])
-				i = run + end + len(ticks)
-				continue
-			}
-			out.WriteString(ticks)
-			i = run
+	at := 0
+	for _, span := range spans {
+		if span[0] < at {
 			continue
 		}
-		if line[i] == '<' && !autolinkAt(line[i:]) {
-			out.WriteString("&lt;")
-			i++
-			continue
-		}
-		out.WriteByte(line[i])
-		i++
+		out.WriteString(markdown[at:span[0]])
+		out.WriteString(strings.ReplaceAll(markdown[span[0]:span[1]], "<", "&lt;"))
+		at = span[1]
 	}
+	out.WriteString(markdown[at:])
 	return out.String()
-}
-
-func autolinkAt(text string) bool {
-	end := strings.IndexByte(text, '>')
-	if end < 0 {
-		return false
-	}
-	inside := text[1:end]
-	return !strings.ContainsAny(inside, " \t<") && (strings.HasPrefix(inside, "http://") || strings.HasPrefix(inside, "https://") || strings.HasPrefix(inside, "mailto:"))
 }

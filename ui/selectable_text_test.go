@@ -647,6 +647,15 @@ func TestTagsShowInListsAndStayRawInCode(t *testing.T) {
 		{"# The ` key\nPress <kbd>Esc</kbd> then `q`.\n", "Press <kbd>Esc</kbd>", ""},
 		{"1. ```html\n   <div>\n   ```\n2. Use <b> tags\n", "Use <b> tags", ""},
 		{"1. ```html\n   <div>\n   ```\n2. Use <b> tags\n", "<div>", "&lt;"},
+		{"> quote <tag> here", "quote <tag> here", "&lt;"},
+		{"> > nested <n>", "nested <n>", "&lt;"},
+		{"> - q <a>\n> after <c>", "after <c>", "&lt;"},
+		{"- ```\n  code <a>\n\nAfter <b>tag</b>", "After <b>tag</b>", ""},
+		{"> ```\n> code\nplain <x>", "plain <x>", ""},
+		{"```\n- ```\n<inside>\n```\nafter <z>", "<inside>", "&lt;"},
+		{"```\n- ```\n<inside>\n```\nafter <z>", "after <z>", ""},
+		{"Use \\`<div>\\` here", "<div>", ""},
+		{"Plain <i>tag</i> and a & b", "a & b", "&amp;"},
 	}
 	for _, c := range cases {
 		card, _ := newCard(t)
