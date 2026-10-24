@@ -123,19 +123,20 @@ jobs:
         working-directory: rust-ffi
         run: cargo fmt --check
 
-      - name: Rust tests
-        working-directory: rust-ffi
-        run: cargo test $CARGO_TARGET_ARG
-
-      - name: Rust lints
-        working-directory: rust-ffi
-        run: cargo clippy --all-targets $CARGO_TARGET_ARG
-
+      # On Windows the build script gives ggml's archives the lib prefix rustc links by.
       - name: Build Rust FFI library
         run: |
           bash scripts/build-rust-ffi.sh ${{ matrix.rust_target }}
           mkdir -p lib
           cp ${{ matrix.rust_out }}/libencre_ffi.a lib/
+
+      # In release, through the same script, so the tests link against archives it can rename too.
+      - name: Rust tests
+        run: bash scripts/build-rust-ffi.sh --test ${{ matrix.rust_target }}
+
+      - name: Rust lints
+        working-directory: rust-ffi
+        run: cargo clippy --all-targets $CARGO_TARGET_ARG
 
       - name: Check Go formatting
         run: |

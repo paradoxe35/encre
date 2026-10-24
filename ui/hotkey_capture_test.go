@@ -283,13 +283,14 @@ func TestTheCaptureFieldFollowsAThemeOverride(t *testing.T) {
 }
 
 func TestOnlyKeysTheListenerCanReadAreRecorded(t *testing.T) {
+	held := "ctrl+" + getAltName()
 	for key, want := range map[fyne.KeyName]string{
-		fyne.KeyUnknown:  "ctrl+alt",
-		fyne.KeyPlus:     "ctrl+alt",
-		fyne.KeyMinus:    "ctrl+alt",
-		fyne.KeyPageUp:   "ctrl+alt+pageup",
-		fyne.KeyPageDown: "ctrl+alt+pagedown",
-		fyne.KeyF12:      "ctrl+alt+f12",
+		fyne.KeyUnknown:  held,
+		fyne.KeyPlus:     held,
+		fyne.KeyMinus:    held,
+		fyne.KeyPageUp:   held + "+pageup",
+		fyne.KeyPageDown: held + "+pagedown",
+		fyne.KeyF12:      held + "+f12",
 	} {
 		h, _, _ := capturing(t)
 		h.entry.TypedShortcut(&desktop.CustomShortcut{KeyName: key, Modifier: fyne.KeyModifierControl | fyne.KeyModifierAlt})
