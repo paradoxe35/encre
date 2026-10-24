@@ -552,7 +552,7 @@ func literalTags(markdown string) string {
 	}
 	var fence string
 	for _, line := range strings.SplitAfter(markdown, "\n") {
-		trimmed := strings.TrimLeft(line, " ")
+		trimmed := blockContent(line)
 		switch {
 		case fence != "":
 			out.WriteString(line)
@@ -564,14 +564,37 @@ func literalTags(markdown string) string {
 			fence = opensFence(trimmed)
 			out.WriteString(line)
 		default:
+			// A code span cannot cross into another block, so each list item or heading starts afresh.
+			if trimmed != strings.TrimLeft(line, " ") || startsBlock(trimmed) {
+				flush()
+			}
 			paragraph.WriteString(line)
-			if strings.TrimSpace(line) == "" {
+			// A heading is one line, and so is a blank one.
+			if strings.TrimSpace(line) == "" || strings.HasPrefix(trimmed, "#") {
 				flush()
 			}
 		}
 	}
 	flush()
 	return out.String()
+}
+
+var containerMarker = regexp.MustCompile(`^ {0,3}(?:[-*+]|\d{1,9}[.)]|>) ?`)
+
+// blockContent is a line without the list markers and quote marks that hold its block.
+func blockContent(line string) string {
+	content := strings.TrimLeft(line, " ")
+	for {
+		marker := containerMarker.FindString(content)
+		if marker == "" || (strings.TrimSpace(marker) != ">" && !strings.HasSuffix(marker, " ")) {
+			return content
+		}
+		content = strings.TrimLeft(content[len(marker):], " ")
+	}
+}
+
+func startsBlock(line string) bool {
+	return strings.HasPrefix(line, "#") || strings.Trim(line, "-*_ \t\r\n") == "" && len(strings.TrimSpace(line)) >= 3
 }
 
 // opensFence returns the run of three or more backticks or tildes a line opens a code block with.

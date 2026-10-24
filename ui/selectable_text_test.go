@@ -643,6 +643,10 @@ func TestTagsShowInListsAndStayRawInCode(t *testing.T) {
 		{"- item\n    - use <span> inline\n", "use <span> inline", ""},
 		{"````markdown\n```go\nif a<b {}\n```\n````\n", "if a<b {}", "&lt;"},
 		{"Use `x\n<b>` here.", "<b>", "&lt;"},
+		{"- Type a backtick (`)\n- Press <kbd>Ctrl</kbd>\n- Run `ls`\n", "Press <kbd>Ctrl</kbd>", ""},
+		{"# The ` key\nPress <kbd>Esc</kbd> then `q`.\n", "Press <kbd>Esc</kbd>", ""},
+		{"1. ```html\n   <div>\n   ```\n2. Use <b> tags\n", "Use <b> tags", ""},
+		{"1. ```html\n   <div>\n   ```\n2. Use <b> tags\n", "<div>", "&lt;"},
 	}
 	for _, c := range cases {
 		card, _ := newCard(t)
