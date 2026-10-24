@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/stt/pcm"
 )
 
 const (
 	remoteSampleRate     = 16_000 // what encre_stt_stop_pcm delivers
 	remoteBitsPerSample  = 16
 	remoteChannels       = 1
+	wavHeaderBytes       = 44
 	remoteMaxAudioBytes  = 25 * 1024 * 1024 // OpenAI and Groq's free tier both cap uploads here
 	remoteRequestTimeout = 3 * time.Minute
 
@@ -32,13 +34,48 @@ var errUndecryptableKey = errors.New("the saved API key could not be decrypted; 
 
 var remoteClient = &http.Client{Timeout: remoteRequestTimeout}
 
-// pcm is headerless 16-bit signed little-endian mono at remoteSampleRate.
-func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) (string, error) {
+// audio is headerless 16-bit signed little-endian mono at remoteSampleRate. A take over what one
+// request may carry is sent in pieces cut at pauses; a failed piece still returns the text before it.
+func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, audio []byte) (string, error) {
 	// Nothing was heard: a header-only file costs a request, and some services reject it as too short.
-	if len(pcm) == 0 {
+	if len(audio) == 0 {
 		return "", nil
 	}
-	wav := wavFile(pcm)
+
+	pieces := pcm.Split(audio, remotePieceBytes(cfg), remoteSampleRate)
+	var parts []string
+	joined := func() string { return strings.Join(parts, " ") }
+	for i, piece := range pieces {
+		pieceCtx, cancel := context.WithTimeout(ctx, remoteRequestTimeout)
+		text, err := transcribeWAV(pieceCtx, cfg, wavFile(piece))
+		cancel()
+		if err != nil {
+			if len(pieces) > 1 {
+				err = fmt.Errorf("part %d of %d: %w", i+1, len(pieces), err)
+			}
+			return joined(), err
+		}
+		if text = strings.TrimSpace(text); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return joined(), nil
+}
+
+// remotePieceBytes is the most audio one request carries, less its WAV header; Gemini sends it
+// as base64, a third larger.
+func remotePieceBytes(cfg config.SpeechConfig) int {
+	if protocolFor(cfg.RemoteProvider) == ProtocolGemini {
+		limit := geminiMaxRequestBytes
+		if IsGeminiTranscribeModel(cfg.RemoteModel) {
+			limit = interactionsMaxRequestBytes
+		}
+		return limit/4*3 - wavHeaderBytes
+	}
+	return remoteMaxAudioBytes - wavHeaderBytes
+}
+
+func transcribeWAV(ctx context.Context, cfg config.SpeechConfig, wav []byte) (string, error) {
 	if protocolFor(cfg.RemoteProvider) == ProtocolGemini {
 		return geminiTranscribe(ctx, cfg, wav)
 	}
@@ -214,7 +251,7 @@ func wavHeader(dataLen int) []byte {
 	byteRate := remoteSampleRate * remoteChannels * remoteBitsPerSample / 8
 	blockAlign := remoteChannels * remoteBitsPerSample / 8
 
-	buf := make([]byte, 44)
+	buf := make([]byte, wavHeaderBytes)
 	copy(buf[0:4], "RIFF")
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(36+dataLen))
 	copy(buf[8:12], "WAVE")

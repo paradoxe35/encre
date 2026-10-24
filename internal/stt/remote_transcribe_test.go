@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/paradoxe35/encre/internal/config"
@@ -109,16 +111,46 @@ func TestRemoteErrorMessageFallsBackToStatus(t *testing.T) {
 	}
 }
 
-func TestRemoteTranscribeSizeGuard(t *testing.T) {
-	pcm := make([]byte, remoteMaxAudioBytes+1)
-	cfg := config.SpeechConfig{RemoteBaseURL: "https://example.invalid/v1", RemoteModel: "whisper-1"}
+// A take over the upload cap is sent in pieces under it, and a failed piece keeps the text before it.
+func TestALongTakeIsSentInPiecesUnderTheLimit(t *testing.T) {
+	for name, failAt := range map[string]int{"all pieces": 0, "second piece fails": 2} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			pieces := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				file, _, err := r.FormFile("file")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				size, _ := io.Copy(io.Discard, file)
+				mu.Lock()
+				pieces++
+				piece := pieces
+				mu.Unlock()
+				if size > remoteMaxAudioBytes {
+					t.Errorf("piece %d is %d bytes, over the %d limit", piece, size, remoteMaxAudioBytes)
+				}
+				if piece == failAt {
+					w.WriteHeader(http.StatusBadGateway)
+					return
+				}
+				fmt.Fprintf(w, `{"text":"part %d"}`, piece)
+			}))
+			defer server.Close()
 
-	_, err := RemoteTranscribe(context.Background(), cfg, pcm)
-	if err == nil {
-		t.Fatal("expected a size-limit error")
-	}
-	if !strings.Contains(err.Error(), "25 MB") {
-		t.Fatalf("expected the error to name the limit, got %q", err)
+			cfg := config.SpeechConfig{RemoteBaseURL: server.URL, RemoteModel: "whisper-1"}
+			text, err := RemoteTranscribe(context.Background(), cfg, make([]byte, remoteMaxAudioBytes+1))
+			if failAt == 0 {
+				if err != nil || text != "part 1 part 2" {
+					t.Fatalf("got %q, %v; want both pieces joined", text, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "part 2 of 2") || text != "part 1" {
+				t.Fatalf("got %q, %v; want the first piece's text and the second's error", text, err)
+			}
+		})
 	}
 }
 
@@ -213,4 +245,13 @@ func geminiPresetID(t *testing.T) string {
 	}
 	t.Skip("no Gemini preset")
 	return ""
+}
+
+func TestAFullGeminiPieceFitsTheRequestOnceEncoded(t *testing.T) {
+	for model, limit := range map[string]int{"gemini-2.5-flash": geminiMaxRequestBytes, "gemini-3.5-transcribe": interactionsMaxRequestBytes} {
+		cfg := config.SpeechConfig{RemoteProvider: geminiPresetID(t), RemoteModel: model}
+		if encoded := base64.StdEncoding.EncodedLen(remotePieceBytes(cfg) + wavHeaderBytes); encoded > limit {
+			t.Errorf("%s: a full piece encodes to %d bytes, over the %d limit", model, encoded, limit)
+		}
+	}
 }

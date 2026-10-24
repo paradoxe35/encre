@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/paradoxe35/encre/internal/stt/pcm"
 )
 
 var endpoint = "https://api.wit.ai/speech"
@@ -31,30 +33,28 @@ const (
 
 var client = &http.Client{}
 
-// Wit.ai caps audio per request, so it is downsampled to 8 kHz, chunked, and joined.
+// Wit.ai caps audio per request, so it is downsampled to 8 kHz, cut at pauses, and joined.
 // A failed chunk still returns the text of the chunks before it, along with the error.
-func Transcribe(ctx context.Context, pcm []byte, lang string) (string, error) {
+func Transcribe(ctx context.Context, audio []byte, lang string) (string, error) {
 	token, ok := tokenFor(lang)
 	if !ok {
 		return "", fmt.Errorf("no Wit.ai key for language %q", lang)
 	}
 
-	downsampled := downsample(pcm)
+	downsampled := downsample(audio)
 	if len(downsampled) == 0 {
 		return "", nil
 	}
 
-	chunks := (len(downsampled) + bytesPerChunk - 1) / bytesPerChunk
+	pieces := pcm.Split(downsampled, bytesPerChunk, witSampleRate)
+	chunks := len(pieces)
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(chunks)*chunkBudget+chunkTimeout)
 	defer cancel()
 
 	var parts []string
 	joined := func() string { return strings.TrimSpace(strings.Join(parts, " ")) }
-	for i := range chunks {
-		start := i * bytesPerChunk
-		end := min(start+bytesPerChunk, len(downsampled))
-
-		text, err := transcribeChunk(ctx, token, downsampled[start:end])
+	for i, piece := range pieces {
+		text, err := transcribeChunk(ctx, token, piece)
 		if err != nil {
 			return joined(), fmt.Errorf("wit.ai chunk %d of %d: %w", i+1, chunks, err)
 		}

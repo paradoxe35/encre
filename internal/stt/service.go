@@ -306,12 +306,13 @@ func (s *Service) stopRemote(speech speechEngine, cfg config.SpeechConfig) (stri
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), remoteRequestTimeout)
-	defer cancel()
-
-	text, err := RemoteTranscribe(ctx, cfg, pcm)
-	if err != nil {
+	// Each request has its own deadline: a long take is several of them.
+	text, err := RemoteTranscribe(context.Background(), cfg, pcm)
+	if err != nil && text == "" {
 		return "", err
+	}
+	if err != nil {
+		logger.Warn("The hosted service transcribed only part of the dictation", "characters", len(text), "error", err)
 	}
 
 	logger.Info("Dictation transcribed", "characters", len(text), "engine", "remote")
