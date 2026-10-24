@@ -52,7 +52,7 @@ func Transcribe(ctx context.Context, audio []byte, lang string) (string, error) 
 	defer cancel()
 
 	var parts []string
-	joined := func() string { return strings.TrimSpace(strings.Join(parts, " ")) }
+	joined := func() string { return pcm.Join(parts) }
 	for i, piece := range pieces {
 		text, err := transcribeChunk(ctx, token, piece)
 		if err != nil {

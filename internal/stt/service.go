@@ -17,6 +17,9 @@ import (
 
 var ErrNoModel = errors.New("no speech model selected - choose one in Settings > Speech")
 
+// ErrPartial comes with the text of the part of a take that was transcribed, to be typed and reported.
+var ErrPartial = errors.New("only part of the dictation was transcribed")
+
 var witaiTranscribe = witai.Transcribe
 
 type speechEngine interface {
@@ -51,6 +54,9 @@ type Service struct {
 	witaiLang    string
 	remoteCfg    config.SpeechConfig
 	keepLoaded   bool
+	// lifetime ends at Close, so a hosted take of many requests stops with the app.
+	lifetime context.Context
+	end      context.CancelFunc
 }
 
 func NewService() *Service {
@@ -63,6 +69,13 @@ func newFFIEngine() (speechEngine, error) {
 		return nil, err
 	}
 	return speech, nil
+}
+
+func (s *Service) lifetimeLocked() context.Context {
+	if s.lifetime == nil {
+		s.lifetime, s.end = context.WithCancel(context.Background())
+	}
+	return s.lifetime
 }
 
 func (s *Service) engine() (speechEngine, error) {
@@ -249,6 +262,7 @@ func (s *Service) StartRecording(cfg config.SpeechConfig) error {
 func (s *Service) StopRecording() (string, error) {
 	s.mu.Lock()
 	speech, recording, activeEngine, lang, remoteCfg := s.speech, s.recording, s.activeEngine, s.witaiLang, s.remoteCfg
+	ctx := s.lifetimeLocked()
 	s.recording = false
 	s.mu.Unlock()
 
@@ -259,9 +273,9 @@ func (s *Service) StopRecording() (string, error) {
 
 	switch activeEngine {
 	case config.SpeechRemote:
-		return s.stopRemote(speech, remoteCfg)
+		return s.stopRemote(ctx, speech, remoteCfg)
 	case config.SpeechWitAI:
-		return s.stopWitAI(speech, lang)
+		return s.stopWitAI(ctx, speech, lang)
 	}
 
 	text, err := speech.Stop()
@@ -280,43 +294,45 @@ func (s *Service) StopRecording() (string, error) {
 	return text, nil
 }
 
-func (s *Service) stopWitAI(speech speechEngine, lang string) (string, error) {
+func (s *Service) stopWitAI(ctx context.Context, speech speechEngine, lang string) (string, error) {
 	pcm, err := speech.StopPCM()
 	if err != nil {
 		return "", err
 	}
 
 	// Transcribe times each chunk itself: a long take is many sequential requests.
-	text, err := witaiTranscribe(context.Background(), pcm, lang)
-	if err != nil && text == "" {
-		return "", err
-	}
+	text, err := witaiTranscribe(ctx, pcm, lang)
 	if err != nil {
-		// Dropping minutes of dictation for one failed chunk would be worse than typing what came back.
-		logger.Warn("Wit.ai transcribed only part of the dictation", "characters", len(text), "error", err)
+		return partly(text, err)
 	}
 
 	logger.Info("Dictation transcribed", "characters", len(text), "engine", "witai")
 	return text, nil
 }
 
-func (s *Service) stopRemote(speech speechEngine, cfg config.SpeechConfig) (string, error) {
+func (s *Service) stopRemote(ctx context.Context, speech speechEngine, cfg config.SpeechConfig) (string, error) {
 	pcm, err := speech.StopPCM()
 	if err != nil {
 		return "", err
 	}
 
 	// Each request has its own deadline: a long take is several of them.
-	text, err := RemoteTranscribe(context.Background(), cfg, pcm)
-	if err != nil && text == "" {
-		return "", err
-	}
+	text, err := RemoteTranscribe(ctx, cfg, pcm)
 	if err != nil {
-		logger.Warn("The hosted service transcribed only part of the dictation", "characters", len(text), "error", err)
+		return partly(text, err)
 	}
 
 	logger.Info("Dictation transcribed", "characters", len(text), "engine", "remote")
 	return text, nil
+}
+
+// partly keeps what came back before a failure: dropping minutes of dictation would be worse.
+func partly(text string, err error) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		return "", err
+	}
+	logger.Warn("Only part of the dictation was transcribed", "characters", len(text), "error", err)
+	return text, fmt.Errorf("%w: %w", ErrPartial, err)
 }
 
 // Sent under the lock so a later take's load queues behind the unload.
@@ -375,6 +391,10 @@ func (s *Service) Close() {
 	s.speech = nil
 	s.recording = false
 	s.takes = 0
+	if s.end != nil {
+		s.end()
+		s.lifetime, s.end = nil, nil
+	}
 	if speech != nil && pending > 0 {
 		if s.orphans == nil {
 			s.orphans = make(map[speechEngine]int)

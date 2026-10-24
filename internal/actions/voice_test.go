@@ -3,6 +3,8 @@ package actions
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/paradoxe35/encre/internal/stt"
 	"slices"
 	"strings"
 	"sync"
@@ -880,5 +882,17 @@ func TestATypedQuestionThatFailsSaysSoInTheView(t *testing.T) {
 	}
 	if answer := <-view.done; answer.failure != "no provider configured" {
 		t.Fatalf("showed %+v", answer)
+	}
+}
+
+func TestAPartlyTranscribedTakeIsTypedAndReported(t *testing.T) {
+	h := newHarness(t, false)
+	partial := fmt.Errorf("%w: part 2 of 3: timeout", stt.ErrPartial)
+	h.speech.stops = []stopResult{{text: "the first part", err: partial}}
+	h.take()
+
+	h.expectReport(t, stt.ErrPartial)
+	if typed := h.typist.typedSoFar(); !slices.Equal(typed, []string{"the first part"}) {
+		t.Fatalf("typed %v, want the part that came back", typed)
 	}
 }

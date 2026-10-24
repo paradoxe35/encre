@@ -44,7 +44,7 @@ func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, audio []byte
 
 	pieces := pcm.Split(audio, remotePieceBytes(cfg), remoteSampleRate)
 	var parts []string
-	joined := func() string { return strings.Join(parts, " ") }
+	joined := func() string { return pcm.Join(parts) }
 	for i, piece := range pieces {
 		pieceCtx, cancel := context.WithTimeout(ctx, remoteRequestTimeout)
 		text, err := transcribeWAV(pieceCtx, cfg, wavFile(piece))
@@ -55,9 +55,7 @@ func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, audio []byte
 			}
 			return joined(), err
 		}
-		if text = strings.TrimSpace(text); text != "" {
-			parts = append(parts, text)
-		}
+		parts = append(parts, text)
 	}
 	return joined(), nil
 }

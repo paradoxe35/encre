@@ -129,6 +129,9 @@ func TestFindModelMatchesByID(t *testing.T) {
 	if !ok || found.ID != first.ID {
 		t.Fatalf("FindModel(%q) did not round-trip", first.ID)
 	}
+	if _, ok := FindModel(""); ok {
+		t.Error("an empty id should not resolve")
+	}
 	if _, ok := FindModel("nothing/here"); ok {
 		t.Error("an unknown id should not resolve")
 	}

@@ -321,6 +321,9 @@ func FindModel(id string) (Model, bool) {
 		}
 	}
 	file := path.Base(id)
+	if id == "" || file == "." || file == "/" {
+		return Model{}, false
+	}
 	for _, model := range models {
 		if path.Base(model.Filename) == file {
 			return model, true

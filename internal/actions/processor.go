@@ -30,8 +30,9 @@ var ErrHalted = fmt.Errorf("Encre is stopping: %w", context.Canceled)
 // An action that outlives this is cut short and the clipboard restored under it.
 const haltWait = 3 * time.Second
 
-// insertWait bounds how long a finished dictation waits for a running action to give the clipboard back.
-const insertWait = 2 * time.Minute
+// insertWait bounds how long a finished dictation waits for a running action to give the clipboard
+// back; much longer and the user has likely moved to another window, and the take is in History anyway.
+const insertWait = 30 * time.Second
 
 type Processor struct {
 	mu               sync.Mutex

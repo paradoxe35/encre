@@ -207,9 +207,13 @@ func (d *Voice) stop(kind config.ActionKind) {
 		if ahead != nil {
 			<-ahead
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, stt.ErrPartial) {
 			d.fail(kind, err)
 			return
+		}
+		// What part of a take came back is still typed; the rest is reported once it is.
+		if err != nil {
+			defer d.fail(kind, err)
 		}
 
 		logger.Info("Recording transcribed", "action", kind, "characters", len(raw))
