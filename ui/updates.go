@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -193,10 +194,28 @@ func (p *updatePanel) runUpdate() {
 	p.start(func() { p.install(rel) })
 }
 
+// downloadStall is how long fetching an update may go without progress before it is given up: a
+// server or proxy that keeps the line open but sends nothing would otherwise hold the panel for good.
+var downloadStall = time.Minute
+
+var errDownloadStalled = errors.New("the download stopped; try again later")
+
 // install runs off Fyne's thread; on success the process is replaced before Update returns.
 func (p *updatePanel) install(rel *updater.Release) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	// Installing is not watched: it may wait on a password prompt, with nothing to report.
+	stalled := time.AfterFunc(downloadStall, func() { cancel(errDownloadStalled) })
+	defer stalled.Stop()
+
 	shown := ""
 	report := func(progress updater.Progress) {
+		switch progress.Stage {
+		case updater.Installing, updater.Relaunching:
+			stalled.Stop()
+		default:
+			stalled.Reset(downloadStall)
+		}
 		// The download reports every read; only a changed line is worth a trip to the UI thread.
 		text := progressText(progress)
 		if text == shown {
@@ -209,9 +228,12 @@ func (p *updatePanel) install(rel *updater.Release) {
 		})
 	}
 
-	err := p.updater.Update(context.Background(), rel, updater.WithProgress(report))
+	err := p.updater.Update(ctx, rel, updater.WithProgress(report))
 	if err == nil {
 		return
+	}
+	if cause := context.Cause(ctx); errors.Is(cause, errDownloadStalled) {
+		err = cause
 	}
 	logger.Error("Update failed", "release", rel.Tag, "error", err)
 	fyne.Do(func() {
