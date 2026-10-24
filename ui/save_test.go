@@ -557,3 +557,46 @@ func TestASpeechKeyStaysWithTheServiceItWasEnteredFor(t *testing.T) {
 		t.Fatalf("saved custom service holds key %q and endpoint %q", key, speech.RemoteBaseURL)
 	}
 }
+
+func TestAProviderEditSurvivesLookingAtAnotherAndIsSaved(t *testing.T) {
+	cfg := config.Default()
+	w := newSettingsWindow(t, cfg)
+	names := cfg.GetAllProviderNames()
+	first, other := names[0], names[1]
+	w.providerSelect.SetSelected(first)
+	w.apiKeyBinding.Set("sk-typed")
+	w.modelBinding.Set("typed-model")
+
+	w.providerSelect.SetSelected(other)
+	if key, _ := w.apiKeyBinding.Get(); key == "sk-typed" {
+		t.Fatal("the key typed for one provider showed on another")
+	}
+	w.providerSelect.SetSelected(first)
+	if key, _ := w.apiKeyBinding.Get(); key != "sk-typed" {
+		t.Fatalf("coming back shows key %q, not the one typed", key)
+	}
+
+	w.providerSelect.SetSelected(other)
+	w.saveSettings()
+	if key, _ := cfg.GetAPIKey(first); key != "sk-typed" || cfg.GetProviderSettings(first).Model != "typed-model" {
+		t.Fatalf("saving from %s stored %s as key %q, model %q", other, first, key, cfg.GetProviderSettings(first).Model)
+	}
+	if cfg.GetCurrentProvider() != other {
+		t.Fatalf("the provider shown at Save, %s, is not current: %s", other, cfg.GetCurrentProvider())
+	}
+}
+
+func TestAResultIsStaleOnceTheFormItWasAboutChanged(t *testing.T) {
+	cfg := config.Default()
+	w := newSettingsWindow(t, cfg)
+	provider, _ := w.providerBinding.Get()
+
+	stale := w.formChangedSince(provider)
+	if stale() {
+		t.Fatal("an untouched form already counts as changed")
+	}
+	w.apiKeyBinding.Set("sk-edited-meanwhile")
+	if !stale() {
+		t.Fatal("a result about the key replaced meanwhile still lands")
+	}
+}

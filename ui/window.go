@@ -86,7 +86,10 @@ type MainWindow struct {
 	speechServiceDrafts map[string]speechServiceDraft
 	speechServiceShown  string
 	speechServiceSaved  string
-	microphoneNotice    *fyne.Container
+	// providerForms holds the AI tab's unsaved edits to providers the user moved away from.
+	providerForms    map[string]providerForm
+	providerShown    string
+	microphoneNotice *fyne.Container
 
 	baseURLContainer *fyne.Container
 

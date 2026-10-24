@@ -29,6 +29,11 @@ func (w *MainWindow) saveSettings() {
 		w.reportSaveError("Error", err)
 		return
 	}
+	leftProviders, err := w.leftProviderDrafts()
+	if err != nil {
+		w.reportSaveError("Error", err)
+		return
+	}
 	operations, err := w.operationDrafts()
 	if err != nil {
 		w.reportSaveError("Error", err)
@@ -40,6 +45,10 @@ func (w *MainWindow) saveSettings() {
 		return
 	}
 
+	for _, left := range leftProviders {
+		w.config.SetProviderSettings(left.name, left.settings)
+	}
+	clear(w.providerForms)
 	w.applyProvider(provider)
 	w.applyActions(operations)
 
@@ -107,10 +116,24 @@ func (w *MainWindow) applyProviderSettings() error {
 
 func (w *MainWindow) providerDraft() (providerDraft, error) {
 	provider, _ := w.providerBinding.Get()
-	apiKey, _ := w.apiKeyBinding.Get()
-	model, _ := w.modelBinding.Get()
-	baseURL, _ := w.baseURLBinding.Get()
-	lowReasoning, _ := w.lowReasoningBinding.Get()
+	return w.draftFor(provider, w.shownProviderForm())
+}
+
+// The providers edited and then left for another, each saved as it was left.
+func (w *MainWindow) leftProviderDrafts() ([]providerDraft, error) {
+	var drafts []providerDraft
+	for name, form := range w.providerForms {
+		draft, err := w.draftFor(name, form)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		drafts = append(drafts, draft)
+	}
+	return drafts, nil
+}
+
+func (w *MainWindow) draftFor(provider string, form providerForm) (providerDraft, error) {
+	apiKey, model, baseURL, lowReasoning := form.apiKey, form.model, form.baseURL, form.lowReasoning
 
 	isCustom := w.config.IsCustomProvider(provider)
 	if isCustom && baseURL == "" {
@@ -126,7 +149,7 @@ func (w *MainWindow) providerDraft() (providerDraft, error) {
 	}
 
 	// An empty field over a key this computer cannot read keeps that key for the computer that can.
-	unreadable := w.apiKeyUnreadable && apiKey == ""
+	unreadable := form.unreadable && apiKey == ""
 	if !unreadable {
 		encryptedKey, err := encryptAPIKey(apiKey)
 		if err != nil {

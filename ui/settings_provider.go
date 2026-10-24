@@ -18,20 +18,56 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-func (w *MainWindow) loadProviderSettings(provider string) {
-	settings := w.config.GetProviderSettings(provider)
-
-	apiKey, err := w.config.GetAPIKey(provider)
-	w.apiKeyBinding.Set(apiKey)
-	w.setAPIKeyUnreadable(err != nil)
-	w.modelBinding.Set(settings.Model)
-	w.lowReasoningBinding.Set(settings.LowReasoning)
-
-	if w.config.IsCustomProvider(provider) {
-		w.baseURLBinding.Set(settings.BaseURL)
-	} else {
-		w.baseURLBinding.Set("")
+// formChangedSince reports, when a test or a model list lands, that it is about another provider,
+// key, model or address than the one now on screen.
+func (w *MainWindow) formChangedSince(provider string) func() bool {
+	then := w.shownProviderForm()
+	return func() bool {
+		now := w.shownProviderForm()
+		shown, _ := w.providerBinding.Get()
+		return shown != provider || now.apiKey != then.apiKey || now.model != then.model || now.baseURL != then.baseURL
 	}
+}
+
+// providerForm is what the AI tab shows for one provider, kept while another is looked at until Save.
+type providerForm struct {
+	apiKey, model, baseURL   string
+	lowReasoning, unreadable bool
+}
+
+func (w *MainWindow) shownProviderForm() providerForm {
+	apiKey, _ := w.apiKeyBinding.Get()
+	model, _ := w.modelBinding.Get()
+	baseURL, _ := w.baseURLBinding.Get()
+	lowReasoning, _ := w.lowReasoningBinding.Get()
+	return providerForm{apiKey: apiKey, model: model, baseURL: baseURL, lowReasoning: lowReasoning, unreadable: w.apiKeyUnreadable}
+}
+
+func (w *MainWindow) loadProviderSettings(provider string) {
+	if w.providerShown != "" && w.providerShown != provider {
+		if w.providerForms == nil {
+			w.providerForms = make(map[string]providerForm)
+		}
+		w.providerForms[w.providerShown] = w.shownProviderForm()
+	}
+	w.providerShown = provider
+
+	form, edited := w.providerForms[provider]
+	delete(w.providerForms, provider)
+	if !edited {
+		settings := w.config.GetProviderSettings(provider)
+		apiKey, err := w.config.GetAPIKey(provider)
+		form = providerForm{apiKey: apiKey, model: settings.Model, lowReasoning: settings.LowReasoning, unreadable: err != nil}
+		if w.config.IsCustomProvider(provider) {
+			form.baseURL = settings.BaseURL
+		}
+	}
+
+	w.apiKeyBinding.Set(form.apiKey)
+	w.setAPIKeyUnreadable(form.unreadable)
+	w.modelBinding.Set(form.model)
+	w.lowReasoningBinding.Set(form.lowReasoning)
+	w.baseURLBinding.Set(form.baseURL)
 
 	w.updateProviderUI(provider)
 }
@@ -142,8 +178,7 @@ func (w *MainWindow) browseProviderModels(report progress) {
 		return
 	}
 
-	// The list may arrive after the user moved on to another provider, whose model it is not.
-	stale := func() bool { now, _ := w.providerBinding.Get(); return now != provider }
+	stale := w.formChangedSince(provider)
 	w.loadModels(provider, apiKey, baseURL, current, report, stale, func(model string) {
 		if stale() {
 			return
@@ -186,13 +221,13 @@ func (w *MainWindow) testAPIConnection(report progress) {
 	}
 
 	report.Busy("Testing the connection…")
+	stale := w.formChangedSince(provider)
 
 	go func() {
 		err := answers(testProvider, 10*time.Second)
 
 		fyne.Do(func() {
-			// The answer is about the provider tested, not one the user moved on to meanwhile.
-			if now, _ := w.providerBinding.Get(); now != provider {
+			if stale() {
 				report.Done("")
 				return
 			}
@@ -429,6 +464,10 @@ func (w *MainWindow) deleteProvider(name string) {
 
 	w.refreshProviderList()
 	w.refreshOperationProviderOptions()
+	delete(w.providerForms, name)
+	if w.providerShown == name {
+		w.providerShown = ""
+	}
 	newProvider := w.config.GetCurrentProvider()
 	w.providerSelect.SetSelected(newProvider)
 	w.providerBinding.Set(newProvider)
