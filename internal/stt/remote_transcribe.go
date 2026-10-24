@@ -113,12 +113,17 @@ func remoteRequestBody(cfg config.SpeechConfig, wav []byte) (io.Reader, string, 
 	return &buf, writer.FormDataContentType(), nil
 }
 
-// gpt- transcribe models take a repeated languages[]; everything else takes language.
+// Only gpt-transcribe takes a repeated languages[]; gpt-4o-transcribe and the rest keep the one language.
 func remoteLanguageField(model string) string {
-	if strings.HasPrefix(strings.ToLower(model), "gpt-") {
+	if isGPTTranscribe(model) {
 		return "languages[]"
 	}
 	return "language"
+}
+
+func isGPTTranscribe(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return model == "gpt-transcribe" || strings.HasPrefix(model, "gpt-transcribe-")
 }
 
 // Falls back to the raw value for a key stored in plaintext.

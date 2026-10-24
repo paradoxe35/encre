@@ -159,3 +159,17 @@ func TestEveryServiceResolvesToARealSet(t *testing.T) {
 		}
 	}
 }
+
+// gpt-4o-transcribe takes the one language hint, so it is offered only what that field accepts.
+func TestOnlyGPTTranscribeIsOfferedItsWiderLanguageSet(t *testing.T) {
+	for model, want := range map[string]string{
+		"gpt-transcribe":         "gpt-transcribe",
+		"gpt-4o-transcribe":      "whisper",
+		"gpt-4o-mini-transcribe": "whisper",
+		"whisper-1":              "whisper",
+	} {
+		if got := LanguageSetName("openai", model); got != want {
+			t.Errorf("%s is offered the %q set, want %q", model, got, want)
+		}
+	}
+}

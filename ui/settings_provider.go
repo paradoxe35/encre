@@ -43,8 +43,13 @@ func (w *MainWindow) shownProviderForm() providerForm {
 	return providerForm{apiKey: apiKey, model: model, baseURL: baseURL, lowReasoning: lowReasoning, unreadable: w.apiKeyUnreadable}
 }
 
+// Picking the provider already shown, or loading it twice as Add and Delete do, keeps what is typed.
 func (w *MainWindow) loadProviderSettings(provider string) {
-	if w.providerShown != "" && w.providerShown != provider {
+	if provider == w.providerShown {
+		w.updateProviderUI(provider)
+		return
+	}
+	if w.providerShown != "" {
 		if w.providerForms == nil {
 			w.providerForms = make(map[string]providerForm)
 		}

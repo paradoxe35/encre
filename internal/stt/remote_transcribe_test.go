@@ -58,8 +58,9 @@ func TestRemoteLanguageField(t *testing.T) {
 		model string
 		want  string
 	}{
-		{"gpt-4o-transcribe", "languages[]"},
-		{"gpt-4o-mini-transcribe", "languages[]"},
+		{"gpt-transcribe", "languages[]"},
+		{"gpt-4o-transcribe", "language"},
+		{"gpt-4o-mini-transcribe", "language"},
 		{"whisper-1", "language"},
 		{"whisper-large-v3-turbo", "language"},
 		{"whisper-large-v3", "language"},

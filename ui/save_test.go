@@ -600,3 +600,28 @@ func TestAResultIsStaleOnceTheFormItWasAboutChanged(t *testing.T) {
 		t.Fatal("a result about the key replaced meanwhile still lands")
 	}
 }
+
+func TestRePickingOrDeletingProvidersKeepsWhatIsTyped(t *testing.T) {
+	cfg := config.Default()
+	if err := cfg.AddCustomProvider("local", config.ProviderSettings{BaseURL: "http://localhost:11434/v1", Model: "llama", NoAPIKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	w := newSettingsWindow(t, cfg)
+	current := cfg.GetCurrentProvider()
+	w.providerSelect.SetSelected(current)
+	w.apiKeyBinding.Set("sk-typed")
+
+	w.providerSelect.SetSelected(current)
+	if key, _ := w.apiKeyBinding.Get(); key != "sk-typed" {
+		t.Fatalf("picking the shown provider again shows key %q", key)
+	}
+
+	w.providerSelect.SetSelected("local")
+	w.deleteProvider("local")
+	if shown, _ := w.providerBinding.Get(); shown != current {
+		t.Fatalf("after the delete %q is shown, want %q", shown, current)
+	}
+	if key, _ := w.apiKeyBinding.Get(); key != "sk-typed" {
+		t.Fatalf("after deleting another provider, %s shows key %q", current, key)
+	}
+}
