@@ -8,7 +8,6 @@ import (
 	"fyne.io/fyne/v2"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/logger"
-	"github.com/paradoxe35/encre/internal/platform"
 )
 
 // The status bar ellipsises what it cannot fit; its detail dialog reads the same text, so this only
@@ -71,7 +70,7 @@ func (w *MainWindow) saveSettings() {
 	w.applyTheme(themeSetting)
 	w.applyAutoStartSetting(startOnLogin)
 	// The saved setting follows what the system actually did, not what was asked.
-	actualStartOnLogin := platform.GetAutoStart().IsEnabled()
+	actualStartOnLogin := systemAutoStart().IsEnabled()
 
 	w.config.SetAppearanceSettings(config.AppearanceConfig{
 		Theme:          themeSetting,

@@ -299,16 +299,11 @@ func TestACustomProviderWithoutABaseURLChangesNothing(t *testing.T) {
 	}
 }
 
-// refuseStartOnLogin puts a file where the autostart directory belongs, which makes enabling fail.
+// refuseStartOnLogin makes the login item refuse to be turned on, as a system may.
 func refuseStartOnLogin(t *testing.T) {
 	t.Helper()
-	home, _ := os.UserHomeDir()
-	if err := os.MkdirAll(filepath.Join(home, ".config"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".config", "autostart"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	loginItem.refuse = true
+	t.Cleanup(func() { *loginItem = fakeLoginItem{} })
 }
 
 // queuedDriver runs fyne.Do later, as the running app does on its own thread; the test driver runs it at once.

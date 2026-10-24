@@ -13,7 +13,6 @@ import (
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/permissions"
-	"github.com/paradoxe35/encre/internal/platform"
 	"github.com/paradoxe35/encre/internal/stt"
 	updater "github.com/paradoxe35/go-updater"
 )
@@ -191,8 +190,7 @@ func (w *MainWindow) initBindings() {
 	w.textIndicator.Set(indicators.Text)
 
 	// Re-check actual system state: the user may have removed the login item outside the app.
-	autoStart := platform.GetAutoStart()
-	actualStartOnLogin := autoStart.IsEnabled()
+	actualStartOnLogin := systemAutoStart().IsEnabled()
 	w.startOnLoginBinding.Set(actualStartOnLogin)
 
 	// One listener per binding covers both directions without Bind overwriting it.

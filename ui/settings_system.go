@@ -147,8 +147,11 @@ func themeVariant(themeName string) *fyne.ThemeVariant {
 	return &variant
 }
 
+// systemAutoStart is the login item; tests swap it, so they never add or remove the real one.
+var systemAutoStart = platform.GetAutoStart
+
 func (w *MainWindow) applyAutoStartSetting(enabled bool) {
-	autoStart := platform.GetAutoStart()
+	autoStart := systemAutoStart()
 
 	if enabled {
 		if err := autoStart.Enable(); err != nil {
