@@ -216,3 +216,29 @@ func TestAnEndpointRefusingTwoSettingsIsLearnedBoth(t *testing.T) {
 		t.Fatalf("the second call took %d requests, want one with both lessons kept: %q, %v", requests-before, text, err)
 	}
 }
+
+// A proxy may wrap the refusal in a long preamble; the retry still reads the setting it names.
+func TestARefusalNamingItsSettingLateIsStillLearned(t *testing.T) {
+	preamble := strings.Repeat("upstream proxy said: ", 30)
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if _, sent := body["temperature"]; sent {
+			message, _ := json.Marshal(preamble + "temperature is deprecated for this model.")
+			status(http.StatusBadRequest, `{"type":"error","error":{"type":"invalid_request_error","message":`+string(message)+`}}`)(w, r)
+			return
+		}
+		claudeOK(w, r)
+	}))
+	defer server.Close()
+
+	p, err := FromSettings(config.BuiltInClaude, config.ProviderSettings{BaseURL: server.URL, Model: "claude-late-refusal", Temperature: 0.3}, "key", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text, err := complete(t, p); err != nil || text != "ok" || requests != 2 {
+		t.Fatalf("got %q, %v after %d requests", text, err, requests)
+	}
+}

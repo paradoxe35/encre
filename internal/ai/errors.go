@@ -12,9 +12,20 @@ import (
 type APIError struct {
 	StatusCode int
 	Message    string
+	// full is the provider's whole message, which Message may cut, for telling one refusal from another.
+	full string
 }
 
 func (e *APIError) Error() string { return e.Message }
+
+// refusalText is what a refusal said in full, for matching the setting it names.
+func refusalText(err error) string {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.full != "" {
+		return strings.ToLower(apiErr.full)
+	}
+	return strings.ToLower(err.Error())
+}
 
 var (
 	errNoReply = errors.New("the reply held no text")
@@ -57,14 +68,14 @@ func statusError(provider string, status int, body []byte) error {
 	var reply struct {
 		Error *replyError `json:"error"`
 	}
-	message := ""
+	message, full := "", ""
 	if json.Unmarshal(body, &reply) == nil && reply.Error != nil {
-		message = clip(reply.Error.Message, messageLimit)
+		message, full = clip(reply.Error.Message, messageLimit), reply.Error.Message
 	}
 	if message == "" {
 		message = statusHint(status, body)
 	}
-	return &APIError{StatusCode: status, Message: fmt.Sprintf("%s: %s (%d)", provider, message, status)}
+	return &APIError{StatusCode: status, Message: fmt.Sprintf("%s: %s (%d)", provider, message, status), full: full}
 }
 
 func statusHint(status int, body []byte) string {

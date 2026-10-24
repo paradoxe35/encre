@@ -131,7 +131,7 @@ func (p *provider) open(ctx context.Context, prompt Prompt, lowReasoning bool) (
 
 // Matched on wording too: a 400 has many causes, and only this one is cured by not streaming.
 func streamingRefused(err error) bool {
-	return refusedRequest(err) && strings.Contains(strings.ToLower(err.Error()), "stream")
+	return refusedRequest(err) && strings.Contains(refusalText(err), "stream")
 }
 
 // Endpoint/model pairs whose 400 named a setting they refuse, sent without it until the app restarts.
@@ -185,7 +185,7 @@ func relaxed(target endpoint, known relaxation, err error) (relaxation, bool) {
 	if !refusedRequest(err) {
 		return known, false
 	}
-	message := strings.ToLower(err.Error())
+	message := refusalText(err)
 	if strings.Contains(message, "temperature") && target.temperature != defaultTemperature {
 		known.dropTemperature = true
 		return known, true
