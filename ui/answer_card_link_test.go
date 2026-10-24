@@ -218,3 +218,19 @@ func settleScrolls(t *testing.T) {
 		t.Cleanup(func() { time.Sleep(time.Second) })
 	}
 }
+
+// In an answer short enough to need no scrolling, the wheel scrolls wide code sideways, as Fyne does.
+func TestTheWheelOverWideCodeInAShortAnswerScrollsTheCode(t *testing.T) {
+	settleScrolls(t)
+	card, _ := newCard(t)
+	answered(card, "q", "```\n"+strings.Repeat("x", 400)+"\n```")
+
+	sides := sideScrollsIn(card.content)
+	if len(sides) != 1 {
+		t.Fatalf("found %d sideways scrolls", len(sides))
+	}
+	sides[0].Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DY: -40}})
+	if sides[0].Offset.X == 0 {
+		t.Error("the wheel left the code where it was")
+	}
+}

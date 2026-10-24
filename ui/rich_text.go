@@ -815,9 +815,24 @@ func newSideScroll(content fyne.CanvasObject, outer fyne.Scrollable) *sideScroll
 func (s *sideScroll) Scrolled(event *fyne.ScrollEvent) {
 	dx, dy := event.Scrolled.DX, event.Scrolled.DY
 	fits := s.Content.MinSize().Width <= s.Size().Width
-	if s.outer != nil && (fits || math.Abs(float64(dy)) > math.Abs(float64(dx))) {
+	vertical := math.Abs(float64(dy)) > math.Abs(float64(dx))
+	// An answer with nowhere to go leaves the wheel to the block, which Fyne turns sideways, as before.
+	if s.outer != nil && (fits || vertical && canScrollBy(s.outer, dy)) {
 		s.outer.Scrolled(event)
 		return
 	}
 	s.Scroll.Scrolled(event)
+}
+
+// canScrollBy is whether a wheel's dy would move the scroll: a negative dy reads further down.
+func canScrollBy(outer fyne.Scrollable, dy float32) bool {
+	scroll, ok := outer.(*container.Scroll)
+	if !ok {
+		return true
+	}
+	spare := scroll.Content.Size().Height - scroll.Size().Height
+	if dy < 0 {
+		return scroll.Offset.Y < spare
+	}
+	return scroll.Offset.Y > 0
 }
