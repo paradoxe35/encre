@@ -22,6 +22,8 @@ import (
 func newCard(t *testing.T) (*AnswerCard, fyne.App) {
 	t.Helper()
 	app := test.NewTempApp(t)
+	// As in the app, where the settings window applies its theme before the card exists.
+	app.Settings().SetTheme(newAppTheme(nil))
 	card := NewAnswerCard(app)
 	card.later = func(time.Duration, func()) {}
 	card.animate = func(_, to fyne.Size, apply func(fyne.Size)) *fyne.Animation {

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	_ "unsafe"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -354,44 +353,7 @@ func (c *AnswerCard) render() {
 	if size := c.fit(); size != c.target {
 		c.resizeTo(size)
 	}
-	// After the resize: a list item lays its links out, and so makes them, only once it has a width.
-	if c.done {
-		c.adoptLinks(c.content)
-	}
 	c.rendered = time.Now()
-}
-
-// Fyne gives a theme override's scope to new widgets only when the override is refreshed, and every
-// refresh is a new scope whose fonts are parsed and kept anew; this hands links the card's own scope.
-// Fyne also keeps what each adopted link draws for good, so links are adopted once the answer is
-// whole rather than at every render of a stream.
-//
-//go:linkname themeLikeParent fyne.io/fyne/v2/internal/cache.OverrideThemeMatchingScope
-func themeLikeParent(o, parent fyne.CanvasObject) bool
-
-// Made here if not drawn yet, as the links of a list item may not be.
-//
-//go:linkname widgetRenderer fyne.io/fyne/v2/internal/cache.Renderer
-func widgetRenderer(fyne.Widget) fyne.WidgetRenderer
-
-// adoptLinks gives the links drawn under o the reading theme, so they take the card design's colour.
-func (c *AnswerCard) adoptLinks(o fyne.CanvasObject) {
-	switch o := o.(type) {
-	case *widget.Hyperlink:
-		if o.Theme() != c.content.Theme() && themeLikeParent(o, c.scroll) {
-			o.Refresh()
-		}
-	case *fyne.Container:
-		for _, child := range o.Objects {
-			c.adoptLinks(child)
-		}
-	case fyne.Widget:
-		if renderer := widgetRenderer(o); renderer != nil {
-			for _, child := range renderer.Objects() {
-				c.adoptLinks(child)
-			}
-		}
-	}
 }
 
 // shownQuestion is the start of a long question: the answer must show without scrolling past what was asked.
@@ -538,6 +500,7 @@ func (c *AnswerCard) build() {
 	c.selection.scroll = c.scroll
 	c.selection.later = func(wait time.Duration, run func()) { c.later(wait, run) }
 	c.reading = container.NewThemeOverride(c.scroll, c.readingTheme())
+	lendCardLinks(c.reading.Theme)
 
 	c.input = newQuestionEntry(c.submit, c.Hide, c.browse, func() { c.copySelection(c.selection.SelectedText()) })
 	c.input.TextStyle.Monospace = designFor(c.style).monospace
@@ -630,6 +593,7 @@ func (c *AnswerCard) retheme() {
 	}
 	c.look.Theme = c.cardTheme()
 	c.reading.Theme = c.readingTheme()
+	lendCardLinks(c.reading.Theme)
 	c.look.Refresh()
 	if c.visible {
 		c.render()

@@ -48,9 +48,13 @@ func TestLinksTakeTheCardDesignsColour(t *testing.T) {
 				if len(links) == 0 {
 					t.Fatal("no links drawn")
 				}
+				wantSize := card.readingTheme().Size(theme.SizeNameText)
 				for _, link := range links {
 					if got := link.Theme().Color(theme.ColorNameHyperlink, variant); got != want {
 						t.Errorf("%q is drawn in %v, want the design's %v", link.Text, got, want)
+					}
+					if got := link.Theme().Size(link.SizeName); got != wantSize {
+						t.Errorf("%q is drawn at %v, want the card's %v", link.Text, got, wantSize)
 					}
 				}
 				if len(links) != 3 {
@@ -162,5 +166,30 @@ func TestAListItemMeasuresItsTextAtTheCardsSize(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A link redrawn on its own, as on hover, takes its look from the app theme; it must still be the card's.
+func TestLinksKeepTheCardsLookAfterTheTextSizeChangesWithTheCardOpen(t *testing.T) {
+	card, app := newCard(t)
+	variant := theme.VariantDark
+	app.Settings().SetTheme(newAppTheme(&variant))
+	card.SetStyle(config.CardStyleMidnight)
+	answered(card, "q", "- an item with [a link](https://b.example)")
+	card.SetTextSize(config.TextSizeLarger)
+
+	want := card.readingTheme()
+	links := hyperlinksIn(card.content)
+	if len(links) == 0 {
+		t.Fatal("no links drawn")
+	}
+	for _, link := range links {
+		link.Refresh()
+		if got := link.Theme().Color(theme.ColorNameHyperlink, variant); got != want.Color(theme.ColorNameHyperlink, variant) {
+			t.Errorf("%q is drawn in %v after the size change", link.Text, got)
+		}
+		if got := link.Theme().Size(link.SizeName); got != want.Size(theme.SizeNameText) {
+			t.Errorf("%q is drawn at %v after the size change, want %v", link.Text, got, want.Size(theme.SizeNameText))
+		}
 	}
 }

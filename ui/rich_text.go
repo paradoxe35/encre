@@ -90,7 +90,7 @@ func linked(text *widget.TextSegment) []widget.RichTextSegment {
 		if before != "" {
 			parts = append(parts, &widget.TextSegment{Text: before, Style: text.Style})
 		}
-		parts = append(parts, &widget.HyperlinkSegment{Text: address, URL: target})
+		parts = append(parts, &widget.HyperlinkSegment{Text: address, URL: target, SizeName: sizeNameCardLink})
 		rest = after
 	}
 	if len(parts) == 0 {
@@ -105,6 +105,7 @@ func linked(text *widget.TextSegment) []widget.RichTextSegment {
 // safeLink keeps a link only to the web or mail; the answer may repeat a page that aims one at a file or another app.
 func safeLink(link *widget.HyperlinkSegment) widget.RichTextSegment {
 	if link.URL != nil && (link.URL.Scheme == "http" || link.URL.Scheme == "https" || link.URL.Scheme == "mailto") {
+		link.SizeName = sizeNameCardLink
 		return link
 	}
 	return &widget.TextSegment{Text: link.Text, Style: widget.RichTextStyleInline}
@@ -120,7 +121,7 @@ func imageLink(image *widget.ImageSegment) widget.RichTextSegment {
 	if err != nil || (address.Scheme != "http" && address.Scheme != "https") {
 		return &widget.TextSegment{Text: label, Style: widget.RichTextStyleInline}
 	}
-	return &widget.HyperlinkSegment{Text: label, URL: address}
+	return &widget.HyperlinkSegment{Text: label, URL: address, SizeName: sizeNameCardLink}
 }
 
 func eachText(segments []widget.RichTextSegment, do func(*widget.TextSegment)) {
@@ -166,6 +167,12 @@ type listItem struct {
 	marker *widget.TextSegment
 	text   *widget.RichText
 }
+
+// Fyne gives a theme override's scope to a new widget only when the override is refreshed, a new
+// scope each time whose fonts are parsed and kept anew; this hands one the scope its parent has.
+//
+//go:linkname themeLikeParent fyne.io/fyne/v2/internal/cache.OverrideThemeMatchingScope
+func themeLikeParent(o, parent fyne.CanvasObject) bool
 
 func newCardList(holder, within *widget.RichText, outer fyne.Scrollable, list *widget.ListSegment) *cardList {
 	l := &cardList{within: within}
@@ -466,7 +473,9 @@ func tableCell(th fyne.Theme, variant fyne.ThemeVariant, segments []widget.RichT
 			segment = safeLink(link)
 		}
 		if link, ok := segment.(*widget.HyperlinkSegment); ok {
-			texts = append(texts, widget.NewHyperlink(link.Text, link.URL))
+			cell := widget.NewHyperlink(link.Text, link.URL)
+			cell.SizeName = sizeNameCardLink
+			texts = append(texts, cell)
 			continue
 		}
 		text, ok := segment.(*widget.TextSegment)

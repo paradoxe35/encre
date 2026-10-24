@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"sync/atomic"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -11,6 +12,30 @@ import (
 
 // Fyne clears windows with the app background, kept transparent for glass; windows paint this instead.
 const colorNameWindow fyne.ThemeColorName = "encreWindow"
+
+// sizeNameCardLink is the answer card's text size, which its links take from the app theme.
+const sizeNameCardLink fyne.ThemeSizeName = "encreCardLink"
+
+// cardLinks is the theme the answer card reads in. Only the card draws links, and Fyne draws a link
+// in the app theme unless a theme override is refreshed over it, keeping what it drew there for good;
+// so the app theme lends links the card's colour and size instead.
+var cardLinks atomic.Pointer[cardLinkLook]
+
+type cardLinkLook struct {
+	light, dark color.Color
+	size        float32
+}
+
+// lendCardLinks resolves the card's look with none lent, as a card design without its own link
+// colour falls back to the app theme, which would ask the card again.
+func lendCardLinks(reading fyne.Theme) {
+	cardLinks.Store(nil)
+	cardLinks.Store(&cardLinkLook{
+		light: reading.Color(theme.ColorNameHyperlink, theme.VariantLight),
+		dark:  reading.Color(theme.ColorNameHyperlink, theme.VariantDark),
+		size:  reading.Size(theme.SizeNameText),
+	})
+}
 
 // A nil variant follows the system.
 type appTheme struct {
@@ -30,6 +55,13 @@ func (t *appTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) co
 		return color.Transparent
 	case colorNameWindow:
 		name = theme.ColorNameBackground
+	case theme.ColorNameHyperlink:
+		if look := cardLinks.Load(); look != nil {
+			if variant == theme.VariantLight {
+				return look.light
+			}
+			return look.dark
+		}
 	case theme.ColorNameInputBorder:
 		// Fyne's is about 1.2:1 on the background, so an unticked box all but vanishes; these reach 3:1.
 		if variant == theme.VariantLight {
@@ -40,7 +72,15 @@ func (t *appTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) co
 	return theme.DefaultTheme().Color(name, variant)
 }
 
-func (t *appTheme) Size(name fyne.ThemeSizeName) float32 { return theme.DefaultTheme().Size(name) }
+func (t *appTheme) Size(name fyne.ThemeSizeName) float32 {
+	if name == sizeNameCardLink {
+		if look := cardLinks.Load(); look != nil {
+			return look.size
+		}
+		name = theme.SizeNameText
+	}
+	return theme.DefaultTheme().Size(name)
+}
 
 func (t *appTheme) Font(style fyne.TextStyle) fyne.Resource { return theme.DefaultTheme().Font(style) }
 
