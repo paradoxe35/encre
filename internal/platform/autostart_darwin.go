@@ -32,13 +32,19 @@ func appBundlePath(executable string) (string, bool) {
 }
 
 func (a *autoStart) Enable() error {
-	// System Events adds a duplicate login item on every call, and Disable would then remove only one.
-	if a.IsEnabled() {
-		return nil
-	}
 	appPath, err := getAppPath()
 	if err != nil {
 		return err
+	}
+	// System Events adds a duplicate on every call, so an item already there is kept when it opens
+	// this copy, and replaced when it opens one since moved, such as the copy on the disk image.
+	switch paths := loginItemPaths(appPath); {
+	case len(paths) == 1 && paths[0] == strings.TrimSuffix(appPath, "/"):
+		return nil
+	case len(paths) > 0:
+		if err := a.Disable(); err != nil {
+			return err
+		}
 	}
 
 	script := fmt.Sprintf(`tell application "System Events" to make new login item with properties {path:%s, hidden:false} at end`, appleScriptString(appPath))
@@ -65,7 +71,7 @@ func (a *autoStart) Disable() error {
 
 	appName := filepath.Base(appPath)
 
-	script := fmt.Sprintf(`tell application "System Events" to delete (every login item whose name is %s)`, appleScriptString(strings.TrimSuffix(appName, ".app")))
+	script := fmt.Sprintf(`tell application "System Events" to delete (every login item whose name is %s)`, appleScriptString(loginItemName(appPath)))
 
 	cmd := exec.Command("osascript", "-e", script)
 	output, err := cmd.CombinedOutput()
@@ -81,14 +87,33 @@ func (a *autoStart) Disable() error {
 	return nil
 }
 
+func loginItemName(appPath string) string {
+	return strings.TrimSuffix(filepath.Base(appPath), ".app")
+}
+
+// loginItemPaths lists what each login item named after the app opens.
+func loginItemPaths(appPath string) []string {
+	script := fmt.Sprintf(`tell application "System Events" to get the path of every login item whose name is %s`, appleScriptString(loginItemName(appPath)))
+	output, err := exec.Command("osascript", "-e", script).Output()
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, path := range strings.Split(strings.TrimSpace(string(output)), ", ") {
+		if path = strings.TrimSuffix(path, "/"); path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
 func (a *autoStart) IsEnabled() bool {
 	appPath, err := getAppPath()
 	if err != nil {
 		return false
 	}
 
-	appName := strings.TrimSuffix(filepath.Base(appPath), ".app")
-	script := fmt.Sprintf(`tell application "System Events" to exists login item %s`, appleScriptString(appName))
+	script := fmt.Sprintf(`tell application "System Events" to exists login item %s`, appleScriptString(loginItemName(appPath)))
 
 	output, err := exec.Command("osascript", "-e", script).Output()
 	if err != nil {
