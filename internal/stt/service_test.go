@@ -386,3 +386,16 @@ func TestAFailedTakeStillUnloadsAModelNotKept(t *testing.T) {
 		t.Errorf("the next take did not ask for the model again: %v", fake.entries())
 	}
 }
+
+func TestATakeThatOutlivesCloseDoesNotCountAgainstTheNextEngine(t *testing.T) {
+	service, _, cfg := newTestService(t, false)
+	if err := service.StartRecording(cfg); err != nil {
+		t.Fatal(err)
+	}
+	old := service.speech
+	service.Close()
+	service.finishTake(old)
+	if service.takes != 0 {
+		t.Fatalf("takes = %d after a closed engine's take ended", service.takes)
+	}
+}

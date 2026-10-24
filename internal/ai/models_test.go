@@ -114,3 +114,20 @@ func TestAnthropicVersionMatchesMessagesCall(t *testing.T) {
 		t.Fatalf("version header = %q", endpoint.headers["anthropic-version"])
 	}
 }
+
+// A bare local host gets the same /v1 for listing models as for chat.
+func TestABareLocalHostListsModelsUnderV1(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, `{"data":[{"id":"llama3"}]}`)
+	}))
+	defer server.Close()
+
+	models, err := ListModels(context.Background(), "local", "", server.URL)
+	if err != nil || len(models) != 1 || models[0].ID != "llama3" {
+		t.Fatalf("listed %v, %v", models, err)
+	}
+}

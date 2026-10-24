@@ -309,6 +309,10 @@ func (s *Service) finishTake(speech speechEngine) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// A take that outlived Close belongs to an engine gone, and must not count against a later one.
+	if speech != s.speech {
+		return
+	}
 	s.takes--
 	if s.keepLoaded || s.model == "" || s.takes > 0 {
 		return
