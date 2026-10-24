@@ -365,3 +365,24 @@ func TestWitAIFailureWithNoTextStillFails(t *testing.T) {
 		t.Fatal("expected the failure to surface")
 	}
 }
+
+func TestAFailedTakeStillUnloadsAModelNotKept(t *testing.T) {
+	service, fake, cfg := newTestService(t, false)
+	fake.stopErr = errors.New("microphone unavailable")
+
+	if err := service.StartRecording(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.StopRecording(); err == nil {
+		t.Fatal("test setup: the stop did not fail")
+	}
+	if got := commands(fake.entries(), "unload"); len(got) != 1 {
+		t.Fatalf("a failed take left the model loaded: %v", fake.entries())
+	}
+
+	fake.stopErr = nil
+	take(t, service, cfg)
+	if got := commands(fake.entries(), "use"); len(got) != 2 {
+		t.Errorf("the next take did not ask for the model again: %v", fake.entries())
+	}
+}

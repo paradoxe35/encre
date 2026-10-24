@@ -252,9 +252,12 @@ func (s *Service) StopRecording() (string, error) {
 
 	text, err := speech.Stop()
 	if err != nil {
-		// Ask for the model again next time: a failed load surfaces here.
+		// Ask for the model again next time: a failed load surfaces here. Unless it is kept loaded,
+		// finishing the take unloads it and does the same, so the name is left for that to see.
 		s.mu.Lock()
-		s.model = ""
+		if s.keepLoaded {
+			s.model = ""
+		}
 		s.mu.Unlock()
 		return "", err
 	}
