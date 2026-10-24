@@ -10,7 +10,7 @@ import (
 )
 
 func RestartApplication() error {
-	executable, err := os.Executable()
+	executable, err := launchPath()
 	if err != nil {
 		logger.Error("Failed to get executable path", "error", err)
 		return err
@@ -22,8 +22,7 @@ func RestartApplication() error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	err = cmd.Start()
-	if err != nil {
+	if err := claimed.Load().startInOurPlace(cmd.Start); err != nil {
 		logger.Error("Failed to start new instance", "error", err)
 		return err
 	}

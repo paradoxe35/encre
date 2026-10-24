@@ -6,8 +6,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	singleinstance "github.com/allan-simon/go-singleinstance"
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
@@ -64,8 +67,88 @@ func (h *Handover) Serve(onShow func()) {
 func (h *Handover) Close() {
 	if h.listener != nil {
 		h.listener.Close()
+		h.listener = nil
 	}
 	os.Remove(h.portPath)
+}
+
+// Instance is this copy's claim to be the Encre running: the lock, and the handover later launches reach.
+type Instance struct {
+	lockPath string
+
+	mu       sync.Mutex
+	lock     *os.File
+	handover *Handover
+	onShow   func()
+}
+
+var claimed atomic.Pointer[Instance]
+
+func Claim(lockPath, portPath string) (*Instance, error) {
+	lock, err := singleinstance.CreateLockFile(lockPath)
+	if err != nil {
+		return nil, err
+	}
+	i := &Instance{lockPath: lockPath, lock: lock, handover: NewHandover(portPath)}
+	claimed.Store(i)
+	return i, nil
+}
+
+func (i *Instance) Serve(onShow func()) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.onShow = onShow
+	i.handover.Serve(onShow)
+}
+
+// Release lets a copy started in our place claim the lock and handover for itself.
+func (i *Instance) Release() {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.lock == nil {
+		return
+	}
+	i.handover.Close()
+	i.lock.Close()
+	i.lock = nil
+}
+
+// Reclaim takes back what Release let go, for when the new copy never started.
+func (i *Instance) Reclaim() error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.lock != nil {
+		return nil
+	}
+	lock, err := singleinstance.CreateLockFile(i.lockPath)
+	if err != nil {
+		return err
+	}
+	i.lock = lock
+	if i.onShow != nil {
+		i.handover.Serve(i.onShow)
+	}
+	return nil
+}
+
+// Close is a no-op once released, so an exiting copy leaves its successor's handover alone.
+func (i *Instance) Close() {
+	i.Release()
+}
+
+// startInOurPlace runs start with the claim let go, and takes it back if start fails.
+func (i *Instance) startInOurPlace(start func() error) error {
+	if i == nil {
+		return start()
+	}
+	i.Release()
+	err := start()
+	if err != nil {
+		if reclaimErr := i.Reclaim(); reclaimErr != nil {
+			logger.Error("Could not take back the instance lock", "error", reclaimErr)
+		}
+	}
+	return err
 }
 
 // Retried: the copy holding the lock may still be starting and not have written its port yet.

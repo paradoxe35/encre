@@ -4,8 +4,6 @@ package platform
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/paradoxe35/encre/internal/logger"
 	"golang.org/x/sys/windows/registry"
@@ -19,14 +17,9 @@ const (
 )
 
 func (a *autoStart) Enable() error {
-	executable, err := os.Executable()
+	executable, err := launchPath()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
-	}
-
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		logger.Warn("Failed to resolve symlinks", "error", err)
 	}
 
 	// Quoted to avoid the "Unquoted Service Path" vulnerability on paths containing spaces.

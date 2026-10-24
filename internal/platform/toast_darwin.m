@@ -19,22 +19,24 @@ static void encre_toast_as_app(UNUserNotificationCenter* center, NSString* title
 
 // The permission is read each time: the user can grant or withdraw it in System Settings at any moment.
 void encre_toast(const char* cTitle, const char* cBody) {
-    if ([[NSBundle mainBundle] bundleIdentifier] == nil) {
-        encreToastByScript((char*)cTitle, (char*)cBody);
-        return;
-    }
-
-    NSString* title = [[NSString alloc] initWithUTF8String:cTitle];
-    NSString* body = [[NSString alloc] initWithUTF8String:cBody];
-    UNUserNotificationCenter* center = [UNUserNotificationCenter currentNotificationCenter];
-    [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings* settings) {
-        UNAuthorizationStatus status = settings.authorizationStatus;
-        if (status == UNAuthorizationStatusAuthorized || status == UNAuthorizationStatusProvisional) {
-            encre_toast_as_app(center, title, body);
-        } else {
-            encreToastByScript((char*)[title UTF8String], (char*)[body UTF8String]);
+    @autoreleasepool {
+        if ([[NSBundle mainBundle] bundleIdentifier] == nil) {
+            encreToastByScript((char*)cTitle, (char*)cBody);
+            return;
         }
-        [title release];
-        [body release];
-    }];
+
+        NSString* title = [[NSString alloc] initWithUTF8String:cTitle];
+        NSString* body = [[NSString alloc] initWithUTF8String:cBody];
+        UNUserNotificationCenter* center = [UNUserNotificationCenter currentNotificationCenter];
+        [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings* settings) {
+            UNAuthorizationStatus status = settings.authorizationStatus;
+            if (status == UNAuthorizationStatusAuthorized || status == UNAuthorizationStatusProvisional) {
+                encre_toast_as_app(center, title, body);
+            } else {
+                encreToastByScript((char*)[title UTF8String], (char*)[body UTF8String]);
+            }
+            [title release];
+            [body release];
+        }];
+    }
 }

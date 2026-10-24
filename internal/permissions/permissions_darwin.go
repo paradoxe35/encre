@@ -20,13 +20,17 @@ bool HasInputMonitoringPermission(void) {
 
 // Reading the status never prompts; only a capture request does.
 bool IsMicrophoneDenied(void) {
-    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
-    return status == AVAuthorizationStatusDenied || status == AVAuthorizationStatusRestricted;
+    @autoreleasepool {
+        AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+        return status == AVAuthorizationStatusDenied || status == AVAuthorizationStatusRestricted;
+    }
 }
 
 static void OpenPrivacyPane(NSString *pane) {
-    NSString *urlString = [@"x-apple.systempreferences:com.apple.preference.security?" stringByAppendingString:pane];
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:urlString]];
+    @autoreleasepool {
+        NSString *urlString = [@"x-apple.systempreferences:com.apple.preference.security?" stringByAppendingString:pane];
+        [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:urlString]];
+    }
 }
 
 void OpenAccessibilityPreferences(void) {

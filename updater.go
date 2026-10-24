@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -24,18 +25,45 @@ const (
 )
 
 // newUpdater returns nil for development builds, whose version compares to no release.
-func newUpdater(app fyne.App, beforeRelaunch func()) (ui.Updater, error) {
+func newUpdater(app fyne.App, handOver, resume func()) (ui.Updater, error) {
 	if !version.IsProduction(app) {
 		return nil, nil
 	}
-	return updater.New(updater.Config{
+	guard := &relaunchGuard{handOver: handOver, resume: resume}
+	u, err := updater.New(updater.Config{
 		Owner:   releaseOwner,
 		Repo:    releaseRepo,
 		Version: version.GetVersion(app),
 		// logger.Init made the file logger the slog default.
 		Logger:         slog.Default(),
-		BeforeRelaunch: beforeRelaunch,
+		BeforeRelaunch: guard.beforeRelaunch,
 	})
+	if err != nil {
+		return nil, err
+	}
+	guard.Updater = u
+	return guard, nil
+}
+
+// relaunchGuard undoes the handover when the updated copy could not be started; on success this process exits.
+type relaunchGuard struct {
+	ui.Updater
+	handOver   func()
+	resume     func()
+	handedOver atomic.Bool
+}
+
+func (g *relaunchGuard) beforeRelaunch() {
+	g.handedOver.Store(true)
+	g.handOver()
+}
+
+func (g *relaunchGuard) Update(ctx context.Context, rel *updater.Release, opts ...updater.Option) error {
+	err := g.Updater.Update(ctx, rel, opts...)
+	if g.handedOver.Swap(false) && err != nil {
+		g.resume()
+	}
+	return err
 }
 
 // A tray app runs for days, so the check repeats; each release is announced once, across launches.

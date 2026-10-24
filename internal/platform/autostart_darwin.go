@@ -4,7 +4,6 @@ package platform
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -15,14 +14,9 @@ import (
 type autoStart struct{}
 
 func getAppPath() (string, error) {
-	executable, err := os.Executable()
+	executable, err := launchPath()
 	if err != nil {
 		return "", fmt.Errorf("failed to get executable path: %w", err)
-	}
-
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		logger.Warn("Failed to resolve symlinks", "error", err)
 	}
 
 	if bundle, ok := appBundlePath(executable); ok {

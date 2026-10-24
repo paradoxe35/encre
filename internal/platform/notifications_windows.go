@@ -100,17 +100,22 @@ func writeShortcut(link, target, appID string) error {
 	}
 	defer release(persistFile)
 
-	linkW := utf16(link)
+	linkW, targetW, appIDW := wideString(link), wideString(target), wideString(appID)
+	// COM reads these through uintptrs, which do not keep them alive.
+	defer runtime.KeepAlive(linkW)
+	defer runtime.KeepAlive(targetW)
+	defer runtime.KeepAlive(appIDW)
+
 	if _, err := os.Stat(link); err == nil {
 		if err := hresult(call(persistFile, persistFileLoad, uintptr(unsafe.Pointer(linkW)), stgmReadWrite)); err != nil {
 			return fmt.Errorf("load shortcut: %w", err)
 		}
 	}
 
-	if err := hresult(call(shellLink, shellLinkSetPath, uintptr(unsafe.Pointer(utf16(target))))); err != nil {
+	if err := hresult(call(shellLink, shellLinkSetPath, uintptr(unsafe.Pointer(targetW)))); err != nil {
 		return fmt.Errorf("set target: %w", err)
 	}
-	if err := hresult(call(shellLink, shellLinkSetIconLocation, uintptr(unsafe.Pointer(utf16(target))), 0)); err != nil {
+	if err := hresult(call(shellLink, shellLinkSetIconLocation, uintptr(unsafe.Pointer(targetW)), 0)); err != nil {
 		return fmt.Errorf("set icon: %w", err)
 	}
 
@@ -120,8 +125,10 @@ func writeShortcut(link, target, appID string) error {
 	}
 	defer release(store)
 
-	value := propVariant{vt: vtLPWSTR, val: uintptr(unsafe.Pointer(utf16(appID)))}
-	if err := hresult(call(store, propertyStoreSetValue, uintptr(unsafe.Pointer(&pkeyAppUserModelID)), uintptr(unsafe.Pointer(&value)))); err != nil {
+	value := &propVariant{vt: vtLPWSTR, val: uintptr(unsafe.Pointer(appIDW))}
+	err = hresult(call(store, propertyStoreSetValue, uintptr(unsafe.Pointer(&pkeyAppUserModelID)), uintptr(unsafe.Pointer(value))))
+	runtime.KeepAlive(value)
+	if err != nil {
 		return fmt.Errorf("set app id: %w", err)
 	}
 	if err := hresult(call(store, propertyStoreCommit)); err != nil {
@@ -135,6 +142,9 @@ func writeShortcut(link, target, appID string) error {
 }
 
 // A COM object is a pointer to its vtable; a method is a slot in it, called with the object first.
+// uintptrescapes keeps pointers converted in a call's arguments alive and in place until it returns.
+//
+//go:uintptrescapes
 func call(object unsafe.Pointer, slot int, args ...uintptr) uintptr {
 	vtable := *(**[32]uintptr)(object)
 	hr, _, _ := syscall.SyscallN(vtable[slot], append([]uintptr{uintptr(object)}, args...)...)
@@ -160,7 +170,7 @@ func hresult(hr uintptr) error {
 	return nil
 }
 
-func utf16(s string) *uint16 {
+func wideString(s string) *uint16 {
 	p, _ := windows.UTF16PtrFromString(s)
 	return p
 }

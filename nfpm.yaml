@@ -28,8 +28,9 @@ contents:
     file_info:
       mode: 0644
 
-# Fyne draws through GL and X11; rdev grabs input through xdo and evdev; cpal
-# captures through ALSA. The names differ per distribution.
+# Fyne draws through GL, X11 and Wayland; rdev grabs input through xdo and
+# evdev; cpal captures through ALSA; the Rust library needs the C++ and GCC
+# runtimes. The names differ per distribution.
 depends:
   - libc6
   - libgl1
@@ -47,6 +48,9 @@ depends:
   - libxfixes3
   - libxxf86vm1
   - libasound2 | libasound2t64
+  - libwayland-client0
+  - libstdc++6
+  - libgcc-s1 | libgcc1
 
 overrides:
   rpm:
@@ -67,6 +71,9 @@ overrides:
       - libXfixes
       - libXxf86vm
       - alsa-lib
+      - libwayland-client
+      - libstdc++
+      - libgcc
   archlinux:
     depends:
       - glibc
@@ -85,3 +92,5 @@ overrides:
       - libxfixes
       - libxxf86vm
       - alsa-lib
+      - wayland
+      - gcc-libs

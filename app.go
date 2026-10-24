@@ -39,6 +39,9 @@ type Application struct {
 	updater      ui.Updater
 	updateChecks chan struct{}
 
+	instance     *platform.Instance
+	teardownOnce sync.Once
+
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
 	// overlayMu guards the indicator swap: config listeners run concurrently.
@@ -53,7 +56,7 @@ type Application struct {
 
 const closeAnswerAction = "close_answer"
 
-func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
+func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instance) (*Application, error) {
 	processor, err := actions.NewProcessor(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create processor: %w", err)
@@ -73,10 +76,11 @@ func NewApplication(app fyne.App, cfg *config.Config) (*Application, error) {
 		hotkeyManager: hotkeyManager,
 		processor:     processor,
 		notifications: notifications,
+		instance:      instance,
 	}
 
 	// Before the window, which builds its Updates controls from it.
-	application.updater, err = newUpdater(app, application.teardown)
+	application.updater, err = newUpdater(app, application.handOver, application.resume)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create updater: %w", err)
 	}
@@ -452,27 +456,49 @@ func (a *Application) Start() error {
 
 func (a *Application) Stop() {
 	logger.Info("Stopping application")
-
-	a.teardown()
-
-	// Stop is also called from the tray's Quit handler, off Fyne's thread.
-	fyne.Do(a.app.Quit)
+	stopOffMain(a.teardown, func() { fyne.Do(a.app.Quit) })
 }
 
-// An updated copy relaunched in our place needs the hotkeys free before it starts.
-func (a *Application) teardown() {
-	if a.updateChecks != nil {
-		close(a.updateChecks)
-		a.updateChecks = nil
-	}
-	if a.permissionMonitorCancel != nil {
-		a.permissionMonitorCancel()
-	}
-	stt.StopRefreshing()
-	a.closeOverlay()
+// The tray runs Quit on the UI thread, and closing the indicator waits on that thread.
+func stopOffMain(teardown, quit func()) {
+	go func() {
+		teardown()
+		quit()
+	}()
+}
 
+func (a *Application) teardown() {
+	a.teardownOnce.Do(func() {
+		if a.updateChecks != nil {
+			close(a.updateChecks)
+		}
+		if a.permissionMonitorCancel != nil {
+			a.permissionMonitorCancel()
+		}
+		stt.StopRefreshing()
+		a.closeOverlay()
+
+		a.hotkeyManager.Stop()
+		a.hotkeyManager.Close()
+		a.voice.Close()
+		a.processor.Close()
+	})
+}
+
+// The updated copy relaunched in our place claims the lock and listens for the shortcuts; we exit right after.
+func (a *Application) handOver() {
 	a.hotkeyManager.Stop()
-	a.hotkeyManager.Close()
-	a.voice.Close()
-	a.processor.Close()
+	a.instance.Release()
+}
+
+func (a *Application) resume() {
+	if err := a.instance.Reclaim(); err != nil {
+		logger.Error("Could not take back the instance lock", "error", err)
+	}
+	if err := a.hotkeyManager.Start(); err != nil {
+		logger.Error("Shortcuts did not come back after the failed restart", "error", err)
+		fyne.Do(func() {
+			a.notifications.ShowError("Hotkeys are not listening", err.Error())
+		})
+	}
 }

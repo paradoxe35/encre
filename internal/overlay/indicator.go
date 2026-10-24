@@ -102,7 +102,8 @@ func (i *Indicator) Level(rms float32) {
 	i.level = loudness(rms)
 }
 
-// Waits for the window to be gone; call before the window system goes away.
+// Waits for the window to be gone; call before the window system goes away, and off the UI thread,
+// which the window needs in order to close.
 func (i *Indicator) Close() {
 	i.mu.Lock()
 	i.closing = true

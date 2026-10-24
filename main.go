@@ -9,7 +9,6 @@ import (
 	"os"
 
 	"fyne.io/fyne/v2/app"
-	singleinstance "github.com/allan-simon/go-singleinstance"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
@@ -28,7 +27,7 @@ func main() {
 
 	lockPath := utils.AppHomeDir("encre.lock")
 	portPath := utils.AppHomeDir("instance.port")
-	lockFile, err := singleinstance.CreateLockFile(lockPath)
+	instance, err := platform.Claim(lockPath, portPath)
 	if err != nil {
 		if platform.Notify(portPath) {
 			logger.Info("Handed this launch to the Encre already running")
@@ -37,10 +36,7 @@ func main() {
 		logger.Error("Another instance is already running", "error", err)
 		os.Exit(1)
 	}
-	defer lockFile.Close()
-
-	handover := platform.NewHandover(portPath)
-	defer handover.Close()
+	defer instance.Close()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -55,13 +51,13 @@ func main() {
 		"version", version.GetVersion(myApp),
 		"build", version.GetBuildNumber(myApp))
 
-	application, err := NewApplication(myApp, cfg)
+	application, err := NewApplication(myApp, cfg, instance)
 	if err != nil {
 		logger.Error("Failed to create application", "error", err)
 		os.Exit(1)
 	}
 
-	handover.Serve(application.ShowWindow)
+	instance.Serve(application.ShowWindow)
 
 	if err := application.Start(); err != nil {
 		logger.Error("Failed to start application", "error", err)

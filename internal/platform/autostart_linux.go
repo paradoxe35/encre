@@ -43,15 +43,9 @@ func (a *autoStart) Enable() error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	executable, err := os.Executable()
+	executable, err := launchPath()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
-	}
-
-	// Resolving matters for AppImages and other symlinked installs.
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		logger.Warn("Failed to resolve symlinks", "error", err)
 	}
 
 	autostartDir := filepath.Join(homeDir, ".config", "autostart")

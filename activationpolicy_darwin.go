@@ -27,15 +27,17 @@ void SetActivationPolicyAccessory(void) {
 
 // An active app with no window left keeps the keyboard; hidden, macOS hands it to the next app itself.
 void YieldFocus(void) {
-    if (![NSApp isActive]) {
-        return;
-    }
-    for (NSWindow* window in [NSApp windows]) {
-        if ([window isVisible] && [window canBecomeKeyWindow]) {
+    @autoreleasepool {
+        if (![NSApp isActive]) {
             return;
         }
+        for (NSWindow* window in [NSApp windows]) {
+            if ([window isVisible] && [window canBecomeKeyWindow]) {
+                return;
+            }
+        }
+        [NSApp hide:nil];
     }
-    [NSApp hide:nil];
 }
 */
 import "C"

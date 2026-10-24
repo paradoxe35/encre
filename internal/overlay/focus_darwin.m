@@ -51,10 +51,12 @@ static void encre_overlay_blur(NSWindow* window, int radius) {
 
 // Matches the Backdrop constants in overlay.go.
 int encre_overlay_backdrop(void) {
-    if ([[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceTransparency]) {
-        return 0;
+    @autoreleasepool {
+        if ([[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceTransparency]) {
+            return 0;
+        }
+        return encre_overlay_can_blur() ? 2 : 1;
     }
-    return encre_overlay_can_blur() ? 2 : 1;
 }
 
 void encre_overlay_opacity(uintptr_t window, double opacity) {
@@ -63,25 +65,27 @@ void encre_overlay_opacity(uintptr_t window, double opacity) {
 
 // GLFW places windows from the top left of the primary screen, Cocoa from its bottom left.
 void encre_overlay_panel(uintptr_t window, int x, int y, int width, int height, int radius, int glass) {
-    NSWindow* w = (__bridge NSWindow*)(void*)window;
-    [w setCollectionBehavior:[w collectionBehavior]
-        | NSWindowCollectionBehaviorCanJoinAllSpaces
-        | NSWindowCollectionBehaviorIgnoresCycle
-        | NSWindowCollectionBehaviorFullScreenAuxiliary];
+    @autoreleasepool {
+        NSWindow* w = (__bridge NSWindow*)(void*)window;
+        [w setCollectionBehavior:[w collectionBehavior]
+            | NSWindowCollectionBehaviorCanJoinAllSpaces
+            | NSWindowCollectionBehaviorIgnoresCycle
+            | NSWindowCollectionBehaviorFullScreenAuxiliary];
 
-    CGFloat top = NSMaxY([[[NSScreen screens] firstObject] frame]);
-    [w setFrame:NSMakeRect(x, top - y - height, width, height) display:YES];
+        CGFloat top = NSMaxY([[[NSScreen screens] firstObject] frame]);
+        [w setFrame:NSMakeRect(x, top - y - height, width, height) display:YES];
 
-    [w setOpaque:NO];
-    [w setBackgroundColor:[NSColor clearColor]];
-    NSView* view = [w contentView];
-    [view setWantsLayer:YES];
-    [[view layer] setCornerRadius:radius];
-    [[view layer] setMasksToBounds:YES];
-    if (glass) {
-        encre_overlay_blur(w, 24);
+        [w setOpaque:NO];
+        [w setBackgroundColor:[NSColor clearColor]];
+        NSView* view = [w contentView];
+        [view setWantsLayer:YES];
+        [[view layer] setCornerRadius:radius];
+        [[view layer] setMasksToBounds:YES];
+        if (glass) {
+            encre_overlay_blur(w, 24);
+        }
+        [w invalidateShadow];
     }
-    [w invalidateShadow];
 }
 
 static int focused_window_centre(int* x, int* y) {
