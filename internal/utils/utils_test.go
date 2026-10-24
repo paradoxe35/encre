@@ -81,3 +81,28 @@ func TestMakePrivateIgnoresAMissingFile(t *testing.T) {
 		t.Errorf("got %v, want nil", err)
 	}
 }
+
+func TestAnAtomicWriteGoesThroughASymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles-config.json")
+	if err := os.WriteFile(target, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteFileAtomic(link, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced by a plain file")
+	}
+	if data, _ := os.ReadFile(target); string(data) != "new" {
+		t.Fatalf("the linked file reads %q", data)
+	}
+}

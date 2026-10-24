@@ -42,6 +42,10 @@ func MakePrivate(path string) error {
 
 // WriteFileAtomic replaces path in one rename, so a crash mid-write leaves the old file whole.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	// A rename replaces a symlink itself, so a file linked into a dotfiles folder is written where it points.
+	if target, resolveErr := filepath.EvalSymlinks(path); resolveErr == nil {
+		path = target
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
