@@ -50,7 +50,7 @@ func (e *replyError) err() error {
 	if e == nil {
 		return nil
 	}
-	return &APIError{Message: e.Message}
+	return &APIError{Message: clip(e.Message, messageLimit)}
 }
 
 func statusError(provider string, status int, body []byte) error {
@@ -59,7 +59,7 @@ func statusError(provider string, status int, body []byte) error {
 	}
 	message := ""
 	if json.Unmarshal(body, &reply) == nil && reply.Error != nil {
-		message = reply.Error.Message
+		message = clip(reply.Error.Message, messageLimit)
 	}
 	if message == "" {
 		message = statusHint(status, body)
@@ -87,10 +87,16 @@ func statusHint(status int, body []byte) string {
 	return "request failed"
 }
 
-func preview(text string) string {
-	const limit = 120
-	if len(text) <= limit {
+func preview(text string) string { return clip(text, 120) }
+
+// A provider's own message is shown whole up to this; proxies put tracebacks there.
+const messageLimit = 300
+
+// clip cuts on a rune, so a message in any script ends whole.
+func clip(text string, limit int) string {
+	runes := []rune(text)
+	if len(runes) <= limit {
 		return text
 	}
-	return text[:limit] + "..."
+	return string(runes[:limit]) + "..."
 }
