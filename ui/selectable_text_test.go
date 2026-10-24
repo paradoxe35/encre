@@ -725,3 +725,28 @@ func TestAParagraphOfManyFormattedPiecesRendersQuickly(t *testing.T) {
 		t.Fatalf("laying out %d formatted pieces took %v", 240, took)
 	}
 }
+
+// Fyne runs a heading or quote under an item's first line into the same paragraph; the checkbox is
+// labelled with the first line alone, as the item's other text is not part of the task's words.
+func TestATaskLabelStopsAtAHeadingOrQuote(t *testing.T) {
+	for answer, want := range map[string]string{"- [ ] a\n  # Heading": "a", "- [ ] a\n  > quoted": "a"} {
+		var label string
+		var walk func([]widget.RichTextSegment)
+		walk = func(segments []widget.RichTextSegment) {
+			for _, segment := range segments {
+				switch segment := segment.(type) {
+				case *widget.CheckBoxSegment:
+					label = segment.Text
+				case *widget.ParagraphSegment:
+					walk(segment.Texts)
+				case *widget.ListSegment:
+					walk(segment.Items)
+				}
+			}
+		}
+		walk(markdownSegments(answer))
+		if label != want {
+			t.Errorf("%q labels its checkbox %q, want %q", answer, label, want)
+		}
+	}
+}

@@ -658,6 +658,16 @@ func walk(markdown string, visit func(ast.Node)) {
 
 var markdownParser = goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.TaskList, extension.Table)).Parser()
 
+// sameLine is text that runs on with a task's first words; Fyne calls headings and quotes inline
+// too, so their size and quoting tell them apart.
+func sameLine(next widget.RichTextSegment, first *widget.TextSegment) bool {
+	if !next.Inline() {
+		return false
+	}
+	text, ok := next.(*widget.TextSegment)
+	return !ok || text.Style.SizeName == first.Style.SizeName && text.Style.QuotingDepth == first.Style.QuotingDepth
+}
+
 // taskFrom reads a text that opens with a task mark as the checkbox, labelled with the rest of its
 // item as plain text: Fyne's own checkbox label is plain, and that is what this stands in for.
 func taskFrom(text string, rest []widget.RichTextSegment) *widget.CheckBoxSegment {
@@ -685,7 +695,7 @@ func restoreTags(segments []widget.RichTextSegment) []widget.RichTextSegment {
 			if strings.HasPrefix(segment.Text, openTask) || strings.HasPrefix(segment.Text, doneTask) {
 				// The label is the item's first line; a paragraph, code block or heading after it stays its own.
 				end := i + 1
-				for end < len(segments) && segments[end].Inline() {
+				for end < len(segments) && sameLine(segments[end], segment) {
 					end++
 				}
 				restored = append(restored, taskFrom(segment.Text, restoreTags(segments[i+1:end])))
