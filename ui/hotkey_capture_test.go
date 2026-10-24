@@ -321,3 +321,14 @@ func TestLettersAreSavedWhereTheListenerReadsThem(t *testing.T) {
 		}
 	}
 }
+
+func TestTabIsRecordedRatherThanEndingTheCapture(t *testing.T) {
+	h, _, _ := capturing(t)
+	if !h.entry.AcceptsTab() {
+		t.Fatal("Tab would move focus and end the capture")
+	}
+	h.stopCapture()
+	if h.entry.AcceptsTab() {
+		t.Fatal("Tab is kept from moving focus once the capture ended")
+	}
+}

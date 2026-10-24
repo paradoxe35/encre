@@ -478,9 +478,15 @@ func (w *MainWindow) deleteProvider(name string) {
 		w.providerShown = ""
 	}
 	newProvider := w.config.GetCurrentProvider()
+	wasClean := !w.dirty
 	w.providerSelect.SetSelected(newProvider)
 	w.providerBinding.Set(newProvider)
 	w.loadProviderSettings(newProvider)
+	if saveErr == nil && wasClean {
+		// Showing the provider the config now has is not an edit; the binding listeners run later.
+		w.markClean()
+		fyne.Do(w.markClean)
+	}
 	if saveErr != nil {
 		w.statusBinding.Set(fmt.Sprintf("Provider '%s' deleted, but could not save: %s", name, shortMessage(saveErr.Error())))
 		return

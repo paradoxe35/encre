@@ -279,7 +279,8 @@ func (m *ModelList) download(model stt.Model) {
 		m.mu.Unlock()
 
 		fyne.Do(func() {
-			m.list.Refresh()
+			// Filtered again, as a finished download moves the model into the Downloaded view.
+			m.apply()
 			if err != nil && !errorsIsCancelled(err) {
 				dialog.ShowError(err, m.window)
 				return
@@ -312,7 +313,7 @@ func (m *ModelList) confirmDelete(model stt.Model) {
 			if m.onDeleted != nil {
 				m.onDeleted(model)
 			}
-			m.list.Refresh()
+			m.apply()
 		}, m.window)
 }
 

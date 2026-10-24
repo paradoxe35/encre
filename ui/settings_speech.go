@@ -443,8 +443,11 @@ func (w *MainWindow) showFreeformLanguages() {
 
 	if w.speechLanguageDraft == "" {
 		w.speechLanguageEntry.SetText(detectLanguageLabel)
+	} else if name := stt.LanguageName(w.speechLanguageDraft); codeByName[name] == w.speechLanguageDraft {
+		w.speechLanguageEntry.SetText(name)
 	} else {
-		w.speechLanguageEntry.SetText(stt.LanguageName(w.speechLanguageDraft))
+		// A name the list would read back as another code, or not at all, is shown as the code itself.
+		w.speechLanguageEntry.SetText(w.speechLanguageDraft)
 	}
 
 	w.speechLanguage.Hide()

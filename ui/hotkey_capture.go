@@ -47,6 +47,13 @@ type captureEntry struct {
 	parent *HotkeyCapture
 }
 
+// Tab is a key to record while capturing, not a move to the next field that would end the capture.
+func (e *captureEntry) AcceptsTab() bool {
+	e.parent.mu.Lock()
+	defer e.parent.mu.Unlock()
+	return e.parent.isCapturing
+}
+
 func (e *captureEntry) KeyDown(key *fyne.KeyEvent) {
 	e.parent.mu.Lock()
 	e.parent.lastScancode = key.Physical.ScanCode

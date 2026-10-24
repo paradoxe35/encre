@@ -715,3 +715,33 @@ func TestAnAddThatCannotBeSavedLeavesNoProviderBehind(t *testing.T) {
 		t.Fatal("the second try left the provider behind too")
 	}
 }
+
+func TestDeletingTheCurrentProviderLeavesNothingUnsaved(t *testing.T) {
+	cfg := config.Default()
+	if err := cfg.AddCustomProvider("local", config.ProviderSettings{BaseURL: "http://localhost:11434/v1", Model: "llama", NoAPIKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetCurrentProvider("local")
+	w := newSettingsWindow(t, cfg)
+	w.providerSelect.SetSelected("local")
+	w.markClean()
+
+	w.deleteProvider("local")
+	if w.dirty {
+		t.Fatal("deleting a provider marked the settings unsaved")
+	}
+}
+
+func TestACustomServicesLanguageIsSavedAsItsCode(t *testing.T) {
+	for _, code := range []string{"zu", "ga", "rw", "jv", "fr"} {
+		cfg := config.Default()
+		speech := cfg.SpeechSettings()
+		speech.Engine, speech.RemoteProvider, speech.RemoteModel, speech.Language = config.SpeechRemote, "custom", "some-local-server", code
+		cfg.SetSpeechSettings(speech)
+		w := newSettingsWindow(t, cfg)
+		w.refreshLanguages(config.SpeechRemote)
+		if got := w.selectedSpeechLanguage(); got != code {
+			t.Errorf("a saved %q reads back as %q", code, got)
+		}
+	}
+}
