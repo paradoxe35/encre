@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,6 +69,27 @@ func TestDiscoverCustomSkipsCatalogEntries(t *testing.T) {
 
 	if got := discoverCustomIn(dir); len(got) != 0 {
 		t.Errorf("a file claimed by the catalog was rediscovered: %+v", got)
+	}
+}
+
+func TestDiscoverCustomSkipsCatalogEntriesKeptInARepoFolder(t *testing.T) {
+	var nested Model
+	for _, model := range Models().Models {
+		if strings.Contains(model.Filename, "/") {
+			nested = model
+			break
+		}
+	}
+	if nested.Filename == "" {
+		t.Skip("no catalog entry is kept in a repo folder")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, filepath.Base(nested.Filename)), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if got := discoverCustomIn(dir); len(got) != 0 {
+		t.Errorf("%s was listed again as a custom model: %+v", nested.Filename, got)
 	}
 }
 

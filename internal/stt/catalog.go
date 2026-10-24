@@ -78,7 +78,8 @@ func discoverCustomIn(dir string) []Model {
 
 	claimed := make(map[string]bool, len(Models().Models))
 	for _, model := range Models().Models {
-		claimed[model.Filename] = true
+		// Stored by base name, as Store.Path keeps it, though the repo may hold it in a folder.
+		claimed[filepath.Base(model.Filename)] = true
 	}
 
 	var custom []Model
