@@ -731,7 +731,7 @@ func restoreTags(segments []widget.RichTextSegment) []widget.RichTextSegment {
 	return restored
 }
 
-// sideScroll scrolls wide content sideways, and gives a wheel turned only up or down to outer:
+// sideScroll scrolls wide content sideways, and gives a mostly vertical wheel or swipe to outer:
 // Fyne turns it sideways, so the reader would stop moving whenever the pointer is over code.
 type sideScroll struct {
 	*container.Scroll
@@ -746,7 +746,9 @@ func newSideScroll(content fyne.CanvasObject, outer fyne.Scrollable) *sideScroll
 }
 
 func (s *sideScroll) Scrolled(event *fyne.ScrollEvent) {
-	if s.outer != nil && event.Scrolled.DX == 0 {
+	dx, dy := event.Scrolled.DX, event.Scrolled.DY
+	fits := s.Content.MinSize().Width <= s.Size().Width
+	if s.outer != nil && (fits || math.Abs(float64(dy)) > math.Abs(float64(dx))) {
 		s.outer.Scrolled(event)
 		return
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	_ "unsafe"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -343,10 +344,7 @@ func (c *AnswerCard) focusInput() {
 func (c *AnswerCard) render() {
 	c.content.Segments = c.segments()
 	c.selection.Refresh()
-	// Widgets the text is drawn with are made anew here, and a theme override reaches only those there when it is refreshed.
-	if madeOfWidgets(c.content.Segments) {
-		c.reading.Refresh()
-	}
+	c.adoptLinks(c.content)
 	if len(c.content.Segments) == 0 {
 		c.reading.Hide()
 	} else {
@@ -360,13 +358,31 @@ func (c *AnswerCard) render() {
 	c.rendered = time.Now()
 }
 
-func madeOfWidgets(segments []widget.RichTextSegment) bool {
-	for _, segment := range segments {
-		if _, plain := segment.(*widget.TextSegment); !plain {
-			return true
+// Fyne gives a theme override's scope to new widgets only when the override is refreshed, and every
+// refresh is a new scope whose fonts are parsed and kept anew; this hands the links made at a render the
+// card's own scope.
+//
+//go:linkname themeLikeParent fyne.io/fyne/v2/internal/cache.OverrideThemeMatchingScope
+func themeLikeParent(o, parent fyne.CanvasObject) bool
+
+// adoptLinks gives the links drawn under o the reading theme, so they take the card design's colour.
+func (c *AnswerCard) adoptLinks(o fyne.CanvasObject) {
+	switch o := o.(type) {
+	case *widget.Hyperlink:
+		if o.Theme() != c.content.Theme() && themeLikeParent(o, c.scroll) {
+			o.Refresh()
+		}
+	case *fyne.Container:
+		for _, child := range o.Objects {
+			c.adoptLinks(child)
+		}
+	case fyne.Widget:
+		if renderer, ok := cachedRenderer(o); ok {
+			for _, child := range renderer.Objects() {
+				c.adoptLinks(child)
+			}
 		}
 	}
-	return false
 }
 
 // shownQuestion is the start of a long question: the answer must show without scrolling past what was asked.

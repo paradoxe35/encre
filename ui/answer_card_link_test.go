@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -88,9 +89,39 @@ func TestTheWheelOverWideCodeScrollsTheAnswer(t *testing.T) {
 		if card.scroll.Offset.Y == before || side.Offset.X != 0 {
 			t.Errorf("the wheel moved the answer %v→%v and the block to %v, want only the answer moved", before, card.scroll.Offset.Y, side.Offset.X)
 		}
+		before = card.scroll.Offset.Y
+		side.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DX: -3, DY: -40}})
+		if card.scroll.Offset.Y == before || side.Offset.X != 0 {
+			t.Error("a mostly vertical swipe did not scroll the answer alone")
+		}
 		side.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DX: -40}})
 		if side.Offset.X == 0 {
 			t.Error("a sideways wheel did not scroll the block")
 		}
+	}
+}
+
+// Each new theme scope makes Fyne parse and keep the fonts again, so rendering a streamed answer
+// must not make one per render.
+func TestStreamingAnAnswerWithLinksDoesNotGrowMemory(t *testing.T) {
+	card, _ := newCard(t)
+	update, _, _ := card.Open("q", "", func() {})
+	answer := "Intro with [a link](https://go.dev).\n\n- item **one**\n- item `two`\n\n```\ncode\n```\n\n| a | b |\n|---|---|\n| [x](https://a.example) | y |\n\n"
+
+	heap := func() uint64 {
+		runtime.GC()
+		var stats runtime.MemStats
+		runtime.ReadMemStats(&stats)
+		return stats.HeapInuse
+	}
+	update(answer, false)
+	card.window.Canvas().(test.WindowlessCanvas).Capture()
+	before := heap()
+	for i := range 60 {
+		update(answer+strings.Repeat("more words ", i), false)
+		card.window.Canvas().(test.WindowlessCanvas).Capture()
+	}
+	if grown := int64(heap()) - int64(before); grown > 100<<20 {
+		t.Errorf("rendering grew the heap by %d MB", grown>>20)
 	}
 }
