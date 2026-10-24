@@ -3,6 +3,7 @@ package stt
 import (
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -207,5 +208,14 @@ func TestCatalogueDoesNotAliasTheCatalog(t *testing.T) {
 	}
 	if &combined[0] == &published[0] {
 		t.Error("Catalogue() shares its backing array with the published catalog")
+	}
+}
+
+// A refresh that drops or moves a repo leaves the saved ID naming a file still on disk.
+func TestFindModelFallsBackToTheFileASavedIDNames(t *testing.T) {
+	first := Catalogue()[0]
+	found, ok := FindModel("a-repo-no-longer-listed/" + path.Base(first.Filename))
+	if !ok || found.Filename != first.Filename {
+		t.Fatalf("got %+v, %v; want the model stored as %q", found, ok, first.Filename)
 	}
 }
