@@ -399,3 +399,41 @@ func TestATakeThatOutlivesCloseDoesNotCountAgainstTheNextEngine(t *testing.T) {
 		t.Fatalf("takes = %d after a closed engine's take ended", service.takes)
 	}
 }
+
+func TestAnEngineLeftToATakeIsClosedWhenThatTakeEnds(t *testing.T) {
+	service, fake, cfg := newTestService(t, false)
+	gate := make(chan struct{})
+	fake.gateStop(gate)
+	if err := service.StartRecording(cfg); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	go func() {
+		service.StopRecording()
+		close(stopped)
+	}()
+	for !slices.Contains(fake.entries(), "stop") {
+		time.Sleep(time.Millisecond)
+	}
+
+	service.Close()
+	if slices.Contains(fake.entries(), "close") {
+		t.Fatal("closed the engine under the take still transcribing")
+	}
+	close(gate)
+	<-stopped
+	if got := commands(fake.entries(), "close"); len(got) != 1 {
+		t.Fatalf("the engine left to the take was not closed once it ended: %v", fake.entries())
+	}
+}
+
+func TestClosingWhileRecordingStopsTheMicrophone(t *testing.T) {
+	service, fake, cfg := newTestService(t, false)
+	if err := service.StartRecording(cfg); err != nil {
+		t.Fatal(err)
+	}
+	service.Close()
+	if !slices.Contains(fake.entries(), "cancel") || !slices.Contains(fake.entries(), "close") {
+		t.Fatalf("an open recording outlived Close: %v", fake.entries())
+	}
+}

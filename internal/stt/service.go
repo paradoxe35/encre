@@ -37,10 +37,13 @@ type Service struct {
 	store     *Store
 	newEngine func() (speechEngine, error)
 
-	mu           sync.Mutex
-	speech       speechEngine
-	recording    bool
-	takes        int
+	mu        sync.Mutex
+	speech    speechEngine
+	recording bool
+	takes     int
+	// orphan is an engine Close left to the takes still transcribing on it, orphanTakes of them.
+	orphan       speechEngine
+	orphanTakes  int
 	model        string
 	device       string
 	language     string
@@ -307,12 +310,24 @@ func (s *Service) stopRemote(speech speechEngine, cfg config.SpeechConfig) (stri
 // Sent under the lock so a later take's load queues behind the unload.
 func (s *Service) finishTake(speech speechEngine) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// A take that outlived Close belongs to an engine gone, and must not count against a later one.
+	// A take that outlived Close belongs to an engine Close left running for it; the last such take
+	// closes it, and the count of a later engine is left alone.
 	if speech != s.speech {
+		last := speech == s.orphan && s.orphanTakes == 1
+		if speech == s.orphan {
+			s.orphanTakes--
+		}
+		if last {
+			s.orphan = nil
+		}
+		s.mu.Unlock()
+		if last {
+			speech.Close()
+		}
 		return
 	}
+	defer s.mu.Unlock()
+
 	s.takes--
 	if s.keepLoaded || s.model == "" || s.takes > 0 {
 		return
@@ -340,16 +355,26 @@ func (s *Service) Cancel() {
 // A take still transcribing holds the engine; closing would wait, and the process is leaving.
 func (s *Service) Close() {
 	s.mu.Lock()
-	speech, inFlight := s.speech, s.takes > 0
+	speech, recording, pending := s.speech, s.recording, s.takes
+	if recording {
+		// The open take is cancelled below, and ends no other way.
+		pending--
+	}
 	s.speech = nil
 	s.recording = false
 	s.takes = 0
+	if speech != nil && pending > 0 {
+		s.orphan, s.orphanTakes = speech, pending
+	}
 	s.mu.Unlock()
 
 	if speech == nil {
 		return
 	}
-	if inFlight {
+	if recording {
+		speech.Cancel()
+	}
+	if pending > 0 {
 		logger.Info("Speech engine left running: a take is still transcribing")
 		return
 	}
