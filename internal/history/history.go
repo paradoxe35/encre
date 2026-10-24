@@ -201,7 +201,8 @@ func (s *Store) Clear() error {
 	defer s.mu.Unlock()
 	fileMu.Lock()
 	defer fileMu.Unlock()
-	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+	// Removing a symlink would leave every entry in the file it points to; emptying goes through it.
+	if err := os.Truncate(s.path, 0); err != nil && !os.IsNotExist(err) {
 		logger.Error("Failed to clear history file", "path", s.path, "error", err)
 		return err
 	}
