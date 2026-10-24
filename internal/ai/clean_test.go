@@ -42,6 +42,10 @@ func TestAWrapperTheSelectionHadIsKept(t *testing.T) {
 		{"```go\n// Retourne la somme\nfunc add() {}\n```", "```go\n// Returns the sum\nfunc add() {}\n```", "```go\n// Retourne la somme\nfunc add() {}\n```"},
 		{`"Fixed sentence."`, "fixd sentence", "Fixed sentence."},
 		{"```\nfixed\n```", "fixd", "fixed"},
+		{`"He said 'hi' to me."`, `"He said "hi" to me."`, `"He said 'hi' to me."`},
+		{"“Hello world”", "„Hallo Welt“", "“Hello world”"},
+		{"“Hello”", "「こんにちは」", "“Hello”"},
+		{"“Hello”", "»Hallo«", "“Hello”"},
 	}
 	for _, c := range cases {
 		if got := CleanResponse(c.raw, c.source); got != c.want {

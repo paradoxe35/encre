@@ -104,3 +104,15 @@ func TestPopularLanguagesLeadEmptySearch(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultsReadSystemLocalesTheListSpellsOtherwise(t *testing.T) {
+	for tag, want := range map[string]string{
+		"zh-CN": "zh-Hans", "zh_CN": "zh-Hans", "zh-Hans-CN": "zh-Hans", "zh-SG": "zh-Hans",
+		"zh-TW": "zh-Hant", "zh-HK": "zh-Hant", "zh-Hant-TW": "zh-Hant",
+		"no-NO": "nb", "nn-NO": "nb", "nb-NO": "nb", "iw-IL": "he", "in-ID": "id", "de-AT": "de",
+	} {
+		if primary, _ := Defaults(tag); primary != want {
+			t.Errorf("Defaults(%q) primary = %q, want %q", tag, primary, want)
+		}
+	}
+}

@@ -14,8 +14,8 @@ func CleanResponse(raw, source string) string {
 	if stripped := stripCodeFence(text); stripped == text || stripCodeFence(source) == source {
 		text = stripped
 	}
-	if stripped := stripWrappingQuotes(text); stripped == text || stripWrappingQuotes(source) == source {
-		text = stripped
+	if !quoted(source) {
+		text = stripWrappingQuotes(text)
 	}
 
 	return strings.TrimSpace(text)
@@ -79,4 +79,24 @@ func stripWrappingQuotes(text string) string {
 	}
 
 	return text
+}
+
+// Every pair a selection may open and close with, wider than what is stripped, since a translation
+// may rightly swap „…“ or 「…」 for the target language's own quotes.
+var sourceQuotePairs = append([][2]rune{
+	{'„', '“'}, {'‚', '‘'}, {'»', '«'}, {'‹', '›'}, {'「', '」'}, {'『', '』'}, {'‘', '’'},
+}, quotePairs...)
+
+// quoted reads only the ends, so a quotation with quotes inside it still counts.
+func quoted(source string) bool {
+	runes := []rune(source)
+	if len(runes) < 2 {
+		return false
+	}
+	for _, pair := range sourceQuotePairs {
+		if runes[0] == pair[0] && runes[len(runes)-1] == pair[1] {
+			return true
+		}
+	}
+	return false
 }
