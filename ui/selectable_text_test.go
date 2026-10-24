@@ -473,6 +473,30 @@ func TestTheMarksFollowScrolledCode(t *testing.T) {
 	}
 }
 
+func TestALinkPressedAsTheAnswerStreamsStillOpens(t *testing.T) {
+	card, _ := newCard(t)
+	update, _, _ := card.Open("q", "", func() {})
+	update("See [the docs](https://example.org) now", false)
+	card.render()
+	s := card.selection
+	point := at(t, s, "docs")
+	s.pressed = time.Time{}
+	s.pointer.MouseDown(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: point}, Button: desktop.MouseButtonPrimary})
+
+	update("See [the docs](https://example.org) now, and then some more.", false)
+	card.render()
+	link, _ := s.linkAt(point)
+	if link == nil {
+		t.Fatal("test setup: no link under the pointer after the render")
+	}
+	opened := false
+	link.OnTapped = func() { opened = true }
+	s.pointer.MouseUp(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: point}, Button: desktop.MouseButtonPrimary})
+	if !opened {
+		t.Fatal("a render between press and release kept the link from opening")
+	}
+}
+
 func TestALinkOpensOnReleaseAndOnlyOnce(t *testing.T) {
 	card, _ := newCard(t)
 	answered(card, "q", "See [the docs](https://example.org) now.")

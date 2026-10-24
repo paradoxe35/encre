@@ -225,9 +225,17 @@ func (s *selectableText) release(event *desktop.MouseEvent) {
 	if link == nil || s.dragged || event.Button != desktop.MouseButtonPrimary {
 		return
 	}
-	if over, at := s.linkAt(event.Position); over == link {
-		link.Tapped(&fyne.PointEvent{Position: at, AbsolutePosition: event.AbsolutePosition})
+	if over, at := s.linkAt(event.Position); sameLink(over, link) {
+		over.Tapped(&fyne.PointEvent{Position: at, AbsolutePosition: event.AbsolutePosition})
 	}
+}
+
+// A render while the button is down draws the pressed link anew, as the same text to the same address.
+func sameLink(a, b *widget.Hyperlink) bool {
+	if a == nil || b == nil || a == b {
+		return a == b
+	}
+	return a.Text == b.Text && a.URL != nil && b.URL != nil && a.URL.String() == b.URL.String()
 }
 
 // drag takes the absolute position, as the driver's relative one stays where the text was when the drag began.
