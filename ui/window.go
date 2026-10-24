@@ -84,6 +84,8 @@ type MainWindow struct {
 	speechRemoteForm    *widget.Form
 	// Tabs not on screen at a theme change, which Fyne leaves in the old theme until re-applied.
 	themeStale          map[*container.TabItem]bool
+	reapplyingTheme     bool
+	themeApplied        *string
 	speechKeyUnreadable bool
 	// The key and endpoint typed for each service, so one service's key is never sent to another.
 	speechServiceDrafts map[string]speechServiceDraft
@@ -143,6 +145,7 @@ func NewMainWindow(app fyne.App, cfg *config.Config, hotkeyManager *input.FFIHot
 	mw.applyTheme(themeName)
 
 	mw.mainContent = mw.createContent()
+	mw.watchTheme()
 	mw.rootContainer = container.NewStack(mw.mainContent, prompt.root)
 	// The window paints its own background, padding included, since the theme's is see-through.
 	window.SetPadded(false)
@@ -265,7 +268,9 @@ func (w *MainWindow) onTabSelected(tab *container.TabItem) {
 	w.stopCaptures()
 	if w.themeStale[tab] {
 		delete(w.themeStale, tab)
+		w.reapplyingTheme = true
 		w.app.Settings().SetTheme(w.app.Settings().Theme())
+		w.reapplyingTheme = false
 	}
 	// History shows other tabs' activity, so it re-reads on every visit.
 	if tab.Text == "History" {

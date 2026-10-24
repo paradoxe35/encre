@@ -111,16 +111,27 @@ func (w *MainWindow) createPasteShortcutControls() fyne.CanvasObject {
 }
 
 func (w *MainWindow) applyTheme(themeName string) {
-	w.app.Settings().SetTheme(newAppTheme(themeVariant(themeName)))
-	if w.tabs == nil {
+	if w.themeApplied != nil && *w.themeApplied == themeName {
 		return
 	}
-	w.themeStale = make(map[*container.TabItem]bool)
-	for _, tab := range w.tabs.Items {
-		if tab != w.tabs.Selected() {
-			w.themeStale[tab] = true
+	w.themeApplied = &themeName
+	w.app.Settings().SetTheme(newAppTheme(themeVariant(themeName)))
+}
+
+// watchTheme marks the tabs off screen at any theme change, the system's own included, so their
+// first visit re-applies it: Fyne re-themes only the tab on screen.
+func (w *MainWindow) watchTheme() {
+	w.app.Settings().AddListener(func(fyne.Settings) {
+		if w.reapplyingTheme || w.tabs == nil {
+			return
 		}
-	}
+		w.themeStale = make(map[*container.TabItem]bool)
+		for _, tab := range w.tabs.Items {
+			if tab != w.tabs.Selected() {
+				w.themeStale[tab] = true
+			}
+		}
+	})
 }
 
 // themeVariant is the variant a theme setting pins, or nil when it follows the system.
