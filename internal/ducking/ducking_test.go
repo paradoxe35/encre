@@ -289,9 +289,7 @@ func TestLoweringSavesWhatWasFoundAndRestoringForgetsIt(t *testing.T) {
 
 	d.Restore()
 	waitFor(t, "the fade up", func() bool { _, closed := first(audio.opened()).seen(); return closed })
-	if saved() {
-		t.Fatal("the saved levels outlived the restore")
-	}
+	waitFor(t, "the saved levels to be forgotten", func() bool { return !saved() })
 }
 
 func TestCloseForgetsTheSavedLevels(t *testing.T) {
