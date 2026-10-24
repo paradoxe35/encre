@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // protocol is one API's wire format; the provider around it does the HTTP, errors and retries.
@@ -26,13 +29,24 @@ type endpoint struct {
 	baseURL     string
 	model       string
 	temperature float64
+	// maxTokens is a model's output limit learned from a refusal; 0 leaves the protocol's own.
+	maxTokens int
 }
 
 // A redirect would turn the POST into a GET, which an API answers with a puzzling 405.
 var httpClient = &http.Client{
+	Transport: headerTimeout(),
 	CheckRedirect: func(req *http.Request, _ []*http.Request) error {
 		return &redirectError{origin: req.URL.Scheme + "://" + req.URL.Host}
 	},
+}
+
+// Only the wait for headers is bounded, as a stream may run for minutes; it is generous because
+// a reply sent whole, or by a local server still loading its model, starts only once ready.
+func headerTimeout() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 2 * time.Minute
+	return transport
 }
 
 type redirectError struct {
@@ -81,8 +95,12 @@ func (p *provider) stream(ctx context.Context, prompt Prompt, onText func(string
 				events++
 				onEvent()
 			}
+			streamed.ended = streamed.ended || done
 			return done, err
 		})
+		if err == nil && events > 0 && !streamed.ended {
+			err = errCutOff
+		}
 		if err == nil && events == 0 {
 			text, err := p.protocol.decode(head.Bytes())
 			if err != nil {
@@ -127,9 +145,53 @@ func streamingRefused(err error) bool {
 	return refusedRequest(err) && strings.Contains(strings.ToLower(err.Error()), "stream")
 }
 
-// Returns only a successful response, so a stream never starts on an error.
+// Endpoint/model pairs whose 400 named a setting they refuse, sent without it until the app restarts.
+var relaxedEndpoints sync.Map
+
+// A refused setting is retried once without it, and remembered only once the retry succeeds.
 func (p *provider) send(ctx context.Context, prompt Prompt, stream, lowReasoning bool) (*http.Response, error) {
-	req, err := p.protocol.request(ctx, p.endpoint, prompt, stream, lowReasoning)
+	key := p.endpoint.baseURL + "::" + p.endpoint.model
+	target := p.endpoint
+	if known, ok := relaxedEndpoints.Load(key); ok {
+		target = known.(endpoint)
+	}
+	resp, err := p.post(ctx, target, prompt, stream, lowReasoning)
+	retry, ok := relaxed(target, err)
+	if !ok {
+		return resp, err
+	}
+	resp, err = p.post(ctx, retry, prompt, stream, lowReasoning)
+	if err == nil {
+		relaxedEndpoints.Store(key, retry)
+	}
+	return resp, err
+}
+
+var outputLimit = regexp.MustCompile(`max_tokens: \d+ > (\d+)`)
+
+// Current Claude models refuse any temperature, and older ones a max_tokens above their output limit.
+func relaxed(target endpoint, err error) (endpoint, bool) {
+	if !refusedRequest(err) {
+		return target, false
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "temperature") && target.temperature != defaultTemperature {
+		target.temperature = defaultTemperature
+		return target, true
+	}
+	if match := outputLimit.FindStringSubmatch(message); match != nil {
+		limit, _ := strconv.Atoi(match[1])
+		if limit > 0 && (target.maxTokens == 0 || limit < target.maxTokens) {
+			target.maxTokens = limit
+			return target, true
+		}
+	}
+	return target, false
+}
+
+// Returns only a successful response, so a stream never starts on an error.
+func (p *provider) post(ctx context.Context, target endpoint, prompt Prompt, stream, lowReasoning bool) (*http.Response, error) {
+	req, err := p.protocol.request(ctx, target, prompt, stream, lowReasoning)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +214,8 @@ func (p *provider) send(ctx context.Context, prompt Prompt, stream, lowReasoning
 func (p *provider) unreadable(err error, body []byte) error {
 	text := strings.TrimSpace(string(body))
 	switch {
+	case errors.Is(err, errLengthLimit), errors.Is(err, errRefused), errors.Is(err, errFiltered):
+		return fmt.Errorf("%s: %w", p.name, err)
 	case text == "":
 		return fmt.Errorf("%s: empty reply - check the base URL", p.name)
 	case strings.HasPrefix(text, "<"):

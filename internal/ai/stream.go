@@ -81,6 +81,11 @@ type turn struct {
 	calls  []ToolCall
 	// pending maps the protocol's index for a call still streaming to its place in calls.
 	pending map[int]int
+	// thinking holds Claude's thinking blocks, by index, until the next call claims them.
+	thinking map[int]*anthropicThinking
+	order    []int
+	// ended is set by the provider's end signal; a stream closed without it was cut off.
+	ended bool
 }
 
 func (t *turn) write(text string) {

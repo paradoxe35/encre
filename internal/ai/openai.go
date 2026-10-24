@@ -118,8 +118,8 @@ func (chatCompletions) decode(body []byte) (string, error) {
 	if len(reply.Choices) == 0 {
 		return "", errNoReply
 	}
-	if reply.Choices[0].FinishReason == "length" {
-		return "", errLengthLimit
+	if err := chatStop(reply.Choices[0].FinishReason); err != nil {
+		return "", err
 	}
 	return reply.Choices[0].Message.Content, nil
 }
@@ -150,10 +150,19 @@ func (chatCompletions) event(data []byte, reply *turn) (bool, error) {
 		}
 		call.Arguments = append(call.Arguments, piece.Function.Arguments...)
 	}
-	if choice.FinishReason == "length" {
-		return false, errLengthLimit
+	// Some servers close the stream after the finish reason, without [DONE].
+	reply.ended = reply.ended || choice.FinishReason != ""
+	return false, chatStop(choice.FinishReason)
+}
+
+func chatStop(reason string) error {
+	switch reason {
+	case "length":
+		return errLengthLimit
+	case "content_filter":
+		return errFiltered
 	}
-	return false, nil
+	return nil
 }
 
 // Without an index, a new ID starts a new call and a piece with no ID continues the last.

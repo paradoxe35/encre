@@ -1,6 +1,10 @@
 package ai
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -85,6 +89,22 @@ func TestEndpointOmitsEmptyBearer(t *testing.T) {
 	endpoint := endpointFor("my-llama", "", "http://localhost:8080/v1")
 	if _, ok := endpoint.headers["Authorization"]; ok {
 		t.Fatalf("sent an Authorization header with no key: %v", endpoint.headers)
+	}
+}
+
+func TestAHugeModelListIsNotReadWhole(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"data":[`)
+		entry := `{"id":"` + strings.Repeat("m", 1000) + `"},`
+		for range 10_000 {
+			io.WriteString(w, entry)
+		}
+		io.WriteString(w, `{"id":"last"}]}`)
+	}))
+	defer server.Close()
+
+	if models, err := ListModels(context.Background(), "local", "", server.URL); err == nil {
+		t.Fatalf("read a 10 MB list whole: %d models", len(models))
 	}
 }
 

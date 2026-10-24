@@ -3,7 +3,6 @@ package ai
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 )
@@ -75,6 +74,9 @@ type geminiReply struct {
 		Content      geminiContent `json:"content"`
 		FinishReason string        `json:"finishReason"`
 	} `json:"candidates"`
+	PromptFeedback struct {
+		BlockReason string `json:"blockReason"`
+	} `json:"promptFeedback"`
 	Error *replyError `json:"error"`
 }
 
@@ -143,13 +145,13 @@ func lowThinking(model string) *geminiThinking {
 
 func (generateContent) decode(body []byte) (string, error) {
 	text, err := geminiText(body)
-	if errors.Is(err, errLengthLimit) {
+	if err != nil {
 		return "", err
 	}
-	if err == nil && text == "" {
+	if text == "" {
 		return "", errNoReply
 	}
-	return text, err
+	return text, nil
 }
 
 func (generateContent) event(data []byte, reply *turn) (bool, error) {
@@ -159,6 +161,9 @@ func (generateContent) event(data []byte, reply *turn) (bool, error) {
 	}
 	if err := chunk.Error.err(); err != nil {
 		return false, err
+	}
+	if chunk.PromptFeedback.BlockReason != "" {
+		return false, errFiltered
 	}
 	if len(chunk.Candidates) == 0 {
 		return false, nil
@@ -175,10 +180,18 @@ func (generateContent) event(data []byte, reply *turn) (bool, error) {
 			reply.write(part.Text)
 		}
 	}
-	if candidate.FinishReason == "MAX_TOKENS" {
-		return false, errLengthLimit
+	reply.ended = reply.ended || candidate.FinishReason != ""
+	return false, geminiStop(candidate.FinishReason)
+}
+
+func geminiStop(reason string) error {
+	switch reason {
+	case "MAX_TOKENS":
+		return errLengthLimit
+	case "SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII":
+		return errFiltered
 	}
-	return false, nil
+	return nil
 }
 
 func geminiText(data []byte) (string, error) {
@@ -188,6 +201,9 @@ func geminiText(data []byte) (string, error) {
 	}
 	if err := reply.Error.err(); err != nil {
 		return "", err
+	}
+	if reply.PromptFeedback.BlockReason != "" {
+		return "", errFiltered
 	}
 	if len(reply.Candidates) == 0 {
 		return "", nil
@@ -200,8 +216,5 @@ func geminiText(data []byte) (string, error) {
 			text.WriteString(part.Text)
 		}
 	}
-	if candidate.FinishReason == "MAX_TOKENS" {
-		return text.String(), errLengthLimit
-	}
-	return text.String(), nil
+	return text.String(), geminiStop(candidate.FinishReason)
 }

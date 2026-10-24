@@ -42,7 +42,7 @@ func TestEachProtocolStreamsAToolCall(t *testing.T) {
 			`{"type":"message_stop"}`,
 		}},
 		{config.BuiltInGemini, []string{
-			`{"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_1","name":"get_weather","args":{"place":"Paris"}},"thoughtSignature":"sig"}]}}]}`,
+			`{"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_1","name":"get_weather","args":{"place":"Paris"}},"thoughtSignature":"sig"}]},"finishReason":"STOP"}]}`,
 		}},
 	}
 
@@ -233,5 +233,33 @@ func TestTheContextGoesWithTheQuestion(t *testing.T) {
 	messages := Prompt{System: "s", Text: "What time is it?", Context: "Local time: 14:05"}.conversation("assistant")
 	if last := messages[len(messages)-1].Content; last != "What time is it?\n\nLocal time: 14:05" {
 		t.Fatalf("the question reads %q", last)
+	}
+}
+
+// A model can stream malformed arguments; sent back raw, they would fail the next request.
+func TestInvalidCallArgumentsAreSentAsAnEmptyObject(t *testing.T) {
+	prompt := Prompt{Text: "q", Tools: []Tool{weatherTool}, Steps: []Step{{
+		Calls:   []ToolCall{{ID: "call_1", Name: "get_weather", Arguments: json.RawMessage(`{"place":`)}},
+		Results: []string{"Sunny"},
+	}}}
+	cases := []struct {
+		name     string
+		protocol protocol
+		want     string
+	}{
+		{"openai", chatCompletions{}, `"arguments":"{}"`},
+		{"anthropic", messages{}, `"input":{}`},
+		{"gemini", generateContent{}, `"args":{}`},
+	}
+	for _, c := range cases {
+		request, err := c.protocol.request(context.Background(), endpoint{baseURL: "http://example.test", model: "m"}, prompt, true, false)
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		body, _ := io.ReadAll(request.Body)
+		if !strings.Contains(string(body), c.want) {
+			t.Errorf("%s: request lacks %s\n%s", c.name, c.want, body)
+		}
 	}
 }

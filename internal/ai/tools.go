@@ -19,6 +19,8 @@ type ToolCall struct {
 	Arguments json.RawMessage
 	// signature is Gemini's, which it needs back with the call.
 	signature string
+	// thinking is Claude's, streamed before the call and needed back unchanged ahead of it.
+	thinking []anthropicThinking
 }
 
 // Step is one round of tool calls; Results[i] answers Calls[i].
@@ -38,7 +40,7 @@ type ToolUser interface {
 }
 
 func (c ToolCall) arguments() json.RawMessage {
-	if len(c.Arguments) == 0 {
+	if !json.Valid(c.Arguments) {
 		return json.RawMessage("{}")
 	}
 	return c.Arguments

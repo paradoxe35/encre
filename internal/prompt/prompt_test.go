@@ -69,6 +69,13 @@ func TestReviseIsTheShippedPrompt(t *testing.T) {
 	}
 }
 
+// A fetched page could otherwise tell the model what to do.
+func TestAskToolsDistrustsWhatToolsReturn(t *testing.T) {
+	if !strings.Contains(strings.ToLower(AskTools), "untrusted") {
+		t.Errorf("AskTools does not mark tool output as untrusted: %q", AskTools)
+	}
+}
+
 func TestBuiltInPromptsConstrainOutput(t *testing.T) {
 	for name, text := range map[string]string{
 		"Revise":    Revise,

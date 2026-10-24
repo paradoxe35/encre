@@ -10,9 +10,12 @@ import (
 // messages is Anthropic's Messages API.
 type messages struct{}
 
+// The allowance covers thinking too, which current models do by default.
 const (
-	anthropicVersion   = "2023-06-01"
-	anthropicMaxTokens = 4096
+	anthropicVersion = "2023-06-01"
+	streamMaxTokens  = 64000
+	// A reply sent whole arrives only once written, so it is kept shorter.
+	wholeMaxTokens = 16000
 )
 
 type messagesRequest struct {
@@ -22,7 +25,7 @@ type messagesRequest struct {
 	Messages     []anthropicMessage `json:"messages"`
 	Tools        []anthropicTool    `json:"tools,omitempty"`
 	ToolChoice   *anthropicChoice   `json:"tool_choice,omitempty"`
-	Temperature  float64            `json:"temperature"`
+	Temperature  *float64           `json:"temperature,omitempty"`
 	Stream       bool               `json:"stream,omitempty"`
 	OutputConfig *anthropicOutput   `json:"output_config,omitempty"`
 }
@@ -45,6 +48,31 @@ type anthropicBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   string          `json:"content,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+	Data      string          `json:"data,omitempty"`
+}
+
+// anthropicThinking is a thinking or redacted_thinking block, sent back exactly as it came.
+type anthropicThinking struct {
+	Type      string
+	Thinking  string
+	Signature string
+	Data      string
+}
+
+func (b anthropicThinking) MarshalJSON() ([]byte, error) {
+	if b.Type == "redacted_thinking" {
+		return json.Marshal(struct {
+			Type string `json:"type"`
+			Data string `json:"data"`
+		}{b.Type, b.Data})
+	}
+	return json.Marshal(struct {
+		Type      string `json:"type"`
+		Thinking  string `json:"thinking"`
+		Signature string `json:"signature"`
+	}{b.Type, b.Thinking, b.Signature})
 }
 
 type anthropicChoice struct {
@@ -65,6 +93,8 @@ type textBlock struct {
 type messagesDelta struct {
 	textBlock
 	PartialJSON string `json:"partial_json"`
+	Thinking    string `json:"thinking"`
+	Signature   string `json:"signature"`
 	StopReason  string `json:"stop_reason"`
 }
 
@@ -78,15 +108,31 @@ type messagesReply struct {
 	Error        *replyError    `json:"error"`
 }
 
-const anthropicLengthLimit = "max_tokens"
+func anthropicStop(reason string) error {
+	switch reason {
+	case "max_tokens":
+		return errLengthLimit
+	case "refusal":
+		return errRefused
+	}
+	return nil
+}
 
 func (messages) request(ctx context.Context, target endpoint, prompt Prompt, stream, lowReasoning bool) (*http.Request, error) {
 	body := messagesRequest{
-		Model:       target.model,
-		MaxTokens:   anthropicMaxTokens,
-		System:      prompt.system(),
-		Temperature: target.temperature,
-		Stream:      stream,
+		Model:     target.model,
+		MaxTokens: wholeMaxTokens,
+		System:    prompt.system(),
+		Stream:    stream,
+	}
+	if stream {
+		body.MaxTokens = streamMaxTokens
+	}
+	if target.maxTokens > 0 {
+		body.MaxTokens = min(body.MaxTokens, target.maxTokens)
+	}
+	if target.temperature != defaultTemperature {
+		body.Temperature = &target.temperature
 	}
 	for _, message := range prompt.conversation("assistant") {
 		body.Messages = append(body.Messages, anthropicMessage{Role: message.Role, Content: message.Content})
@@ -98,10 +144,13 @@ func (messages) request(ctx context.Context, target endpoint, prompt Prompt, str
 		body.ToolChoice = &anthropicChoice{Type: "none"}
 	}
 	for _, step := range prompt.Steps {
-		calls := make([]anthropicBlock, len(step.Calls))
+		var calls []any
 		results := make([]anthropicBlock, len(step.Results))
 		for i, call := range step.Calls {
-			calls[i] = anthropicBlock{Type: "tool_use", ID: call.ID, Name: call.Name, Input: call.arguments()}
+			for _, thought := range call.thinking {
+				calls = append(calls, thought)
+			}
+			calls = append(calls, anthropicBlock{Type: "tool_use", ID: call.ID, Name: call.Name, Input: call.arguments()})
 			results[i] = anthropicBlock{Type: "tool_result", ToolUseID: call.ID, Content: step.Results[i]}
 		}
 		body.Messages = append(body.Messages,
@@ -130,8 +179,8 @@ func (messages) decode(body []byte) (string, error) {
 	if err := reply.Error.err(); err != nil {
 		return "", err
 	}
-	if reply.StopReason == anthropicLengthLimit {
-		return "", errLengthLimit
+	if err := anthropicStop(reply.StopReason); err != nil {
+		return "", err
 	}
 
 	var text strings.Builder
@@ -154,9 +203,14 @@ func (messages) event(data []byte, reply *turn) (bool, error) {
 
 	switch event.Type {
 	case "content_block_start":
-		if event.ContentBlock.Type == "tool_use" {
+		block := event.ContentBlock
+		switch block.Type {
+		case "tool_use":
 			call := reply.call(event.Index)
-			call.ID, call.Name = event.ContentBlock.ID, event.ContentBlock.Name
+			call.ID, call.Name = block.ID, block.Name
+			call.thinking = reply.claimThinking()
+		case "thinking", "redacted_thinking":
+			reply.think(event.Index, anthropicThinking{Type: block.Type, Thinking: block.Thinking, Signature: block.Signature, Data: block.Data})
 		}
 	case "content_block_delta":
 		switch event.Delta.Type {
@@ -165,10 +219,18 @@ func (messages) event(data []byte, reply *turn) (bool, error) {
 		case "input_json_delta":
 			call := reply.call(event.Index)
 			call.Arguments = append(call.Arguments, event.Delta.PartialJSON...)
+		case "thinking_delta":
+			if thought := reply.thinking[event.Index]; thought != nil {
+				thought.Thinking += event.Delta.Thinking
+			}
+		case "signature_delta":
+			if thought := reply.thinking[event.Index]; thought != nil {
+				thought.Signature += event.Delta.Signature
+			}
 		}
 	case "message_delta":
-		if event.Delta.StopReason == anthropicLengthLimit {
-			return false, errLengthLimit
+		if err := anthropicStop(event.Delta.StopReason); err != nil {
+			return false, err
 		}
 	case "message_stop":
 		return true, nil
@@ -176,4 +238,23 @@ func (messages) event(data []byte, reply *turn) (bool, error) {
 		return false, event.Error.err()
 	}
 	return false, nil
+}
+
+func (t *turn) think(index int, thought anthropicThinking) {
+	if t.thinking == nil {
+		t.thinking = make(map[int]*anthropicThinking)
+	}
+	t.thinking[index] = &thought
+	t.order = append(t.order, index)
+}
+
+// claimThinking hands over, in order, the thinking streamed since the last call.
+func (t *turn) claimThinking() []anthropicThinking {
+	var thoughts []anthropicThinking
+	for _, index := range t.order {
+		thoughts = append(thoughts, *t.thinking[index])
+		delete(t.thinking, index)
+	}
+	t.order = nil
+	return thoughts
 }

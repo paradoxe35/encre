@@ -52,7 +52,7 @@ func TestEachProtocolStreams(t *testing.T) {
 		}},
 		{config.BuiltInGemini, []string{
 			`{"candidates":[{"content":{"parts":[{"text":"thinking","thought":true},{"text":"Bon"}]}}]}`,
-			`{"candidates":[{"content":{"parts":[{"text":"jour"}]}}]}`,
+			`{"candidates":[{"content":{"parts":[{"text":"jour"}]},"finishReason":"STOP"}]}`,
 		}},
 	}
 
@@ -314,5 +314,109 @@ func TestOtherRefusalsAreNotRetriedWithoutStreaming(t *testing.T) {
 
 	if _, err := complete(t, p); err == nil || len(*seen) != 1 {
 		t.Fatalf("got %v after %d requests, want the refusal reported as it came", err, len(*seen))
+	}
+}
+
+// A dropped connection would otherwise paste half a rewrite over the user's text.
+func TestAStreamThatStopsBeforeItsEndIsCutOff(t *testing.T) {
+	cases := []struct {
+		provider string
+		events   []string
+	}{
+		{config.BuiltInOpenAI, []string{`{"choices":[{"delta":{"content":"Bon"}}]}`}},
+		{config.BuiltInClaude, []string{
+			`{"type":"message_start","message":{}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Bon"}}`,
+		}},
+		{config.BuiltInGemini, []string{`{"candidates":[{"content":{"parts":[{"text":"Bon"}]}}]}`}},
+	}
+	for _, c := range cases {
+		server := httptest.NewServer(sse(c.events...))
+		p, _ := FromSettings(c.provider, config.ProviderSettings{BaseURL: server.URL}, "k", false)
+		_, reply, err := stream(t, p)
+		server.Close()
+
+		if !errors.Is(err, errCutOff) || reply != "Bon" {
+			t.Errorf("%s: kept %q with %v, want it reported cut off", c.provider, reply, err)
+		}
+	}
+}
+
+// Some OpenAI-compatible servers close the stream after the finish reason, without [DONE].
+func TestAFinishReasonEndsAStream(t *testing.T) {
+	server := httptest.NewServer(sse(
+		`{"choices":[{"delta":{"content":"Bonjour"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+	))
+	defer server.Close()
+	p, _ := FromSettings("local", config.ProviderSettings{BaseURL: server.URL + "/v1"}, "", true)
+
+	if _, reply, err := stream(t, p); err != nil || reply != "Bonjour" {
+		t.Fatalf("got %q, %v", reply, err)
+	}
+}
+
+func TestARefusalOrBlockedReplySaysSo(t *testing.T) {
+	cases := []struct {
+		provider string
+		events   []string
+		want     error
+	}{
+		{config.BuiltInOpenAI, []string{
+			`{"choices":[{"delta":{"content":"Bon"}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"content_filter"}]}`,
+			`[DONE]`,
+		}, errFiltered},
+		{config.BuiltInClaude, []string{
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Bon"}}`,
+			`{"type":"message_delta","delta":{"stop_reason":"refusal"}}`,
+			`{"type":"message_stop"}`,
+		}, errRefused},
+		{config.BuiltInGemini, []string{
+			`{"candidates":[{"content":{"parts":[{"text":"Bon"}]},"finishReason":"SAFETY"}]}`,
+		}, errFiltered},
+		{config.BuiltInGemini, []string{
+			`{"candidates":[{"content":{"parts":[{"text":"Bon"}]},"finishReason":"RECITATION"}]}`,
+		}, errFiltered},
+		{config.BuiltInGemini, []string{`{"promptFeedback":{"blockReason":"PROHIBITED_CONTENT"}}`}, errFiltered},
+	}
+	for _, c := range cases {
+		server := httptest.NewServer(sse(c.events...))
+		p, _ := FromSettings(c.provider, config.ProviderSettings{BaseURL: server.URL}, "k", false)
+		_, _, err := stream(t, p)
+		server.Close()
+
+		if !errors.Is(err, c.want) {
+			t.Errorf("%s: got %v, want %v", c.provider, err, c.want)
+		}
+	}
+}
+
+func TestARefusalSentWholeSaysSo(t *testing.T) {
+	cases := map[string]string{
+		config.BuiltInOpenAI: `{"choices":[{"message":{"content":""},"finish_reason":"content_filter"}]}`,
+		config.BuiltInClaude: `{"content":[],"stop_reason":"refusal"}`,
+		config.BuiltInGemini: `{"candidates":[{"content":{"parts":[]},"finishReason":"PROHIBITED_CONTENT"}]}`,
+	}
+	for provider, body := range cases {
+		server := httptest.NewServer(reply(body))
+		p, _ := FromSettings(provider, config.ProviderSettings{BaseURL: server.URL}, "k", false)
+		_, err := complete(t, p)
+		server.Close()
+
+		if !errors.Is(err, errRefused) && !errors.Is(err, errFiltered) {
+			t.Errorf("%s: got %v, want a refusal", provider, err)
+		}
+	}
+}
+
+// A stream may run for minutes, but a server that never answers should not hang the app.
+func TestTheClientGivesUpOnAServerThatNeverAnswers(t *testing.T) {
+	transport, ok := httpClient.Transport.(*http.Transport)
+	if !ok || transport.ResponseHeaderTimeout == 0 || transport.Proxy == nil {
+		t.Fatalf("transport %+v, want a response header timeout and the proxy settings", httpClient.Transport)
+	}
+	if httpClient.Timeout != 0 {
+		t.Fatal("a whole-request timeout would cut long streams off")
 	}
 }

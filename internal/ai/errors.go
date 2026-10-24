@@ -20,6 +20,9 @@ var (
 	errNoReply = errors.New("the reply held no text")
 	// A thinking model can spend its whole allowance thinking and stop before it writes a word.
 	errLengthLimit = errors.New("the reply hit the model's length limit - a model that thinks less, or one with a larger context, would finish")
+	errCutOff      = errors.New("the reply was cut off before it finished - try again")
+	errRefused     = errors.New("the model declined to answer")
+	errFiltered    = errors.New("the provider's safety filter blocked the reply")
 )
 
 // replyError is the error object the APIs put in a body; Ollama sends a bare string instead.
