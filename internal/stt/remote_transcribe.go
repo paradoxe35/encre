@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,7 +36,8 @@ var errUndecryptableKey = errors.New("the saved API key could not be decrypted; 
 var remoteClient = &http.Client{Timeout: remoteRequestTimeout}
 
 // audio is headerless 16-bit signed little-endian mono at remoteSampleRate. A take over what one
-// request may carry is sent in pieces cut at pauses; a failed piece still returns the text before it.
+// request may carry is sent in pieces cut at pauses; one failing does not cost the others, whose
+// text comes back with the error.
 func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, audio []byte) (string, error) {
 	// Nothing was heard: a header-only file costs a request, and some services reject it as too short.
 	if len(audio) == 0 {
@@ -43,22 +45,30 @@ func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, audio []byte
 	}
 
 	pieces := pcm.Split(audio, remotePieceBytes(cfg), remoteSampleRate)
-	var parts []string
-	joined := func() string { return pcm.Join(parts) }
+	var parts, failed []string
+	var firstErr error
 	for i, piece := range pieces {
 		pieceCtx, cancel := context.WithTimeout(ctx, remoteRequestTimeout)
 		text, err := transcribeWAV(pieceCtx, cfg, wavFile(piece))
 		cancel()
 		if err != nil {
-			if len(pieces) > 1 {
-				err = fmt.Errorf("part %d of %d: %w", i+1, len(pieces), err)
+			failed = append(failed, strconv.Itoa(i+1))
+			if firstErr == nil {
+				firstErr = err
 			}
-			return joined(), err
+			continue
 		}
 		parts = append(parts, text)
 	}
-	return joined(), nil
+	if firstErr != nil && len(pieces) > 1 {
+		firstErr = fmt.Errorf("part %s of %d: %w", strings.Join(failed, ", "), len(pieces), firstErr)
+	}
+	return pcm.Join(parts), firstErr
 }
+
+// remoteUploadSafeBytes keeps a piece under both OpenAI's 25 MiB, which counts the whole form, and
+// a 25 MB read as millions, with room for the form's other fields.
+const remoteUploadSafeBytes = 25_000_000 - 64<<10
 
 // remotePieceBytes is the most audio one request carries, less its WAV header; Gemini sends it
 // as base64, a third larger.
@@ -70,7 +80,7 @@ func remotePieceBytes(cfg config.SpeechConfig) int {
 		}
 		return limit/4*3 - wavHeaderBytes
 	}
-	return remoteMaxAudioBytes - wavHeaderBytes
+	return remoteUploadSafeBytes - wavHeaderBytes
 }
 
 func transcribeWAV(ctx context.Context, cfg config.SpeechConfig, wav []byte) (string, error) {

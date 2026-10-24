@@ -211,10 +211,8 @@ func (d *Voice) stop(kind config.ActionKind) {
 			d.fail(kind, err)
 			return
 		}
-		// What part of a take came back is still typed; the rest is reported once it is.
-		if err != nil {
-			defer d.fail(kind, err)
-		}
+		// What part of a take came back is still typed; that it is only part is reported after, once.
+		partial := err
 
 		logger.Info("Recording transcribed", "action", kind, "characters", len(raw))
 		if strings.TrimSpace(raw) == "" {
@@ -227,8 +225,13 @@ func (d *Voice) stop(kind config.ActionKind) {
 		} else {
 			err = d.write(raw)
 		}
-		if err != nil {
+		switch {
+		case err != nil && partial != nil:
+			d.fail(kind, fmt.Errorf("%w (%w)", err, partial))
+		case err != nil:
 			d.fail(kind, err)
+		case partial != nil:
+			d.fail(kind, partial)
 		}
 	}()
 }

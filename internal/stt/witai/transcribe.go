@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,7 +35,7 @@ const (
 var client = &http.Client{}
 
 // Wit.ai caps audio per request, so it is downsampled to 8 kHz, cut at pauses, and joined.
-// A failed chunk still returns the text of the chunks before it, along with the error.
+// A failed chunk still returns the text of the others, along with the error.
 func Transcribe(ctx context.Context, audio []byte, lang string) (string, error) {
 	token, ok := tokenFor(lang)
 	if !ok {
@@ -51,19 +52,26 @@ func Transcribe(ctx context.Context, audio []byte, lang string) (string, error) 
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(chunks)*chunkBudget+chunkTimeout)
 	defer cancel()
 
-	var parts []string
-	joined := func() string { return pcm.Join(parts) }
+	// A failed chunk does not cost the ones after it: their text comes back with its error.
+	var parts, failed []string
+	var firstErr error
 	for i, piece := range pieces {
 		text, err := transcribeChunk(ctx, token, piece)
 		if err != nil {
-			return joined(), fmt.Errorf("wit.ai chunk %d of %d: %w", i+1, chunks, err)
+			failed = append(failed, strconv.Itoa(i+1))
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		if text != "" {
 			parts = append(parts, text)
 		}
 	}
-
-	return joined(), nil
+	if firstErr != nil {
+		return pcm.Join(parts), fmt.Errorf("wit.ai chunk %s of %d: %w", strings.Join(failed, ", "), chunks, firstErr)
+	}
+	return pcm.Join(parts), nil
 }
 
 func transcribeChunk(ctx context.Context, token string, chunk []byte) (string, error) {

@@ -78,7 +78,7 @@ func withChunkTimeout(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { chunkTimeout, chunkBudget = previousTimeout, previousBudget })
 }
 
-func TestTranscribeKeepsTheChunksBeforeAFailure(t *testing.T) {
+func TestTranscribeKeepsTheOtherChunksAfterAFailure(t *testing.T) {
 	witServer(t, func(chunk int, w http.ResponseWriter, r *http.Request) {
 		if chunk == 3 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -91,8 +91,8 @@ func TestTranscribeKeepsTheChunksBeforeAFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the failed chunk's error")
 	}
-	if text != "part 1 part 2" {
-		t.Fatalf("got %q, want the chunks before the failure", text)
+	if !strings.HasPrefix(text, "part 1 part 2 part 4") || strings.Contains(text, "part 3") {
+		t.Fatalf("got %q, want every chunk but the failed one", text)
 	}
 }
 
@@ -125,8 +125,8 @@ func TestTranscribeGivesUpOnAHungChunk(t *testing.T) {
 	})
 
 	text, err := Transcribe(context.Background(), chunksOfAudio(2), "en")
-	if !errors.Is(err, context.DeadlineExceeded) || text != "part 1" {
-		t.Fatalf("got %q, %v", text, err)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.HasPrefix(text, "part 1 part 3") {
+		t.Fatalf("got %q, %v; want the hung chunk given up and the others kept", text, err)
 	}
 }
 

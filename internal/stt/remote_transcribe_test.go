@@ -131,6 +131,9 @@ func TestALongTakeIsSentInPiecesUnderTheLimit(t *testing.T) {
 				if size > remoteMaxAudioBytes {
 					t.Errorf("piece %d is %d bytes, over the %d limit", piece, size, remoteMaxAudioBytes)
 				}
+				if size > remoteUploadSafeBytes {
+					t.Errorf("piece %d is %d bytes, over the safe %d", piece, size, remoteUploadSafeBytes)
+				}
 				if piece == failAt {
 					w.WriteHeader(http.StatusBadGateway)
 					return
@@ -140,15 +143,15 @@ func TestALongTakeIsSentInPiecesUnderTheLimit(t *testing.T) {
 			defer server.Close()
 
 			cfg := config.SpeechConfig{RemoteBaseURL: server.URL, RemoteModel: "whisper-1"}
-			text, err := RemoteTranscribe(context.Background(), cfg, make([]byte, remoteMaxAudioBytes+1))
+			text, err := RemoteTranscribe(context.Background(), cfg, make([]byte, 2*remoteUploadSafeBytes+1))
 			if failAt == 0 {
-				if err != nil || text != "part 1 part 2" {
-					t.Fatalf("got %q, %v; want both pieces joined", text, err)
+				if err != nil || text != "part 1 part 2 part 3" {
+					t.Fatalf("got %q, %v; want every piece joined", text, err)
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), "part 2 of 2") || text != "part 1" {
-				t.Fatalf("got %q, %v; want the first piece's text and the second's error", text, err)
+			if err == nil || !strings.Contains(err.Error(), "part 2 of 3") || text != "part 1 part 3" {
+				t.Fatalf("got %q, %v; want the other pieces' text and the second's error", text, err)
 			}
 		})
 	}

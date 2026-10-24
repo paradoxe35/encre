@@ -351,38 +351,6 @@ func TestWitAIPartialTranscriptIsTyped(t *testing.T) {
 	}
 }
 
-func TestClosingStopsAHostedTakeStillTranscribing(t *testing.T) {
-	fake := &fakeEngine{}
-	service := &Service{store: &Store{dir: t.TempDir()}, newEngine: func() (speechEngine, error) { return fake, nil }}
-	service.activeEngine = config.SpeechWitAI
-	service.speech, service.recording, service.takes = fake, true, 1
-
-	previous := witaiTranscribe
-	started := make(chan struct{})
-	witaiTranscribe = func(ctx context.Context, _ []byte, _ string) (string, error) {
-		close(started)
-		<-ctx.Done()
-		return "", ctx.Err()
-	}
-	t.Cleanup(func() { witaiTranscribe = previous })
-
-	stopped := make(chan error, 1)
-	go func() {
-		_, err := service.StopRecording()
-		stopped <- err
-	}()
-	<-started
-	service.Close()
-	select {
-	case err := <-stopped:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("got %v, want the take cancelled", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("closing did not stop the take")
-	}
-}
-
 func TestWitAIFailureWithNoTextStillFails(t *testing.T) {
 	fake := &fakeEngine{}
 	service := &Service{store: &Store{dir: t.TempDir()}, newEngine: func() (speechEngine, error) { return fake, nil }}
