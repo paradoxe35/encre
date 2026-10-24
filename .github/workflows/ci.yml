@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: "stable"
+  # Same AVX2 baseline as the release build, so the tests run the code that ships.
+  TRANSCRIBE_CMAKE_ARGS: >-
+    -DGGML_NATIVE=OFF
+    -DGGML_SSE42=ON
+    -DGGML_AVX=ON
+    -DGGML_AVX2=ON
+    -DGGML_FMA=ON
+    -DGGML_F16C=ON
+    -DGGML_BMI2=ON
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust-ffi/target/
+          key: ${{ runner.os }}-ci-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ci-cargo-
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            xvfb \
+            libasound2-dev \
+            libgl1-mesa-dev \
+            libwayland-dev \
+            xorg-dev \
+            libx11-dev \
+            libxkbfile-dev \
+            libxtst-dev \
+            libxdo-dev \
+            libxi-dev \
+            libpng-dev \
+            libjpeg-dev \
+            libxinerama-dev \
+            libxcb-xkb-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-x11-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libxfixes-dev \
+            libxxf86vm-dev \
+            libxkbcommon-dev
+
+      - name: Check Rust formatting
+        working-directory: rust-ffi
+        run: cargo fmt --check
+
+      - name: Rust tests
+        working-directory: rust-ffi
+        run: cargo test
+
+      - name: Rust lints
+        working-directory: rust-ffi
+        run: cargo clippy --all-targets
+
+      - name: Build Rust FFI library
+        run: |
+          bash scripts/build-rust-ffi.sh
+          mkdir -p lib
+          cp rust-ffi/target/release/libencre_ffi.a lib/
+
+      - name: Check Go formatting
+        run: |
+          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          if [ -n "$unformatted" ]; then
+            echo "Run gofmt on:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Go vet
+        run: go vet ./...
+
+      # The clipboard and window tests need an X server.
+      - name: Go tests with the race detector
+        run: xvfb-run -a go test -race -count=1 ./...
