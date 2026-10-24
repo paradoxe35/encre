@@ -17,8 +17,9 @@ const statusErrorLimit = 60
 var encryptAPIKey = config.EncryptAPIKey
 
 type providerDraft struct {
-	name     string
-	settings config.ProviderSettings
+	name       string
+	settings   config.ProviderSettings
+	unreadable bool
 }
 
 // Everything that can fail is checked before anything is applied: a half-applied config would be written by the next unrelated Save.
@@ -33,7 +34,7 @@ func (w *MainWindow) saveSettings() {
 		w.reportSaveError("Error", err)
 		return
 	}
-	speechKey, err := encryptedRemoteAPIKey(w.speechRemoteKey.Text)
+	speechKey, err := w.speechKeyDraft()
 	if err != nil {
 		w.reportSaveError("Error", fmt.Errorf("speech API key: %w", err))
 		return
@@ -116,24 +117,29 @@ func (w *MainWindow) providerDraft() (providerDraft, error) {
 		return providerDraft{}, errors.New("base URL is required for custom providers")
 	}
 
-	encryptedKey, err := encryptAPIKey(apiKey)
-	if err != nil {
-		return providerDraft{}, err
-	}
-
 	// The form owns the model, reasoning, API key and, for custom providers, the base URL; the rest is kept as saved.
 	settings := w.config.GetProviderSettings(provider)
 	settings.Model = model
 	settings.LowReasoning = lowReasoning
-	settings.APIKey = encryptedKey
 	if isCustom {
 		settings.BaseURL = baseURL
 	}
-	return providerDraft{name: provider, settings: settings}, nil
+
+	// An empty field over a key this computer cannot read keeps that key for the computer that can.
+	unreadable := w.apiKeyUnreadable && apiKey == ""
+	if !unreadable {
+		encryptedKey, err := encryptAPIKey(apiKey)
+		if err != nil {
+			return providerDraft{}, err
+		}
+		settings.APIKey = encryptedKey
+	}
+	return providerDraft{name: provider, settings: settings, unreadable: unreadable}, nil
 }
 
 func (w *MainWindow) applyProvider(draft providerDraft) {
 	w.config.SetProviderSettings(draft.name, draft.settings)
+	w.setAPIKeyUnreadable(draft.unreadable)
 	w.config.SetCurrentProvider(draft.name)
 	w.refreshOperationProviderOptions()
 }

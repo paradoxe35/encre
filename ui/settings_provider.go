@@ -21,8 +21,9 @@ import (
 func (w *MainWindow) loadProviderSettings(provider string) {
 	settings := w.config.GetProviderSettings(provider)
 
-	apiKey, _ := w.config.GetAPIKey(provider)
+	apiKey, err := w.config.GetAPIKey(provider)
 	w.apiKeyBinding.Set(apiKey)
+	w.setAPIKeyUnreadable(err != nil)
 	w.modelBinding.Set(settings.Model)
 	w.lowReasoningBinding.Set(settings.LowReasoning)
 
@@ -81,8 +82,9 @@ func (w *MainWindow) createProviderConfigSection() fyne.CanvasObject {
 	apiKeyLabel.TextStyle.Bold = true
 	apiKeyEntry := w.dirtyPasswordEntry()
 	apiKeyEntry.Bind(w.apiKeyBinding)
-	apiKeyEntry.PlaceHolder = "Enter your API key"
+	apiKeyEntry.PlaceHolder = apiKeyPlaceholder(w.apiKeyUnreadable, "Enter your API key")
 	apiKeyEntry.Validator = nil // Bind installs a validator that shows an icon
+	w.apiKeyEntry = apiKeyEntry
 
 	modelLabel := widget.NewLabel("Model")
 	modelLabel.TextStyle.Bold = true
@@ -228,6 +230,22 @@ func (w *MainWindow) providerUnderTest(provider string, settings config.Provider
 	settings.BaseURL = baseURL
 	settings.Model = model
 	return ai.FromSettings(provider, settings, apiKey, w.config.IsCustomProvider(provider))
+}
+
+const unreadableKeyHint = "The saved key can't be read on this computer. Enter it again."
+
+func apiKeyPlaceholder(unreadable bool, placeholder string) string {
+	if unreadable {
+		return unreadableKeyHint
+	}
+	return placeholder
+}
+
+func (w *MainWindow) setAPIKeyUnreadable(unreadable bool) {
+	w.apiKeyUnreadable = unreadable
+	if w.apiKeyEntry != nil {
+		w.apiKeyEntry.SetPlaceHolder(apiKeyPlaceholder(unreadable, "Enter your API key"))
+	}
 }
 
 // The widgets are still nil when initBindings loads the first provider, before the tab exists.

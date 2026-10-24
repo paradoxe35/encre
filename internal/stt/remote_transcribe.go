@@ -3,7 +3,6 @@ package stt
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -131,16 +130,10 @@ func remoteAPIKey(cfg config.SpeechConfig) (string, error) {
 	if err == nil {
 		return plain, nil
 	}
-	if looksEncrypted(cfg.RemoteAPIKey) {
+	if config.LooksEncrypted(cfg.RemoteAPIKey) {
 		return "", errUndecryptableKey
 	}
 	return cfg.RemoteAPIKey, nil
-}
-
-// EncryptAPIKey stores standard base64 of a 12-byte nonce, the key, and a 16-byte tag.
-func looksEncrypted(stored string) bool {
-	raw, err := base64.StdEncoding.DecodeString(stored)
-	return err == nil && len(raw) > 12+16
 }
 
 // Bounded, so a misbehaving server can neither fill memory nor paste a whole HTML page into an error.

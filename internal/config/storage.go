@@ -86,6 +86,12 @@ func DecryptAPIKey(encryptedKey string) (string, error) {
 	return string(plaintext), nil
 }
 
+// EncryptAPIKey writes standard base64 of a 12-byte nonce, the key, and a 16-byte tag.
+func LooksEncrypted(stored string) bool {
+	raw, err := base64.StdEncoding.DecodeString(stored)
+	return err == nil && len(raw) > 12+16
+}
+
 // Memory only: saving would publish a config the caller is still applying.
 func (c *Config) SetAPIKey(provider, apiKey string) error {
 	encrypted, err := EncryptAPIKey(apiKey)

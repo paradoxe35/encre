@@ -438,3 +438,92 @@ func TestDeletingAProviderTakesItOutOfTheActions(t *testing.T) {
 		t.Errorf("translate still points at %q", got)
 	}
 }
+
+// The key is derived from the user name, so another one stands in for a computer whose hostname or user changed.
+func keysSavedOnAnotherComputer(t *testing.T) *config.Config {
+	t.Helper()
+	t.Setenv("USER", "alice")
+	cfg := config.Default()
+	cfg.SetCurrentProvider(config.BuiltInOpenAI)
+	if err := cfg.SetAPIKey(config.BuiltInOpenAI, "sk-real"); err != nil {
+		t.Fatal(err)
+	}
+	speechKey, err := config.EncryptAPIKey("sk-speech")
+	if err != nil {
+		t.Fatal(err)
+	}
+	speech := cfg.SpeechSettings()
+	speech.RemoteAPIKey = speechKey
+	cfg.SetSpeechSettings(speech)
+	cfg.SetOperation(config.OpTranslate, config.OperationConfig{CharacterLimit: 500, TimeoutSeconds: 30, ProviderID: config.BuiltInOpenAI})
+	t.Setenv("USER", "bob")
+	return cfg
+}
+
+func TestAKeyThisComputerCannotReadSurvivesAnUnrelatedSave(t *testing.T) {
+	cfg := keysSavedOnAnotherComputer(t)
+	providerKey := cfg.GetProviderSettings(config.BuiltInOpenAI).APIKey
+	speechKey := cfg.SpeechSettings().RemoteAPIKey
+	w := newSettingsWindow(t, cfg)
+
+	if key, _ := w.apiKeyBinding.Get(); key != "" || w.apiKeyEntry.PlaceHolder != unreadableKeyHint {
+		t.Errorf("provider key field shows %q with placeholder %q", key, w.apiKeyEntry.PlaceHolder)
+	}
+	if w.speechRemoteKey.Text != "" || w.speechRemoteKey.PlaceHolder != unreadableKeyHint {
+		t.Errorf("speech key field shows %q with placeholder %q", w.speechRemoteKey.Text, w.speechRemoteKey.PlaceHolder)
+	}
+	if got := w.operationEditors[config.OpTranslate].provider.Selected; got != config.BuiltInOpenAI {
+		t.Errorf("translate shows %q", got)
+	}
+
+	w.mentionsCheck.SetChecked(!w.mentionsCheck.Checked)
+	w.saveSettings()
+
+	if status(w) != "Settings saved" {
+		t.Fatalf("status = %q", status(w))
+	}
+	if got := cfg.GetProviderSettings(config.BuiltInOpenAI).APIKey; got != providerKey {
+		t.Errorf("provider key became %q", got)
+	}
+	if got := cfg.SpeechSettings().RemoteAPIKey; got != speechKey {
+		t.Errorf("speech key became %q", got)
+	}
+	if got := cfg.Operation(config.OpTranslate).ProviderID; got != config.BuiltInOpenAI {
+		t.Errorf("translate override = %q", got)
+	}
+
+	t.Setenv("USER", "alice")
+	if got, err := cfg.GetAPIKey(config.BuiltInOpenAI); got != "sk-real" {
+		t.Errorf("back on the first computer the key is %q (%v)", got, err)
+	}
+}
+
+func TestEnteringAKeyThisComputerCouldNotReadReplacesIt(t *testing.T) {
+	cfg := keysSavedOnAnotherComputer(t)
+	w := newSettingsWindow(t, cfg)
+
+	w.apiKeyBinding.Set("sk-new")
+	w.speechRemoteKey.SetText("sk-speech-new")
+	w.saveSettings()
+
+	if got, err := cfg.GetAPIKey(config.BuiltInOpenAI); got != "sk-new" {
+		t.Errorf("provider key = %q (%v)", got, err)
+	}
+	if got, err := config.DecryptAPIKey(cfg.SpeechSettings().RemoteAPIKey); got != "sk-speech-new" {
+		t.Errorf("speech key = %q (%v)", got, err)
+	}
+	if w.apiKeyEntry.PlaceHolder == unreadableKeyHint || w.speechRemoteKey.PlaceHolder == unreadableKeyHint {
+		t.Error("the hint stayed after the key was replaced")
+	}
+
+	w.apiKeyBinding.Set("")
+	w.speechRemoteKey.SetText("")
+	w.saveSettings()
+
+	if got := cfg.GetProviderSettings(config.BuiltInOpenAI).APIKey; got != "" {
+		t.Errorf("clearing the new provider key kept %q", got)
+	}
+	if got := cfg.SpeechSettings().RemoteAPIKey; got != "" {
+		t.Errorf("clearing the new speech key kept %q", got)
+	}
+}

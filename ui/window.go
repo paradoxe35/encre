@@ -34,6 +34,8 @@ type MainWindow struct {
 
 	providerBinding       binding.String
 	apiKeyBinding         binding.String
+	apiKeyEntry           *widget.Entry
+	apiKeyUnreadable      bool
 	modelBinding          binding.String
 	baseURLBinding        binding.String
 	lowReasoningBinding   binding.Bool
@@ -79,6 +81,7 @@ type MainWindow struct {
 	speechRemoteModel   *widget.SelectEntry
 	speechRemoteURL     *widget.Entry
 	speechRemoteKey     *widget.Entry
+	speechKeyUnreadable bool
 	microphoneNotice    *fyne.Container
 
 	baseURLContainer *fyne.Container

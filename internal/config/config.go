@@ -476,8 +476,8 @@ func (c *Config) GetConfiguredProviderNames() []string {
 			continue
 		}
 		if settings.RequiresAPIKey() {
-			apiKey, err := c.GetAPIKey(name)
-			if err != nil || strings.TrimSpace(apiKey) == "" {
+			// A key this computer cannot read is still a key: dropping the provider would reset the actions using it.
+			if apiKey, err := c.GetAPIKey(name); err == nil && strings.TrimSpace(apiKey) == "" {
 				continue
 			}
 		}

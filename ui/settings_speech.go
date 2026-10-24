@@ -214,8 +214,10 @@ func (w *MainWindow) remoteSpeechPane() *fyne.Container {
 	w.speechRemoteURL.SetText(speech.RemoteBaseURL)
 
 	w.speechRemoteKey = w.dirtyPasswordEntry()
-	w.speechRemoteKey.SetPlaceHolder("API key")
-	w.speechRemoteKey.SetText(decryptedRemoteAPIKey(speech.RemoteAPIKey))
+	key, unreadable := decryptedRemoteAPIKey(speech.RemoteAPIKey)
+	w.speechKeyUnreadable = unreadable
+	w.speechRemoteKey.SetPlaceHolder(apiKeyPlaceholder(unreadable, "API key"))
+	w.speechRemoteKey.SetText(key)
 
 	w.speechRemote = w.dirtySelect(stt.PresetNames(), w.applyPreset)
 	if preset, ok := stt.FindPreset(speech.RemoteProvider); ok {
@@ -545,18 +547,30 @@ func (w *MainWindow) applySpeechSettings(remoteAPIKey string) {
 	speech.RemoteAPIKey = remoteAPIKey
 
 	w.config.SetSpeechSettings(speech)
+	w.speechKeyUnreadable = w.speechKeyUnreadable && w.speechRemoteKey.Text == ""
+	w.speechRemoteKey.SetPlaceHolder(apiKeyPlaceholder(w.speechKeyUnreadable, "API key"))
 }
 
-// An unencrypted stored key fails to decrypt and is shown as-is rather than as garbage.
-func decryptedRemoteAPIKey(stored string) string {
+// An unencrypted stored key fails to decrypt and is shown as-is; an encrypted one this computer cannot read is not shown at all.
+func decryptedRemoteAPIKey(stored string) (string, bool) {
 	if stored == "" {
-		return ""
+		return "", false
 	}
 	plain, err := config.DecryptAPIKey(stored)
-	if err != nil {
-		return stored
+	if err == nil {
+		return plain, false
 	}
-	return plain
+	if config.LooksEncrypted(stored) {
+		return "", true
+	}
+	return stored, false
+}
+
+func (w *MainWindow) speechKeyDraft() (string, error) {
+	if w.speechKeyUnreadable && w.speechRemoteKey.Text == "" {
+		return w.config.SpeechSettings().RemoteAPIKey, nil
+	}
+	return encryptedRemoteAPIKey(w.speechRemoteKey.Text)
 }
 
 func encryptedRemoteAPIKey(plain string) (string, error) {
