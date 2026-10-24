@@ -102,7 +102,7 @@ func (p *Processor) initializeProviders() error {
 func (p *Processor) buildProvider(cfg *config.Config, name string) (ai.Provider, error) {
 	apiKey, err := cfg.GetAPIKey(name)
 	if err != nil {
-		return nil, fmt.Errorf("no API key configured for %s", name)
+		return nil, fmt.Errorf("the saved API key for %s can't be read on this computer; enter it again in Settings", name)
 	}
 
 	settings := cfg.GetProviderSettings(name)
