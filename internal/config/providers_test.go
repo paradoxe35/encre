@@ -143,3 +143,15 @@ func TestThinkingLessIsOnByDefaultAndTurningItOffSurvivesASave(t *testing.T) {
 		t.Error("another provider lost its default on reload")
 	}
 }
+
+func TestACustomProviderCannotBeNamedLikeTheDefaultChoice(t *testing.T) {
+	cfg := Default()
+	for _, name := range []string{"Default", "default", "DEFAULT"} {
+		if err := cfg.AddCustomProvider(name, ProviderSettings{BaseURL: "https://example.org/v1", Model: "m"}); err == nil {
+			t.Errorf("%q was accepted, though Actions list it as the current provider", name)
+		}
+	}
+	if err := cfg.AddCustomProvider("Defaults", ProviderSettings{BaseURL: "https://example.org/v1", Model: "m"}); err != nil {
+		t.Errorf("a name that only starts like it was refused: %v", err)
+	}
+}

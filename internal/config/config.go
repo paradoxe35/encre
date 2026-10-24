@@ -517,6 +517,10 @@ func (c *Config) AddCustomProvider(name string, settings ProviderSettings) error
 	if IsBuiltInProvider(name) {
 		return fmt.Errorf("cannot use built-in provider name: %s", name)
 	}
+	// Actions list "Default" for the current provider, so a provider by that name could never be picked.
+	if strings.EqualFold(name, "default") {
+		return fmt.Errorf("%q is reserved for the current provider", name)
+	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
