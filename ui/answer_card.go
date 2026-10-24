@@ -407,6 +407,7 @@ func (c *AnswerCard) Hide() {
 	}
 	c.stop = nil
 	c.follow("")
+	c.selection.endDrag()
 	if c.onHide != nil {
 		c.onHide()
 	}
@@ -497,6 +498,7 @@ func (c *AnswerCard) build() {
 	c.selection = newSelectableText(c.content, c.copySelection, c.Hide, c.typeIntoInput)
 	c.scroll = container.NewVScroll(c.selection)
 	c.selection.scroll = c.scroll
+	c.selection.later = func(wait time.Duration, run func()) { c.later(wait, run) }
 	c.reading = container.NewThemeOverride(c.scroll, c.readingTheme())
 
 	c.input = newQuestionEntry(c.submit, c.Hide, c.browse, func() { c.copySelection(c.selection.SelectedText()) })

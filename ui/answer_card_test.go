@@ -1123,7 +1123,6 @@ func TestTasksAndRulesTakeTheCardsColoursAndCannotBeTicked(t *testing.T) {
 	answered(card, "Q", "- [x] done\n- [ ] open\n\n---\n\nAfter.")
 
 	var boxes int
-	test.NewTempWindow(t, card.content)
 	for _, object := range test.LaidOutObjects(card.content) {
 		switch object.(type) {
 		case *widget.Check:

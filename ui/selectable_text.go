@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image/color"
 	"math"
 	"slices"
 	"strings"
@@ -29,13 +30,58 @@ type selectableText struct {
 	copyText func(selected string)
 	escape   func()
 	typed    func(rune)
+	later    func(time.Duration, func())
 
 	anchor, caret int
 	doubleTapped  time.Time
+	pressed       time.Time
+	pressedLink   *widget.Hyperlink
 	runs          []textRun
+	bars          []innerBar
+	hooked        map[*container.Scroll]bool
 	marks         *fyne.Container
 	pointer       *textPointer
 	hovered       *widget.Hyperlink
+	pointerAt     fyne.Position
+
+	dragged, dragging, following bool
+	dragAt                       fyne.Position
+}
+
+// innerBar is the scrollbar of a scroll within the text, at its place within the selectable text.
+type innerBar struct {
+	scroll *container.Scroll
+	area   scrollArea
+	pos    fyne.Position
+}
+
+// scrollArea is how Fyne's own scrollbar area, which is internal, shows.
+type scrollArea interface {
+	fyne.Widget
+	desktop.Hoverable
+	fyne.Tappable
+}
+
+func (b *innerBar) contains(at fyne.Position) bool {
+	return within(at, b.pos, b.area.Size())
+}
+
+// handle is the bar under a point, which Fyne drags; it hides while the area is thin and still.
+func (b *innerBar) handle(at fyne.Position) fyne.Draggable {
+	renderer, ok := cachedRenderer(b.area)
+	if !ok {
+		return nil
+	}
+	for _, object := range renderer.Objects() {
+		if handle, ok := object.(fyne.Draggable); ok && object.Visible() && within(at, b.pos.Add(object.Position()), object.Size()) {
+			return handle
+		}
+	}
+	return nil
+}
+
+func within(at, pos fyne.Position, size fyne.Size) bool {
+	return at.X >= pos.X && at.X < pos.X+size.Width && at.Y >= pos.Y && at.Y < pos.Y+size.Height
 }
 
 // textRun is one piece of drawn text, at a position within the selectable text; start counts the runes before it.
@@ -54,7 +100,8 @@ type textRun struct {
 }
 
 func newSelectableText(text *widget.RichText, copyText func(string), escape func(), typed func(rune)) *selectableText {
-	s := &selectableText{text: text, copyText: copyText, escape: escape, typed: typed, marks: container.NewWithoutLayout()}
+	s := &selectableText{text: text, copyText: copyText, escape: escape, typed: typed, marks: container.NewWithoutLayout(),
+		later: func(wait time.Duration, run func()) { time.AfterFunc(wait, func() { fyne.Do(run) }) }}
 	s.pointer = &textPointer{s: s}
 	s.pointer.ExtendBaseWidget(s.pointer)
 	s.ExtendBaseWidget(s)
@@ -121,6 +168,17 @@ func (s *selectableText) SelectAll() {
 	s.paint()
 }
 
+func (s *selectableText) textUpTo(offset int) string {
+	var text strings.Builder
+	for _, run := range s.runs {
+		if run.start >= offset {
+			break
+		}
+		text.WriteString(string(run.runes[:min(offset-run.start, len(run.runes))]))
+	}
+	return text.String()
+}
+
 func (s *selectableText) span() (int, int) {
 	return min(s.anchor, s.caret), max(s.anchor, s.caret)
 }
@@ -139,31 +197,75 @@ func (s *selectableText) press(event *desktop.MouseEvent) {
 	}
 	s.focus()
 	s.collect()
-	if !s.doubleTapped.IsZero() && time.Since(s.doubleTapped) <= fyne.CurrentApp().Driver().DoubleTapDelay() {
+	delay := fyne.CurrentApp().Driver().DoubleTapDelay()
+	again := time.Since(s.pressed) <= delay
+	s.pressed, s.pressedLink, s.dragged, s.dragging = time.Now(), nil, false, false
+	if !s.doubleTapped.IsZero() && time.Since(s.doubleTapped) <= delay {
 		s.doubleTapped = time.Time{}
 		s.selectLine(event.Position)
 		return
 	}
+	shift := event.Modifier&fyne.KeyModifierShift != 0
+	if !again && !shift {
+		s.pressedLink, _ = s.linkAt(event.Position)
+	}
 	s.caret = s.offsetAt(event.Position)
-	if event.Modifier&fyne.KeyModifierShift == 0 {
+	if !shift {
 		s.anchor = s.caret
 	}
 	s.paint()
 }
 
+// release opens a link on letting go, as a tap waits out a double click first.
+func (s *selectableText) release(event *desktop.MouseEvent) {
+	link := s.pressedLink
+	s.pressedLink = nil
+	if link == nil || s.dragged || event.Button != desktop.MouseButtonPrimary {
+		return
+	}
+	if over, at := s.linkAt(event.Position); over == link {
+		link.Tapped(&fyne.PointEvent{Position: at, AbsolutePosition: event.AbsolutePosition})
+	}
+}
+
+// drag takes the absolute position, as the driver's relative one stays where the text was when the drag began.
 func (s *selectableText) drag(event *fyne.DragEvent) {
+	s.dragged, s.dragging, s.dragAt = true, true, event.AbsolutePosition
+	s.dragTo()
+}
+
+func (s *selectableText) dragTo() {
 	s.collect()
-	s.follow(event.Position)
-	s.caret = s.offsetAt(event.Position)
+	at := s.dragAt.Subtract(fyne.CurrentApp().Driver().AbsolutePositionForObject(s))
+	if s.follow(at) && !s.following {
+		s.following = true
+		s.later(followEvery, s.keepFollowing)
+	}
+	s.caret = s.offsetAt(at)
 	s.paint()
 }
 
-// follow scrolls the answer while a drag reaches past what shows of it.
-func (s *selectableText) follow(at fyne.Position) {
-	if s.scroll == nil {
-		return
+const followEvery = 40 * time.Millisecond
+
+// keepFollowing scrolls on while the button is held past the answer, though the pointer stays still.
+func (s *selectableText) keepFollowing() {
+	s.following = false
+	if s.dragging && s.Visible() && fyne.CurrentApp().Driver().CanvasForObject(s) != nil {
+		s.dragTo()
 	}
-	offset := s.scroll.Offset
+}
+
+func (s *selectableText) endDrag() {
+	s.dragging = false
+}
+
+// follow scrolls the answer while a drag reaches past what shows of it, and reports whether it moved.
+func (s *selectableText) follow(at fyne.Position) bool {
+	if s.scroll == nil {
+		return false
+	}
+	was := s.scroll.Offset
+	offset := was
 	top, bottom := offset.Y, offset.Y+s.scroll.Size().Height
 	switch {
 	case at.Y < top:
@@ -171,59 +273,103 @@ func (s *selectableText) follow(at fyne.Position) {
 	case at.Y > bottom:
 		offset.Y += at.Y - bottom
 	default:
-		return
+		return false
 	}
 	s.scroll.ScrollToOffset(offset)
+	return s.scroll.Offset != was
 }
 
+// selectWord takes in the runs beside that touch it, as a word can change style midway.
 func (s *selectableText) selectWord(event *fyne.PointEvent) {
 	s.doubleTapped = time.Now()
 	s.collect()
-	at := s.offsetAt(event.Position)
-	run := s.runAt(at)
-	if run == nil {
+	i, col := s.hit(event.Position)
+	if i < 0 {
 		return
 	}
-	col := min(at-run.start, len(run.runes)-1)
-	word := func(r rune) bool { return !unicode.IsSpace(r) }
-	if !word(run.runes[col]) {
+	kind := wordKind(s.runs[i].runes[col])
+	if kind == spaceKind {
 		return
 	}
-	from, to := col, col
-	for from > 0 && word(run.runes[from-1]) {
-		from--
+	first, from := i, col
+	for {
+		run := &s.runs[first]
+		for from > 0 && wordKind(run.runes[from-1]) == kind {
+			from--
+		}
+		if from > 0 || first == 0 || !touching(&s.runs[first-1], run) || wordKind(s.runs[first-1].runes[len(s.runs[first-1].runes)-1]) != kind {
+			break
+		}
+		first--
+		from = len(s.runs[first].runes)
 	}
-	for to < len(run.runes) && word(run.runes[to]) {
-		to++
+	last, to := i, col+1
+	for {
+		run := &s.runs[last]
+		for to < len(run.runes) && wordKind(run.runes[to]) == kind {
+			to++
+		}
+		if to < len(run.runes) || last+1 == len(s.runs) || !touching(run, &s.runs[last+1]) || wordKind(s.runs[last+1].runes[0]) != kind {
+			break
+		}
+		last++
+		to = 0
 	}
-	s.anchor, s.caret = run.start+from, run.start+to
+	s.anchor, s.caret = s.runs[first].start+from, s.runs[last].start+to
 	s.paint()
 }
 
+const (
+	spaceKind = iota
+	letterKind
+	punctuationKind
+)
+
+func wordKind(r rune) int {
+	switch {
+	case unicode.IsSpace(r):
+		return spaceKind
+	case unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) || r == '_':
+		return letterKind
+	}
+	return punctuationKind
+}
+
+func touching(before, after *textRun) bool {
+	return before.line == after.line && after.pos.X-before.pos.X-before.size.Width <= 1
+}
+
 func (s *selectableText) selectLine(at fyne.Position) {
-	run := s.runAt(s.offsetAt(at))
-	if run == nil {
+	i, _ := s.hit(at)
+	if i < 0 {
 		return
 	}
 	s.anchor, s.caret = s.length(), 0
 	for _, other := range s.runs {
-		if other.line == run.line {
+		if other.line == s.runs[i].line {
 			s.anchor, s.caret = min(s.anchor, other.start), max(s.caret, other.start+len(other.runes))
 		}
 	}
 	s.paint()
 }
 
-func (s *selectableText) runAt(offset int) *textRun {
+// hit is the run under a point, or the nearest on its line, and the rune of it there.
+func (s *selectableText) hit(at fyne.Position) (int, int) {
+	if len(s.runs) == 0 {
+		return -1, 0
+	}
+	line := s.lineAt(at.Y)
+	hit, nearest := -1, float32(math.MaxFloat32)
 	for i := range s.runs {
-		if offset < s.runs[i].start+len(s.runs[i].runes) {
-			return &s.runs[i]
+		run := &s.runs[i]
+		if run.line != line {
+			continue
+		}
+		if distance := max(run.pos.X-at.X, at.X-run.pos.X-run.size.Width, 0); distance < nearest {
+			hit, nearest = i, distance
 		}
 	}
-	if len(s.runs) == 0 {
-		return nil
-	}
-	return &s.runs[len(s.runs)-1]
+	return hit, s.runs[hit].runeAt(at.X - s.runs[hit].pos.X)
 }
 
 func (s *selectableText) menu(event *fyne.PointEvent) {
@@ -263,17 +409,21 @@ func (s *selectableText) TypedKey(key *fyne.KeyEvent) {
 func (s *selectableText) linkAt(at fyne.Position) (*widget.Hyperlink, fyne.Position) {
 	s.collect()
 	for _, run := range s.runs {
-		if run.link != nil && at.X >= run.pos.X && at.X < run.pos.X+run.size.Width && at.Y >= run.pos.Y && at.Y < run.pos.Y+run.size.Height {
+		if run.link != nil && within(at, run.pos, run.size) {
 			return run.link, at.Subtract(run.linkAt)
 		}
 	}
 	return nil, fyne.Position{}
 }
 
-func (s *selectableText) open(event *fyne.PointEvent) {
-	if link, at := s.linkAt(event.Position); link != nil {
-		link.Tapped(&fyne.PointEvent{Position: at, AbsolutePosition: event.AbsolutePosition})
+func (s *selectableText) barAt(at fyne.Position) *innerBar {
+	s.collect()
+	for i := range s.bars {
+		if s.bars[i].contains(at) {
+			return &s.bars[i]
+		}
 	}
+	return nil
 }
 
 func (s *selectableText) hover(event *desktop.MouseEvent) {
@@ -307,13 +457,7 @@ func (s *selectableText) offsetAt(at fyne.Position) int {
 	if len(s.runs) == 0 {
 		return 0
 	}
-	line, nearest := 0, float32(math.MaxFloat32)
-	for _, run := range s.runs {
-		distance := max(run.pos.Y-at.Y, at.Y-run.pos.Y-run.size.Height, 0)
-		if distance < nearest {
-			line, nearest = run.line, distance
-		}
-	}
+	line := s.lineAt(at.Y)
 	var last *textRun
 	for i := range s.runs {
 		run := &s.runs[i]
@@ -326,6 +470,26 @@ func (s *selectableText) offsetAt(at fyne.Position) int {
 		last = run
 	}
 	return last.start + len(last.runes)
+}
+
+func (s *selectableText) lineAt(y float32) int {
+	line, nearest := 0, float32(math.MaxFloat32)
+	for _, run := range s.runs {
+		if distance := max(run.pos.Y-y, y-run.pos.Y-run.size.Height, 0); distance < nearest {
+			line, nearest = run.line, distance
+		}
+	}
+	return line
+}
+
+// runeAt is the rune under x, or the nearest end one.
+func (r *textRun) runeAt(x float32) int {
+	for i := 1; i < len(r.runes); i++ {
+		if x < r.width(i) {
+			return i - 1
+		}
+	}
+	return len(r.runes) - 1
 }
 
 func (r *textRun) column(x float32) int {
@@ -348,16 +512,16 @@ func (r *textRun) measure(text string) float32 {
 
 // collect finds the text drawn now, in reading order; a link's own rich text reads as part of the text around it.
 func (s *selectableText) collect() {
-	s.runs = s.runs[:0]
+	s.runs, s.bars = s.runs[:0], s.bars[:0]
+	hooked := make(map[*container.Scroll]bool, len(s.hooked))
 	unbounded := [2]fyne.Position{{X: -math.MaxFloat32, Y: -math.MaxFloat32}, {X: math.MaxFloat32, Y: math.MaxFloat32}}
 	var link *widget.Hyperlink
 	var linkAt fyne.Position
-	var walk func(object fyne.CanvasObject, origin fyne.Position, clip [2]fyne.Position, owner *widget.RichText)
-	walk = func(object fyne.CanvasObject, origin fyne.Position, clip [2]fyne.Position, owner *widget.RichText) {
+	var walk func(object fyne.CanvasObject, at fyne.Position, clip [2]fyne.Position, owner *widget.RichText)
+	walk = func(object fyne.CanvasObject, at fyne.Position, clip [2]fyne.Position, owner *widget.RichText) {
 		if !object.Visible() {
 			return
 		}
-		at := origin.Add(object.Position())
 		var children []fyne.CanvasObject
 		switch object := object.(type) {
 		case *canvas.Text:
@@ -367,6 +531,13 @@ func (s *selectableText) collect() {
 			}
 			return
 		case *fyne.Container:
+			if task, ok := object.Layout.(*taskLayout); ok {
+				// Read but never drawn, so a copied task keeps whether it is done.
+				text := canvas.NewText(task.textual, color.Transparent)
+				text.TextSize = theme.SizeForWidget(theme.SizeNameText, owner)
+				s.runs = append(s.runs, textRun{text: text, owner: owner, runes: []rune(text.Text), pos: at, size: object.Size(), clip: clip})
+				return
+			}
 			children = object.Objects
 		case fyne.Widget:
 			switch object := object.(type) {
@@ -383,6 +554,17 @@ func (s *selectableText) collect() {
 					{X: max(clip[0].X, at.X), Y: max(clip[0].Y, at.Y)},
 					{X: min(clip[1].X, end.X), Y: min(clip[1].Y, end.Y)},
 				}
+				s.hook(object, hooked)
+				if renderer, ok := cachedRenderer(object); ok {
+					for _, child := range renderer.Objects() {
+						if area, ok := child.(scrollArea); ok && area.Visible() {
+							s.bars = append(s.bars, innerBar{scroll: object, area: area, pos: at.Add(area.Position())})
+						}
+					}
+				}
+				// The scroll moves its content after telling of the scroll, so the offset is where it will be.
+				walk(object.Content, at.Subtract(object.Offset), clip, owner)
+				return
 			}
 			renderer, ok := cachedRenderer(object)
 			if !ok {
@@ -391,11 +573,27 @@ func (s *selectableText) collect() {
 			children = renderer.Objects()
 		}
 		for _, child := range children {
-			walk(child, at, clip, owner)
+			walk(child, at.Add(child.Position()), clip, owner)
 		}
 	}
-	walk(s.text, fyne.Position{}, unbounded, s.text)
+	walk(s.text, s.text.Position(), unbounded, s.text)
+	s.hooked = hooked
 	s.order()
+}
+
+// hook repaints the marks as a scroll within the text scrolls; each render brings new scrolls, so only those drawn now are kept.
+func (s *selectableText) hook(scroll *container.Scroll, hooked map[*container.Scroll]bool) {
+	hooked[scroll] = true
+	if s.hooked[scroll] {
+		return
+	}
+	scrolled := scroll.OnScrolled
+	scroll.OnScrolled = func(offset fyne.Position) {
+		if scrolled != nil {
+			scrolled(offset)
+		}
+		s.paint()
+	}
 }
 
 // order groups runs into lines by where their middles sit, as inline code sits a little lower than its line.
@@ -498,9 +696,20 @@ func (r *selectableRenderer) Layout(size fyne.Size) {
 
 func (r *selectableRenderer) MinSize() fyne.Size { return r.s.text.MinSize() }
 
+// Refresh keeps the selection only while the text up to it reads the same, as a streamed answer can reshape what came before.
 func (r *selectableRenderer) Refresh() {
-	r.s.text.Refresh()
-	r.s.paint()
+	s := r.s
+	_, high := s.span()
+	before := s.textUpTo(high)
+	s.text.Refresh()
+	s.unhover()
+	if high > 0 {
+		s.collect()
+		if s.textUpTo(high) != before {
+			s.anchor, s.caret = 0, 0
+		}
+	}
+	s.paint()
 }
 
 func (r *selectableRenderer) Objects() []fyne.CanvasObject {
@@ -509,30 +718,116 @@ func (r *selectableRenderer) Objects() []fyne.CanvasObject {
 
 func (r *selectableRenderer) Destroy() {}
 
-// textPointer lies over the text to take every press, even beside a link, and hands a link its own taps and hover.
+// textPointer lies over the text to take every press, even beside a link, and hands a link its own presses and hover,
+// and a scrollbar within the text its own presses, drags and hover.
 type textPointer struct {
 	widget.BaseWidget
 	s *selectableText
+
+	over       desktop.Hoverable
+	bar        *innerBar
+	handle     fyne.Draggable
+	barDragged bool
 }
 
 func (p *textPointer) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(container.NewWithoutLayout())
 }
 
+// Cursor reads the last place the pointer moved to, as the driver asks it before telling of the move.
 func (p *textPointer) Cursor() desktop.Cursor {
-	if p.s.hovered != nil {
-		return p.s.hovered.Cursor()
+	if p.s.barAt(p.s.pointerAt) != nil {
+		return desktop.DefaultCursor
+	}
+	if link, _ := p.s.linkAt(p.s.pointerAt); link != nil {
+		return link.Cursor()
 	}
 	return desktop.TextCursor
 }
 
-func (p *textPointer) MouseDown(event *desktop.MouseEvent)    { p.s.press(event) }
-func (p *textPointer) MouseUp(*desktop.MouseEvent)            {}
-func (p *textPointer) Dragged(event *fyne.DragEvent)          { p.s.drag(event) }
-func (p *textPointer) DragEnd()                               {}
-func (p *textPointer) Tapped(event *fyne.PointEvent)          { p.s.open(event) }
-func (p *textPointer) DoubleTapped(event *fyne.PointEvent)    { p.s.selectWord(event) }
+func (p *textPointer) MouseDown(event *desktop.MouseEvent) {
+	p.bar, p.handle, p.barDragged = nil, nil, false
+	if bar := p.s.barAt(event.Position); bar != nil && event.Button == desktop.MouseButtonPrimary {
+		held := *bar
+		p.bar, p.handle = &held, bar.handle(event.Position)
+		return
+	}
+	p.s.press(event)
+}
+
+func (p *textPointer) MouseUp(event *desktop.MouseEvent) {
+	if p.bar == nil {
+		p.s.release(event)
+		return
+	}
+	if !p.barDragged {
+		p.bar.area.Tapped(&fyne.PointEvent{Position: event.Position.Subtract(p.bar.pos), AbsolutePosition: event.AbsolutePosition})
+		p.bar = nil
+	}
+}
+
+func (p *textPointer) Dragged(event *fyne.DragEvent) {
+	if p.bar == nil {
+		p.s.drag(event)
+		return
+	}
+	p.barDragged = true
+	if p.handle != nil {
+		p.handle.Dragged(event)
+	}
+}
+
+func (p *textPointer) DragEnd() {
+	if p.bar == nil {
+		p.s.endDrag()
+		return
+	}
+	if p.handle != nil {
+		p.handle.DragEnd()
+	}
+	p.bar, p.handle, p.barDragged = nil, nil, false
+}
+
+func (p *textPointer) DoubleTapped(event *fyne.PointEvent) {
+	if p.s.barAt(event.Position) == nil {
+		p.s.selectWord(event)
+	}
+}
+
 func (p *textPointer) TappedSecondary(event *fyne.PointEvent) { p.s.menu(event) }
-func (p *textPointer) MouseIn(event *desktop.MouseEvent)      { p.s.hover(event) }
-func (p *textPointer) MouseMoved(event *desktop.MouseEvent)   { p.s.hover(event) }
-func (p *textPointer) MouseOut()                              { p.s.unhover() }
+func (p *textPointer) MouseIn(event *desktop.MouseEvent)      { p.MouseMoved(event) }
+
+func (p *textPointer) MouseMoved(event *desktop.MouseEvent) {
+	p.s.pointerAt = event.Position
+	bar := p.s.barAt(event.Position)
+	var over desktop.Hoverable
+	if bar != nil {
+		over = bar.area
+	}
+	if over != p.over {
+		p.leaveBar()
+		if bar != nil {
+			in := *event
+			in.Position = event.Position.Subtract(bar.pos)
+			over.MouseIn(&in)
+		}
+		p.over = over
+	}
+	if bar != nil {
+		p.s.unhover()
+		return
+	}
+	p.s.hover(event)
+}
+
+func (p *textPointer) MouseOut() {
+	p.leaveBar()
+	p.s.unhover()
+}
+
+func (p *textPointer) leaveBar() {
+	if p.over != nil {
+		p.over.MouseOut()
+		p.over = nil
+	}
+}

@@ -338,7 +338,7 @@ func (b *taskBox) Visual() fyne.CanvasObject {
 	box.FillMode = canvas.ImageFillContain
 	// As tall as the text beside it, as Fyne drops a shorter visual by the line's baseline.
 	line := fyne.MeasureText("M", size, b.text.Style.TextStyle).Height
-	return &fyne.Container{Layout: &taskLayout{side: size * 0.9, gap: size * 0.4, height: line}, Objects: []fyne.CanvasObject{box}}
+	return &fyne.Container{Layout: &taskLayout{side: size * 0.9, gap: size * 0.4, height: line, textual: b.Textual()}, Objects: []fyne.CanvasObject{box}}
 }
 
 func (b *taskBox) Update(fyne.CanvasObject)  {}
@@ -346,7 +346,10 @@ func (b *taskBox) Select(_, _ fyne.Position) {}
 func (b *taskBox) SelectedText() string      { return "" }
 func (b *taskBox) Unselect()                 {}
 
-type taskLayout struct{ side, gap, height float32 }
+type taskLayout struct {
+	side, gap, height float32
+	textual           string
+}
 
 func (l *taskLayout) MinSize([]fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(l.side+l.gap, l.height)

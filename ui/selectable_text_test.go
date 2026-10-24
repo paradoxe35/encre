@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
@@ -39,8 +40,20 @@ func after(t *testing.T, s *selectableText, text string) fyne.Position {
 
 func drag(s *selectableText, from, to fyne.Position) {
 	s.pointer.MouseDown(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: from}, Button: desktop.MouseButtonPrimary})
-	s.pointer.Dragged(&fyne.DragEvent{PointEvent: fyne.PointEvent{Position: to}, Dragged: fyne.NewDelta(to.X-from.X, to.Y-from.Y)})
+	s.pointer.Dragged(dragTo(s, to, fyne.NewDelta(to.X-from.X, to.Y-from.Y)))
 	s.pointer.DragEnd()
+}
+
+// dragTo is a drag event whose absolute position is the true one, as glfw's is.
+func dragTo(s *selectableText, to fyne.Position, moved fyne.Delta) *fyne.DragEvent {
+	origin := fyne.CurrentApp().Driver().AbsolutePositionForObject(s)
+	return &fyne.DragEvent{PointEvent: fyne.PointEvent{Position: to, AbsolutePosition: origin.Add(to)}, Dragged: moved}
+}
+
+func click(s *selectableText, point fyne.Position) {
+	event := &desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: point}, Button: desktop.MouseButtonPrimary}
+	s.pointer.MouseDown(event)
+	s.pointer.MouseUp(event)
 }
 
 func TestDraggingSelectsAcrossParagraphsAndCopiesWhatWasSelected(t *testing.T) {
@@ -252,8 +265,8 @@ func TestTheSelectionStartsWhereThePressWasNotWhereTheDragWasNoticed(t *testing.
 
 	s.pointer.MouseDown(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: at(t, s, "Alpha")}, Button: desktop.MouseButtonPrimary})
 	to := after(t, s, "beta")
-	s.pointer.Dragged(&fyne.DragEvent{PointEvent: fyne.PointEvent{Position: to}, Dragged: fyne.NewDelta(2, 0)})
-	s.pointer.Dragged(&fyne.DragEvent{PointEvent: fyne.PointEvent{Position: to}, Dragged: fyne.NewDelta(0, 0)})
+	s.pointer.Dragged(dragTo(s, to, fyne.NewDelta(2, 0)))
+	s.pointer.Dragged(dragTo(s, to, fyne.NewDelta(0, 0)))
 	s.pointer.MouseUp(&desktop.MouseEvent{})
 	s.pointer.DragEnd()
 	if got := s.SelectedText(); got != "Alpha beta" {
@@ -281,7 +294,8 @@ func TestTheLinesAroundALinkSelectAndTheLinkStillOpens(t *testing.T) {
 	if s.SelectedText() == "" {
 		t.Fatal("a double click beside the link selected nothing")
 	}
-	s.pointer.Tapped(&fyne.PointEvent{Position: beside})
+	s.pressed = time.Time{}
+	click(s, beside)
 	if opened {
 		t.Fatal("a tap beside the link opened it")
 	}
@@ -290,7 +304,8 @@ func TestTheLinesAroundALinkSelectAndTheLinkStillOpens(t *testing.T) {
 	if s.pointer.Cursor() != desktop.PointerCursor {
 		t.Fatal("the pointer over the link is not a hand")
 	}
-	s.pointer.Tapped(&fyne.PointEvent{Position: at(t, s, "docs")})
+	s.pressed = time.Time{}
+	click(s, at(t, s, "docs"))
 	if !opened {
 		t.Fatal("tapping the link did not open it")
 	}
@@ -307,5 +322,234 @@ func TestTextSideBySideIsMarkedAsOne(t *testing.T) {
 	drag(s, at(t, s, "Plain"), after(t, s, "end."))
 	if len(s.marks.Objects) != 1 {
 		t.Fatalf("one line is marked in %d pieces", len(s.marks.Objects))
+	}
+}
+
+func TestDoubleAndTripleClickPastALineStayOnIt(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "Hello\n\nWorld here")
+	s := card.selection
+
+	beyond := after(t, s, "Hello").AddXY(40, 0)
+	s.pointer.DoubleTapped(&fyne.PointEvent{Position: beyond})
+	if got := s.SelectedText(); got != "Hello" {
+		t.Fatalf("double click past the line selected %q", got)
+	}
+	s.pointer.MouseDown(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: beyond}, Button: desktop.MouseButtonPrimary})
+	if got := s.SelectedText(); got != "Hello" {
+		t.Fatalf("triple click past the line selected %q", got)
+	}
+}
+
+func TestDoubleClickSelectsTheWordUnderThePoint(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "Some **bold**, rest")
+	s := card.selection
+
+	s.pointer.DoubleTapped(&fyne.PointEvent{Position: after(t, s, "bold").SubtractXY(1, 0)})
+	if got := s.SelectedText(); got != "bold" {
+		t.Fatalf("double click on the end of bold selected %q", got)
+	}
+}
+
+func TestDoubleClickSelectsAWordSplitAcrossStyles(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "A **bo**ld word")
+	s := card.selection
+
+	s.pointer.DoubleTapped(&fyne.PointEvent{Position: at(t, s, "ld")})
+	if got := s.SelectedText(); got != "bold" {
+		t.Fatalf("double click selected %q", got)
+	}
+}
+
+func TestDraggingPastTheBottomKeepsScrolling(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", strings.Repeat("A paragraph of text that takes up a line or two of the card.\n\n", 40)+"The end.")
+	s := card.selection
+	var later []func()
+	card.later = func(_ time.Duration, run func()) { later = append(later, run) }
+
+	driver := fyne.CurrentApp().Driver()
+	s.pointer.MouseDown(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: at(t, s, "paragraph")}, Button: desktop.MouseButtonPrimary})
+	below := driver.AbsolutePositionForObject(card.scroll).AddXY(20, card.scroll.Size().Height+30)
+	// glfw keeps the position relative to where the drag began.
+	event := &fyne.DragEvent{PointEvent: fyne.PointEvent{AbsolutePosition: below, Position: below.Subtract(driver.AbsolutePositionForObject(s))}}
+	s.pointer.Dragged(event)
+	first := card.scroll.Offset.Y
+	if first <= 0 {
+		t.Fatal("dragging past the bottom did not scroll")
+	}
+	s.pointer.Dragged(event)
+	second := card.scroll.Offset.Y
+	if second <= first {
+		t.Fatalf("a second move past the bottom stayed at %v", second)
+	}
+
+	if len(later) != 1 {
+		t.Fatalf("%d scrolls are pending while the button is held", len(later))
+	}
+	run := later[0]
+	later = nil
+	run()
+	if card.scroll.Offset.Y <= second {
+		t.Fatal("holding the button past the bottom did not keep scrolling")
+	}
+	if len(later) != 1 {
+		t.Fatal("the scroll does not go on while the button is held")
+	}
+	s.pointer.DragEnd()
+	held := card.scroll.Offset.Y
+	run = later[0]
+	later = nil
+	run()
+	if card.scroll.Offset.Y != held || len(later) != 0 {
+		t.Fatal("the scroll went on after the button was let go")
+	}
+}
+
+// codeBar is the scrollbar of the one wide code block in the answer.
+func codeBar(t *testing.T, s *selectableText) *innerBar {
+	t.Helper()
+	s.collect()
+	if len(s.bars) != 1 {
+		t.Fatalf("found %d scrollbars in the answer", len(s.bars))
+	}
+	return &s.bars[0]
+}
+
+func TestTheScrollbarOfWideCodeDragsAndExpands(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "```\n"+strings.Repeat("wide_code_", 30)+"\n```\n\nAfter.")
+	s := card.selection
+	bar := codeBar(t, s)
+	scroll, thin := bar.scroll, bar.area.Size().Height
+
+	s.pointer.MouseIn(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: bar.pos.AddXY(5, thin/2)}})
+	bar = codeBar(t, s)
+	if bar.area.Size().Height <= thin {
+		t.Fatal("hovering the scrollbar did not widen it")
+	}
+	if s.pointer.Cursor() == desktop.TextCursor {
+		t.Fatal("the pointer over the scrollbar is a text cursor")
+	}
+	strip := bar.pos.AddXY(5, bar.area.Size().Height/2)
+	s.pointer.MouseDown(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: strip}, Button: desktop.MouseButtonPrimary})
+	s.pointer.Dragged(dragTo(s, strip.AddXY(40, 0), fyne.NewDelta(40, 0)))
+	s.pointer.DragEnd()
+	if scroll.Offset.X <= 0 {
+		t.Fatal("dragging the scrollbar did not scroll the code")
+	}
+	if got := s.SelectedText(); got != "" {
+		t.Fatalf("dragging the scrollbar selected %q", got)
+	}
+
+	s.pointer.MouseMoved(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: at(t, s, "After")}})
+	if codeBar(t, s).area.Size().Height > thin {
+		t.Fatal("the scrollbar stayed wide after the pointer left it")
+	}
+	drag(s, at(t, s, "wide_code_wide"), after(t, s, "After"))
+	if got := s.SelectedText(); !strings.HasPrefix(got, "wide_code_wide") {
+		t.Fatalf("dragging over the code selected %q", got)
+	}
+}
+
+func TestTheMarksFollowScrolledCode(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "```\n"+strings.Repeat("wide_code_", 30)+"\n```")
+	s := card.selection
+	scroll := codeBar(t, s).scroll
+	drag(s, at(t, s, "wide_code_"), at(t, s, "e_code_wide"))
+	end := func() float32 {
+		mark := s.marks.Objects[len(s.marks.Objects)-1]
+		return mark.Position().X + mark.Size().Width
+	}
+	before := end()
+
+	scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.NewDelta(-30, 0)})
+	if got := end(); got > before-29 {
+		t.Fatalf("the mark ends at %v after the code scrolled, was %v", got, before)
+	}
+}
+
+func TestALinkOpensOnReleaseAndOnlyOnce(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "See [the docs](https://example.org) now.")
+	s := card.selection
+	link, _ := s.linkAt(at(t, s, "docs"))
+	opened := 0
+	link.OnTapped = func() { opened++ }
+	point := at(t, s, "docs")
+
+	click(s, point)
+	if opened != 1 {
+		t.Fatalf("a click opened the link %d times", opened)
+	}
+	click(s, point)
+	s.pointer.DoubleTapped(&fyne.PointEvent{Position: point})
+	if got := s.SelectedText(); got != "docs" {
+		t.Fatalf("double click on the link selected %q", got)
+	}
+	click(s, point)
+	if got := s.SelectedText(); got != "See the docs now." {
+		t.Fatalf("triple click on the link selected %q", got)
+	}
+	if opened != 1 {
+		t.Fatalf("clicking the link again opened it %d times", opened)
+	}
+
+	s.pressed = time.Time{}
+	drag(s, point, at(t, s, "now"))
+	s.pointer.MouseUp(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: point}, Button: desktop.MouseButtonPrimary})
+	s.pressed = time.Time{}
+	s.pointer.MouseDown(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: point}, Button: desktop.MouseButtonPrimary, Modifier: fyne.KeyModifierShift})
+	s.pointer.MouseUp(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: point}, Button: desktop.MouseButtonPrimary})
+	if opened != 1 {
+		t.Fatal("a drag or shift click opened the link")
+	}
+}
+
+func TestTheCursorFollowsNewContent(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "See [the docs](https://example.org) now.")
+	s := card.selection
+	s.pointer.MouseMoved(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: at(t, s, "docs")}})
+
+	answered(card, "q", "Plain text without any link in it at all.")
+	if s.hovered != nil {
+		t.Fatal("the link of the old answer is still hovered")
+	}
+	if s.pointer.Cursor() != desktop.TextCursor {
+		t.Fatal("the pointer over plain text is a hand")
+	}
+}
+
+func TestCopiedTasksKeepTheirState(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "- [x] done\n- [ ] todo")
+	s := card.selection
+	s.SelectAll()
+	got := s.SelectedText()
+	for _, want := range []string{"[x] done\n", "[ ] todo"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q does not read %q", got, want)
+		}
+	}
+}
+
+func TestTheSelectionDropsWhenTheTextBeforeItChanges(t *testing.T) {
+	card, _ := newCard(t)
+	update, _, _ := card.Open("q", "", func() {})
+	update("**bo", false)
+	card.render()
+	s := card.selection
+	drag(s, at(t, s, "bo"), after(t, s, "bo"))
+	if got := s.SelectedText(); got != "bo" {
+		t.Fatalf("selected %q", got)
+	}
+
+	update("**bold** text", true)
+	if got := s.SelectedText(); got != "" {
+		t.Fatalf("after the text before it changed %q is selected", got)
 	}
 }
