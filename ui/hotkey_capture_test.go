@@ -281,3 +281,20 @@ func TestTheCaptureFieldFollowsAThemeOverride(t *testing.T) {
 		t.Fatalf("background = %v, want the override's %v", got, want)
 	}
 }
+
+func TestOnlyKeysTheListenerCanReadAreRecorded(t *testing.T) {
+	for key, want := range map[fyne.KeyName]string{
+		fyne.KeyUnknown:  "ctrl+alt",
+		fyne.KeyPlus:     "ctrl+alt",
+		fyne.KeyMinus:    "ctrl+alt",
+		fyne.KeyPageUp:   "ctrl+alt+pageup",
+		fyne.KeyPageDown: "ctrl+alt+pagedown",
+		fyne.KeyF12:      "ctrl+alt+f12",
+	} {
+		h, _, _ := capturing(t)
+		h.entry.TypedShortcut(&desktop.CustomShortcut{KeyName: key, Modifier: fyne.KeyModifierControl | fyne.KeyModifierAlt})
+		if h.entry.Text != want {
+			t.Errorf("%q was captured as %q, want %q", key, h.entry.Text, want)
+		}
+	}
+}

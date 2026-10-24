@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image/color"
 	"runtime"
 	"strings"
@@ -327,7 +328,7 @@ func (h *HotkeyCapture) recordCombo(modifiers fyne.KeyModifier, key fyne.KeyName
 			h.modifiers[modifier] = true
 		}
 	}
-	if !isModifierKey(key) {
+	if !isModifierKey(key) && registrable(key) {
 		h.pressedKeys = map[fyne.KeyName]bool{key: true}
 	}
 	h.updateDisplay()
@@ -364,7 +365,7 @@ func (h *HotkeyCapture) handleKeyPress(key *fyne.KeyEvent) {
 		h.modifiers[fyne.KeyModifierSuper] = true
 	default:
 		// Only one non-modifier key is kept; a saved combo only ever matches modifiers plus one key.
-		if !isModifierKey(key.Name) {
+		if !isModifierKey(key.Name) && registrable(key.Name) {
 			h.pressedKeys = map[fyne.KeyName]bool{key.Name: true}
 		}
 	}
@@ -467,10 +468,36 @@ func isModifierOnlyAllowed(mods map[fyne.KeyModifier]bool) bool {
 	return mods[fyne.KeyModifierControl] && mods[fyne.KeyModifierSuper]
 }
 
+// The keys the hotkey listener knows by name; others, such as ö or numpad keys, would be saved as
+// a name it cannot read, or as nothing at all.
+var registrableKeys = func() map[string]bool {
+	keys := map[string]bool{
+		"space": true, "return": true, "escape": true, "tab": true, "backspace": true, "delete": true,
+		"insert": true, "home": true, "end": true, "pageup": true, "pagedown": true,
+		"up": true, "down": true, "left": true, "right": true,
+	}
+	for c := 'a'; c <= 'z'; c++ {
+		keys[string(c)] = true
+	}
+	for c := '0'; c <= '9'; c++ {
+		keys[string(c)] = true
+	}
+	for i := 1; i <= 12; i++ {
+		keys[fmt.Sprintf("f%d", i)] = true
+	}
+	return keys
+}()
+
+func registrable(key fyne.KeyName) bool { return registrableKeys[keyNameToString(key)] }
+
 func keyNameToString(key fyne.KeyName) string {
 	keyStr := strings.ToLower(string(key))
 
 	switch key {
+	case fyne.KeyPageUp:
+		return "pageup"
+	case fyne.KeyPageDown:
+		return "pagedown"
 	case fyne.KeySpace:
 		return "space"
 	case fyne.KeyEscape:

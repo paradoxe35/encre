@@ -253,11 +253,14 @@ const STANDALONE_KEY: &str = "escape";
 
 /// A modifier is required, or the binding would fire on ordinary typing.
 fn parse_binding(binding: &str) -> Result<(Modifiers, Option<&'static str>), String> {
-    let parts: Vec<&str> = binding
-        .split('+')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect();
+    if binding.trim().is_empty() {
+        return Err("binding is empty".to_string());
+    }
+    // An empty part is a key the recorder could not name, not one to drop: "ctrl+alt+" is not ctrl+alt.
+    let parts: Vec<&str> = binding.split('+').map(str::trim).collect();
+    if parts.iter().any(|part| part.is_empty()) {
+        return Err(format!("'{binding}' has a key with no name"));
+    }
     let Some((last, leading)) = parts.split_last() else {
         return Err("binding is empty".to_string());
     };
@@ -1433,6 +1436,14 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_key_with_no_name_is_refused_not_dropped() {
+        for binding in ["ctrl+alt+", "ctrl+alt++", "+a", "ctrl++a"] {
+            assert!(parse_binding(binding).is_err(), "{binding} was accepted");
+        }
+        assert!(parse_binding("  ").is_err());
     }
 
     #[test]
