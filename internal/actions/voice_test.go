@@ -24,6 +24,8 @@ type fakeSpeech struct {
 	mu       sync.Mutex
 	calls    []string
 	startErr error
+	// startGate holds the first start until closed, then fails it with startErr; later starts succeed.
+	startGate chan struct{}
 	// stops are handed out in call order; the last one repeats.
 	stops []stopResult
 }
@@ -42,8 +44,20 @@ func (f *fakeSpeech) recorded() []string {
 
 func (f *fakeSpeech) Prepare(config.SpeechConfig) error { f.record("prepare"); return nil }
 func (f *fakeSpeech) StartRecording(config.SpeechConfig) error {
-	f.record("start")
-	return f.startErr
+	f.mu.Lock()
+	f.calls = append(f.calls, "start")
+	first := slices.Index(f.calls, "start") == len(f.calls)-1
+	gate := f.startGate
+	f.mu.Unlock()
+
+	if gate == nil {
+		return f.startErr
+	}
+	if first {
+		<-gate
+		return f.startErr
+	}
+	return nil
 }
 func (f *fakeSpeech) StopRecording() (string, error) {
 	f.mu.Lock()
@@ -658,6 +672,26 @@ func TestRecordingClearsAfterAFailedStart(t *testing.T) {
 	h.expectReport(t, h.speech.startErr)
 	if h.dictation.Recording(config.ActionDictate) {
 		t.Fatal("still recording after the start failed")
+	}
+}
+
+func TestASlowFailedStartLeavesTheNextTakeRecording(t *testing.T) {
+	h := newHarness(t, false)
+	h.speech.startErr = errors.New("device busy")
+	h.speech.startGate = make(chan struct{})
+
+	go h.dictation.Dictate(true)
+	h.waitUntil(t, "the first start", func() bool { return len(h.speech.recorded()) == 1 })
+	h.dictation.Dictate(false)
+	h.dictation.Dictate(true)
+	if !h.dictation.Recording(config.ActionDictate) {
+		t.Fatal("test setup: the second press is not recording")
+	}
+
+	close(h.speech.startGate)
+	h.expectReport(t, h.speech.startErr)
+	if !h.dictation.Recording(config.ActionDictate) {
+		t.Fatal("the first take's failure cleared the take recording after it")
 	}
 }
 

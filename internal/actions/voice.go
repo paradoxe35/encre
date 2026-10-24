@@ -48,6 +48,8 @@ type Voice struct {
 	mu sync.Mutex
 	// recording is the action the open take belongs to, or "" when the microphone is closed.
 	recording config.ActionKind
+	// take numbers each start, so a slow one that fails leaves a newer take alone.
+	take      int
 	indicator overlay.Overlay
 	// pending counts takes still transcribing; the indicator stays until they are typed.
 	pending int
@@ -148,6 +150,8 @@ func (d *Voice) start(kind config.ActionKind) {
 		return
 	}
 	d.recording = kind
+	d.take++
+	take := d.take
 	d.mu.Unlock()
 
 	speech := d.config().SpeechSettings()
@@ -156,9 +160,14 @@ func (d *Voice) start(kind config.ActionKind) {
 	}
 	if err := d.service.StartRecording(speech); err != nil {
 		d.mu.Lock()
-		d.recording = ""
+		current := d.take == take
+		if current {
+			d.recording = ""
+		}
 		d.mu.Unlock()
-		d.audio.Restore()
+		if current {
+			d.audio.Restore()
+		}
 		d.fail(kind, err)
 		return
 	}
