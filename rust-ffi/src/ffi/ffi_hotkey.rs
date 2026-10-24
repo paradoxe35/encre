@@ -588,7 +588,10 @@ impl SimpleHotkeyManager {
                     let display = has_x_display();
                     if let Some(problem) = x11_problem(wayland, display) {
                         tracing::warn!("{problem}");
-                        *listen_error.lock() = Some(problem.to_string());
+                        // XWayland still delivers some keys, so only a missing display is a failure.
+                        if !display {
+                            *listen_error.lock() = Some(problem.to_string());
+                        }
                     }
 
                     if !display {
