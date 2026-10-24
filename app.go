@@ -46,8 +46,10 @@ type Application struct {
 	loopStarted atomic.Bool
 	// loopEnded is set once the loop stops: the window system is gone and nothing waits on the UI thread.
 	loopEnded atomic.Bool
-	// tearingDown is set once teardown begins, which a quit from macOS must not wait on.
+	// tearingDown is set once teardown begins and tornDown closed once it ends; a quit from macOS
+	// waits on the second only briefly, as the teardown may be waiting on the thread it runs on.
 	tearingDown atomic.Bool
+	tornDown    chan struct{}
 
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
@@ -78,6 +80,7 @@ func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instanc
 	platform.RegisterNotifier(config.APP_ID, "Encre")
 
 	application := &Application{
+		tornDown:      make(chan struct{}),
 		app:           app,
 		config:        cfg,
 		hotkeyManager: hotkeyManager,
@@ -161,8 +164,13 @@ func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instanc
 		// The UI thread is the one asking, so nothing in the teardown may wait on it.
 		installTerminateHandler(func() {
 			application.loopEnded.Store(true)
-			// A tray Quit already tearing down may be waiting on this thread; the quit goes ahead.
+			// A tray Quit already tearing down may be waiting on this thread; it gets a moment to
+			// give the audio and clipboard back, and the quit goes ahead either way.
 			if application.tearingDown.Load() {
+				select {
+				case <-application.tornDown:
+				case <-time.After(1500 * time.Millisecond):
+				}
 				return
 			}
 			application.teardown()
@@ -524,6 +532,9 @@ func (a *Application) teardown() {
 		a.voice.Close()
 		a.processor.Close()
 		logger.Info("Application stopped")
+		if a.tornDown != nil {
+			close(a.tornDown)
+		}
 	})
 }
 
