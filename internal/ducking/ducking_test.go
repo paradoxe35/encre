@@ -83,6 +83,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	statePath = func() string { return filepath.Join(dir, "ducked-audio.json") }
+	pendingPath = func() string { return filepath.Join(dir, "unrestored-audio.json") }
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
@@ -93,13 +94,66 @@ func saved() bool {
 	return err == nil
 }
 
-func stubRestore(t *testing.T) *[]string {
+func pendingLeft() bool {
+	_, err := os.Stat(pendingPath())
+	return err == nil
+}
+
+type fakeRestore struct {
+	mu    sync.Mutex
+	calls []string
+	// reply is what is left lowered and the error for each call; nil reaches everything.
+	reply func(data string) (string, error)
+}
+
+func (f *fakeRestore) restore(data []byte) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, string(data))
+	if f.reply == nil {
+		return nil, nil
+	}
+	rest, err := f.reply(string(data))
+	if rest == "" {
+		return nil, err
+	}
+	return []byte(rest), err
+}
+
+func (f *fakeRestore) restored() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+func stubRestore(t *testing.T) *fakeRestore {
 	t.Helper()
-	var got []string
+	fake := &fakeRestore{}
 	previous := restoreFound
-	restoreFound = func(data []byte) error { got = append(got, string(data)); return nil }
-	t.Cleanup(func() { restoreFound = previous })
-	return &got
+	restoreFound = fake.restore
+	t.Cleanup(func() {
+		restoreFound = previous
+		os.Remove(statePath())
+		os.Remove(pendingPath())
+	})
+	return fake
+}
+
+func writePendingFile(t *testing.T, left ...pending) {
+	t.Helper()
+	if err := writePending(left); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeCrashed(t *testing.T, data string, at time.Time) {
+	t.Helper()
+	if err := os.WriteFile(statePath(), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(statePath(), at, at); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func waitFor(t *testing.T, what string, done func() bool) {
@@ -253,35 +307,33 @@ func TestCloseForgetsTheSavedLevels(t *testing.T) {
 }
 
 func TestRecoverStalePutsBackWhatACrashLeftLowered(t *testing.T) {
-	restored := stubRestore(t)
-	if err := os.WriteFile(statePath(), []byte(`{"player":0.8}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	fake := stubRestore(t)
+	writeCrashed(t, `{"player":0.8}`, time.Now())
 
 	if err := RecoverStale(); err != nil {
 		t.Fatal(err)
 	}
-	if len(*restored) != 1 || (*restored)[0] != `{"player":0.8}` {
-		t.Fatalf("restored %v", *restored)
+	if got := fake.restored(); len(got) != 1 || got[0] != `{"player":0.8}` {
+		t.Fatalf("restored %v", got)
 	}
-	if saved() {
-		t.Fatal("the saved levels outlived the recovery")
+	if saved() || pendingLeft() {
+		t.Fatalf("after a full recovery saved is %v and pending is %v", saved(), pendingLeft())
 	}
 }
 
 func TestRecoverStaleWithNothingSavedDoesNothing(t *testing.T) {
-	restored := stubRestore(t)
+	fake := stubRestore(t)
 	if err := RecoverStale(); err != nil {
 		t.Fatal(err)
 	}
-	if len(*restored) != 0 {
-		t.Fatalf("restored %v with nothing saved", *restored)
+	if got := fake.restored(); len(got) != 0 {
+		t.Fatalf("restored %v with nothing saved", got)
 	}
 }
 
 // A duck this run is still holding is not a crash's leftover.
 func TestRecoverStaleLeavesALiveDuckAlone(t *testing.T) {
-	restored := stubRestore(t)
+	fake := stubRestore(t)
 	audio := &fakeAudio{}
 	d := ducker(t, audio)
 	d.Lower()
@@ -290,8 +342,134 @@ func TestRecoverStaleLeavesALiveDuckAlone(t *testing.T) {
 	if err := RecoverStale(); err != nil {
 		t.Fatal(err)
 	}
-	if len(*restored) != 0 || !saved() {
-		t.Fatalf("recovered a live duck: restored %v, saved %v", *restored, saved())
+	if got := fake.restored(); len(got) != 0 || !saved() {
+		t.Fatalf("recovered a live duck: restored %v, saved %v", got, saved())
 	}
 	d.Close()
+}
+
+// After a reboot the player may not be open yet: what was not reached is kept and tried again.
+func TestRecoverStaleKeepsWhatItCouldNotReachForLater(t *testing.T) {
+	fake := stubRestore(t)
+	fake.reply = func(string) (string, error) { return `["spotify"]`, nil }
+	writeCrashed(t, `["firefox","spotify"]`, time.Now())
+
+	if err := RecoverStale(); err != nil {
+		t.Fatal(err)
+	}
+	if saved() || !pendingLeft() {
+		t.Fatalf("after a partial recovery saved is %v and pending is %v", saved(), pendingLeft())
+	}
+
+	fake.reply = nil
+	if err := RecoverStale(); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.restored(); len(got) != 2 || got[1] != `["spotify"]` {
+		t.Fatalf("restored %v, want only what was left tried again", got)
+	}
+	if pendingLeft() {
+		t.Fatal("the pending levels outlived their restore")
+	}
+}
+
+func TestRecoverStaleKeepsEverythingWhenTheSoundServerIsNotUp(t *testing.T) {
+	fake := stubRestore(t)
+	fake.reply = func(data string) (string, error) { return data, errors.New("no sound server") }
+	writeCrashed(t, `["spotify"]`, time.Now())
+
+	if err := RecoverStale(); err == nil {
+		t.Fatal("the failure was not reported")
+	}
+	left, err := readPending()
+	if err != nil || len(left) != 1 || string(left[0].Found) != `["spotify"]` {
+		t.Fatalf("pending %v, %v", left, err)
+	}
+	if saved() {
+		t.Fatal("the crash's levels were kept twice")
+	}
+}
+
+// Nothing in levels that do not parse can be restored, so they are not kept.
+func TestRecoverStaleDropsLevelsThatDoNotParse(t *testing.T) {
+	fake := stubRestore(t)
+	fake.reply = func(string) (string, error) { return "", errors.New("unexpected end of JSON input") }
+	writeCrashed(t, `["spot`, time.Now())
+
+	if err := RecoverStale(); err == nil {
+		t.Fatal("the failure was not reported")
+	}
+	if saved() || pendingLeft() {
+		t.Fatalf("unparseable levels kept: saved %v, pending %v", saved(), pendingLeft())
+	}
+}
+
+func TestRecoverStaleDropsAnUnreadablePendingFile(t *testing.T) {
+	fake := stubRestore(t)
+	if err := os.WriteFile(pendingPath(), []byte(`not json`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecoverStale(); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.restored(); len(got) != 0 || pendingLeft() {
+		t.Fatalf("restored %v, pending kept %v", got, pendingLeft())
+	}
+}
+
+// A week on, the app is surely back at a level someone chose: it is let be.
+func TestRecoverStaleGivesUpOnOldLevels(t *testing.T) {
+	fake := stubRestore(t)
+	old := time.Now().Add(-keepPending - time.Hour)
+	writePendingFile(t,
+		pending{Saved: old, Found: []byte(`["old"]`)},
+		pending{Saved: time.Now(), Found: []byte(`["recent"]`)},
+	)
+	writeCrashed(t, `["crashed long ago"]`, old)
+
+	if err := RecoverStale(); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.restored(); len(got) != 1 || got[0] != `["recent"]` {
+		t.Fatalf("restored %v, want only the recent levels", got)
+	}
+	if saved() || pendingLeft() {
+		t.Fatalf("old levels kept: saved %v, pending %v", saved(), pendingLeft())
+	}
+}
+
+func TestLoweringFirstRetriesWhatWasLeftLowered(t *testing.T) {
+	fake := stubRestore(t)
+	audio := &fakeAudio{}
+	var openAtRetry []int
+	fake.reply = func(string) (string, error) {
+		openAtRetry = append(openAtRetry, len(audio.opened()))
+		return "", nil
+	}
+	writePendingFile(t, pending{Saved: time.Now(), Found: []byte(`["spotify"]`)})
+	d := ducker(t, audio)
+
+	d.Lower()
+	waitFor(t, "the levels to be saved", saved)
+	if got := fake.restored(); len(got) != 1 || got[0] != `["spotify"]` {
+		t.Fatalf("restored %v before lowering", got)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(openAtRetry) != 1 || openAtRetry[0] != 0 {
+		t.Fatalf("retried with %v sessions open, want it done before opening", openAtRetry)
+	}
+	if pendingLeft() {
+		t.Fatal("the pending levels outlived their retry")
+	}
+}
+
+func TestLoweringWithNothingPendingRestoresNothing(t *testing.T) {
+	fake := stubRestore(t)
+	d := ducker(t, &fakeAudio{})
+	d.Lower()
+	waitFor(t, "the levels to be saved", saved)
+	if got := fake.restored(); len(got) != 0 {
+		t.Fatalf("restored %v with nothing pending", got)
+	}
 }

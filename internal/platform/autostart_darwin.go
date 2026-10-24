@@ -37,7 +37,7 @@ func (a *autoStart) Enable() error {
 		return err
 	}
 
-	script := fmt.Sprintf(`tell application "System Events" to make new login item with properties {path:"%s", hidden:false} at end`, appPath)
+	script := fmt.Sprintf(`tell application "System Events" to make new login item with properties {path:%s, hidden:false} at end`, appleScriptString(appPath))
 
 	cmd := exec.Command("osascript", "-e", script)
 	output, err := cmd.CombinedOutput()
@@ -61,7 +61,7 @@ func (a *autoStart) Disable() error {
 
 	appName := filepath.Base(appPath)
 
-	script := fmt.Sprintf(`tell application "System Events" to delete login item "%s"`, strings.TrimSuffix(appName, ".app"))
+	script := fmt.Sprintf(`tell application "System Events" to delete login item %s`, appleScriptString(strings.TrimSuffix(appName, ".app")))
 
 	cmd := exec.Command("osascript", "-e", script)
 	output, err := cmd.CombinedOutput()
@@ -83,17 +83,12 @@ func (a *autoStart) IsEnabled() bool {
 		return false
 	}
 
-	script := `tell application "System Events" to get the name of every login item`
+	appName := strings.TrimSuffix(filepath.Base(appPath), ".app")
+	script := fmt.Sprintf(`tell application "System Events" to exists login item %s`, appleScriptString(appName))
 
-	cmd := exec.Command("osascript", "-e", script)
-	output, err := cmd.Output()
+	output, err := exec.Command("osascript", "-e", script).Output()
 	if err != nil {
 		return false
 	}
-
-	appName := filepath.Base(appPath)
-	appName = strings.TrimSuffix(appName, ".app")
-
-	loginItems := string(output)
-	return strings.Contains(loginItems, appName)
+	return strings.TrimSpace(string(output)) == "true"
 }

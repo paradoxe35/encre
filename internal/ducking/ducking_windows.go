@@ -172,13 +172,14 @@ func (s *mixerSession) close() {
 }
 
 // Windows remembers each app's volume, so an app restarted since the crash is raised too.
-func restore(data []byte) error {
+// It returns the sessions it could not reach yet, kept for a later try.
+func restore(data []byte) ([]byte, error) {
 	var saved []mixerLevel
 	if err := json.Unmarshal(data, &saved); err != nil {
-		return err
+		return nil, err
 	}
 	if len(saved) == 0 {
-		return nil
+		return nil, nil
 	}
 	levels := map[string]float32{}
 	for _, level := range saved {
@@ -188,10 +189,11 @@ func restore(data []byte) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if err := coInitialize(); err != nil {
-		return err
+		return data, err
 	}
 	defer ole.CoUninitialize()
 
+	reached := map[string]bool{}
 	var errs []error
 	err := eachSession(func(control *wca.IAudioSessionControl, details *wca.IAudioSessionControl2) {
 		id, ok := sessionIdentifier(details)
@@ -209,12 +211,27 @@ func restore(data []byte) error {
 		defer volume.Release()
 
 		var level float32
-		if volume.GetMasterVolume(&level) != nil || level >= want {
+		if volume.GetMasterVolume(&level) != nil {
 			return
 		}
-		if err := volume.SetMasterVolume(want, nil); err != nil {
-			errs = append(errs, err)
+		if level < want {
+			if err := volume.SetMasterVolume(want, nil); err != nil {
+				errs = append(errs, err)
+				return
+			}
 		}
+		reached[id] = true
 	})
-	return errors.Join(append(errs, err)...)
+	if err != nil {
+		return data, errors.Join(append(errs, err)...)
+	}
+
+	var left []mixerLevel
+	for _, level := range saved {
+		if !reached[level.Session] {
+			left = append(left, level)
+		}
+	}
+	rest, marshalErr := leftOver(left)
+	return rest, errors.Join(append(errs, marshalErr)...)
 }

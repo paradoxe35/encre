@@ -619,11 +619,14 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Encre" Encre.app/Contents/Info.plist
           # macOS only shows the microphone prompt to a bundle that carries a usage description.
           /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Encre listens to the microphone while you hold the dictate shortcut." Encre.app/Contents/Info.plist
+          # Adding Encre to the login items goes through System Events, which macOS asks about first.
+          /usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string Encre uses System Events to add itself to your login items." Encre.app/Contents/Info.plist
           echo "Info.plist contents:"
           /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" Encre.app/Contents/Info.plist
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" Encre.app/Contents/Info.plist
           /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" Encre.app/Contents/Info.plist
           /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" Encre.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :NSAppleEventsUsageDescription" Encre.app/Contents/Info.plist
 
       # A certificate keeps the designated requirement stable, so macOS permissions survive updates;
       # ad-hoc pins it to this build's hash. See scripts/generate-mac-signing-cert.sh

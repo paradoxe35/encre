@@ -94,38 +94,77 @@ func (s *pulseSession) found() any {
 
 func (s *pulseSession) close() { s.client.Close() }
 
-func restore(data []byte) error {
+// restore hands back the streams it could not reach yet, for a later try.
+func restore(data []byte) ([]byte, error) {
 	var saved []pulseStream
 	if err := json.Unmarshal(data, &saved); err != nil {
-		return err
+		return nil, err
 	}
 	if len(saved) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	client, streams, err := sinkInputs()
 	if err != nil {
-		return err
+		return data, err
 	}
 	defer client.Close()
 
-	var errs []error
+	live := make([]pulseStream, 0, len(streams))
 	for _, stream := range streams {
-		volumes, ok := restoredVolumes(saved, streamOf(stream))
+		live = append(live, streamOf(stream))
+	}
+	left, err := restoreStreams(saved, live, func(index uint32, volumes proto.ChannelVolumes) error {
+		err := client.RawRequest(&proto.SetSinkInputVolume{SinkInputIndex: index, ChannelVolumes: volumes}, nil)
+		if errors.Is(err, proto.ErrNoSuchEntity) {
+			return nil
+		}
+		return err
+	})
+	rest, marshalErr := leftOver(left)
+	return rest, errors.Join(err, marshalErr)
+}
+
+// A saved stream no live one matches stays lowered for when its app plays again,
+// unless it has no app name to be recognised by once its process is gone.
+func restoreStreams(saved, live []pulseStream, set func(uint32, proto.ChannelVolumes) error) ([]pulseStream, error) {
+	reached := make([]bool, len(saved))
+	var errs []error
+	for _, now := range live {
+		match := savedMatch(saved, now)
+		if match < 0 {
+			continue
+		}
+		reached[match] = true
+		volumes, ok := raised(saved[match].Volumes, now.Volumes)
 		if !ok {
 			continue
 		}
-		request := &proto.SetSinkInputVolume{SinkInputIndex: stream.SinkInputIndex, ChannelVolumes: volumes}
-		if err := client.RawRequest(request, nil); err != nil && !errors.Is(err, proto.ErrNoSuchEntity) {
+		if err := set(now.Index, volumes); err != nil {
+			reached[match] = false
 			errs = append(errs, err)
 		}
 	}
-	return errors.Join(errs...)
+
+	var left []pulseStream
+	for i, was := range saved {
+		if !reached[i] && was.App != "" {
+			left = append(left, was)
+		}
+	}
+	return left, errors.Join(errs...)
 }
 
 // The same stream, or the same app's new one, which the sound server gives the volume it last had.
-// Only ever raised: a stream louder than saved was turned up since, and is left as it is.
 func restoredVolumes(saved []pulseStream, now pulseStream) (proto.ChannelVolumes, bool) {
+	match := savedMatch(saved, now)
+	if match < 0 {
+		return nil, false
+	}
+	return raised(saved[match].Volumes, now.Volumes)
+}
+
+func savedMatch(saved []pulseStream, now pulseStream) int {
 	match := slices.IndexFunc(saved, func(was pulseStream) bool {
 		return was.Index == now.Index && was.Process == now.Process
 	})
@@ -134,11 +173,12 @@ func restoredVolumes(saved []pulseStream, now pulseStream) (proto.ChannelVolumes
 			return was.App == now.App && len(was.Volumes) == len(now.Volumes)
 		})
 	}
-	if match < 0 || len(now.Volumes) == 0 || len(saved[match].Volumes) != len(now.Volumes) {
-		return nil, false
-	}
-	was := saved[match].Volumes
-	if slices.Max(now.Volumes) >= slices.Max(was) {
+	return match
+}
+
+// Only ever raised: a stream louder than saved was turned up since, and is left as it is.
+func raised(was, now proto.ChannelVolumes) (proto.ChannelVolumes, bool) {
+	if len(now) == 0 || len(was) != len(now) || slices.Max(now) >= slices.Max(was) {
 		return nil, false
 	}
 	return was, true

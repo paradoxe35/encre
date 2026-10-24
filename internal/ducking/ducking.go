@@ -89,6 +89,7 @@ func (d *Ducker) run() {
 	for w := range d.wants {
 		for {
 			if w.lowered && current == nil {
+				retryPending()
 				opened, err := d.open()
 				if err != nil {
 					logger.Warn("Could not lower other audio", "error", err)
@@ -168,8 +169,18 @@ func release(current session) {
 
 var (
 	statePath    = func() string { return utils.AppHomeDir("ducked-audio.json") }
+	pendingPath  = func() string { return utils.AppHomeDir("unrestored-audio.json") }
 	restoreFound = restore
 )
+
+// An app not open again since the crash gets its level back whenever it returns within this.
+const keepPending = 7 * 24 * time.Hour
+
+// pending is a crash's levels that restoreFound could not reach yet.
+type pending struct {
+	Saved time.Time       `json:"saved"`
+	Found json.RawMessage `json:"found"`
+}
 
 // held counts this process's live ducks, whose saved levels are not a crash's leftover.
 var state struct {
@@ -216,6 +227,7 @@ func writePrivate(path string, data []byte) error {
 }
 
 // RecoverStale puts back other audio that a crashed or killed run left lowered.
+// What it cannot reach yet, such as an app not open again, is kept and tried here and before each lowering.
 // It does nothing when no levels were left behind or a duck in this process is holding them.
 func RecoverStale() error {
 	state.Lock()
@@ -223,18 +235,111 @@ func RecoverStale() error {
 	if state.held > 0 {
 		return nil
 	}
+	return recoverLocked()
+}
 
-	data, err := os.ReadFile(statePath())
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+// Before opening, so the levels found are not ones a retry is about to raise.
+func retryPending() {
+	state.Lock()
+	defer state.Unlock()
+	if _, err := os.Stat(pendingPath()); state.held > 0 || err != nil {
+		return
 	}
+	if err := recoverLocked(); err != nil {
+		logger.Warn("Could not restore audio an earlier run left lowered", "error", err)
+	}
+}
+
+func recoverLocked() error {
+	left, err := readPending()
 	if err != nil {
 		return err
 	}
-
-	err = restoreFound(data)
-	if removeErr := os.Remove(statePath()); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
-		err = errors.Join(err, removeErr)
+	crashed, err := readCrashed()
+	if err != nil {
+		return err
 	}
-	return err
+	if crashed != nil {
+		left = append(left, *crashed)
+	}
+
+	var errs []error
+	kept := left[:0]
+	for _, p := range left {
+		if time.Since(p.Saved) > keepPending {
+			continue
+		}
+		rest, err := restoreFound(p.Found)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if len(rest) > 0 {
+			kept = append(kept, pending{Saved: p.Saved, Found: rest})
+		}
+	}
+
+	if err := writePending(kept); err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	if crashed != nil {
+		if err := os.Remove(statePath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// A file that does not parse is dropped: there is nothing in it to restore.
+func readPending() ([]pending, error) {
+	data, err := os.ReadFile(pendingPath())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var left []pending
+	if err := json.Unmarshal(data, &left); err != nil {
+		logger.Warn("Dropping unreadable audio levels left to restore", "error", err)
+		return nil, nil
+	}
+	return left, nil
+}
+
+// The file's time is when the crashed run lowered the audio.
+func readCrashed() (*pending, error) {
+	info, err := os.Stat(statePath())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(statePath())
+	if err != nil {
+		return nil, err
+	}
+	return &pending{Saved: info.ModTime(), Found: data}, nil
+}
+
+func writePending(left []pending) error {
+	if len(left) == 0 {
+		if err := os.Remove(pendingPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	data, err := json.Marshal(left)
+	if err != nil {
+		return err
+	}
+	return writePrivate(pendingPath(), data)
+}
+
+// leftOver is what a restore hands back as still lowered: nothing once every level was reached.
+func leftOver[T any](levels []T) ([]byte, error) {
+	if len(levels) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(levels)
 }

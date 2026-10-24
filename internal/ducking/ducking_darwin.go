@@ -71,30 +71,31 @@ func (s *outputSession) found() any {
 func (s *outputSession) close() {}
 
 // Only the same output, and only ever raised: a volume turned up since is left as it is.
-func restore(data []byte) error {
+// While another output is in use, or on failure, the level is handed back to be tried again later.
+func restore(data []byte) ([]byte, error) {
 	var saved outputLevel
 	if err := json.Unmarshal(data, &saved); err != nil {
-		return err
+		return nil, err
 	}
 
 	var device C.AudioObjectID
 	if status := C.encre_default_output(&device); status != 0 {
-		return coreAudioError("finding the output device", status)
+		return data, coreAudioError("finding the output device", status)
 	}
 	if uint32(device) != saved.Device {
-		return nil
+		return data, nil
 	}
 	var volume C.Float32
 	if status := C.encre_get_volume(device, &volume); status != 0 {
-		return coreAudioError("reading the output volume", status)
+		return data, coreAudioError("reading the output volume", status)
 	}
 	if float32(volume) >= saved.Volume {
-		return nil
+		return nil, nil
 	}
 	if status := C.encre_set_volume(device, C.Float32(saved.Volume)); status != 0 {
-		return coreAudioError("setting the output volume", status)
+		return data, coreAudioError("setting the output volume", status)
 	}
-	return nil
+	return nil, nil
 }
 
 func coreAudioError(action string, status C.OSStatus) error {

@@ -13,28 +13,17 @@ import (
 
 type autoStart struct{}
 
-// Quoting and escaping per the XDG desktop entry spec for the Exec field.
+var (
+	execQuoted = strings.NewReplacer(`"`, `\"`, "`", "\\`", `$`, `\$`, `\`, `\\`)
+	entryValue = strings.NewReplacer(`\`, `\\`, "\n", `\n`, "\t", `\t`, "\r", `\r`, `%`, `%%`)
+)
+
+// escapeExecPath quotes the path as an Exec argument, then escapes it as a desktop entry string, per the XDG spec.
 func escapeExecPath(path string) string {
-	reservedChars := " \t\n\"'\\><~|&;$*?#()`"
-	needsQuoting := false
-	for _, char := range reservedChars {
-		if strings.ContainsRune(path, char) {
-			needsQuoting = true
-			break
-		}
+	if strings.ContainsAny(path, " \t\n\"'\\><~|&;$*?#()`") {
+		path = `"` + execQuoted.Replace(path) + `"`
 	}
-
-	if !needsQuoting {
-		return path
-	}
-
-	escaped := path
-	escaped = strings.ReplaceAll(escaped, `\`, `\\`) // backslash first
-	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
-	escaped = strings.ReplaceAll(escaped, "`", "\\`")
-	escaped = strings.ReplaceAll(escaped, `$`, `\$`)
-
-	return fmt.Sprintf(`"%s"`, escaped)
+	return entryValue.Replace(path)
 }
 
 func (a *autoStart) Enable() error {
