@@ -2,6 +2,8 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -125,5 +127,59 @@ func TestClaudeThinkingIsSentBackBeforeItsToolCall(t *testing.T) {
 		`{"type":"tool_use","id":"call_1","name":"get_weather","input":{"place":"Paris"}}]}`
 	if !strings.Contains(string(body), want) {
 		t.Fatalf("request lacks %s\n%s", want, body)
+	}
+}
+
+// A key rotated in settings rebuilds the provider; what a refusal taught must not carry the old key.
+func TestARelaxedEndpointSendsTheCurrentKey(t *testing.T) {
+	refusal := status(http.StatusBadRequest, `{"type":"error","error":{"type":"invalid_request_error","message":"temperature is deprecated for this model."}}`)
+	var keys []string
+	var temperatures []bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, sent := body["temperature"]
+		keys = append(keys, r.Header.Get("x-api-key"))
+		temperatures = append(temperatures, sent)
+		if len(keys) == 1 {
+			refusal(w, r)
+			return
+		}
+		claudeOK(w, r)
+	}))
+	defer server.Close()
+
+	for _, key := range []string{"old-key", "new-key"} {
+		p, err := FromSettings(config.BuiltInClaude, config.ProviderSettings{BaseURL: server.URL, Model: "claude-rotated-key", Temperature: 0.3}, key, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text, err := complete(t, p); err != nil || text != "ok" {
+			t.Fatalf("%s: got %q, %v", key, text, err)
+		}
+	}
+	if strings.Join(keys, ",") != "old-key,old-key,new-key" {
+		t.Fatalf("keys sent = %v, want the new key once rotated", keys)
+	}
+	if !temperatures[0] || temperatures[1] || temperatures[2] {
+		t.Fatalf("temperature sent = %v, want only the first try to carry it", temperatures)
+	}
+}
+
+func TestAReplyThatFillsTheContextWindowIsCutOff(t *testing.T) {
+	streamed := httptest.NewServer(sse(
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Bon"}}`,
+		`{"type":"message_delta","delta":{"stop_reason":"model_context_window_exceeded"}}`,
+		`{"type":"message_stop"}`,
+	))
+	defer streamed.Close()
+	if _, text, err := stream(t, claude(t, streamed.URL, "claude-test", 0)); !errors.Is(err, errLengthLimit) || text != "Bon" {
+		t.Fatalf("stream kept %q with %v", text, err)
+	}
+
+	whole := httptest.NewServer(reply(`{"content":[{"type":"text","text":"Bon"}],"stop_reason":"model_context_window_exceeded"}`))
+	defer whole.Close()
+	if text, err := complete(t, claude(t, whole.URL, "claude-test", 0)); !errors.Is(err, errLengthLimit) || text != "" {
+		t.Fatalf("whole reply kept %q with %v", text, err)
 	}
 }

@@ -148,21 +148,38 @@ func streamingRefused(err error) bool {
 // Endpoint/model pairs whose 400 named a setting they refuse, sent without it until the app restarts.
 var relaxedEndpoints sync.Map
 
+// What a refusal taught about an endpoint; the key and settings stay the provider's own.
+type relaxation struct {
+	dropTemperature bool
+	maxTokens       int
+}
+
+func (r relaxation) apply(target endpoint) endpoint {
+	if r.dropTemperature {
+		target.temperature = defaultTemperature
+	}
+	if r.maxTokens > 0 && (target.maxTokens == 0 || r.maxTokens < target.maxTokens) {
+		target.maxTokens = r.maxTokens
+	}
+	return target
+}
+
 // A refused setting is retried once without it, and remembered only once the retry succeeds.
 func (p *provider) send(ctx context.Context, prompt Prompt, stream, lowReasoning bool) (*http.Response, error) {
 	key := p.endpoint.baseURL + "::" + p.endpoint.model
-	target := p.endpoint
-	if known, ok := relaxedEndpoints.Load(key); ok {
-		target = known.(endpoint)
+	var known relaxation
+	if learned, ok := relaxedEndpoints.Load(key); ok {
+		known = learned.(relaxation)
 	}
+	target := known.apply(p.endpoint)
 	resp, err := p.post(ctx, target, prompt, stream, lowReasoning)
-	retry, ok := relaxed(target, err)
+	learned, ok := relaxed(target, known, err)
 	if !ok {
 		return resp, err
 	}
-	resp, err = p.post(ctx, retry, prompt, stream, lowReasoning)
+	resp, err = p.post(ctx, learned.apply(p.endpoint), prompt, stream, lowReasoning)
 	if err == nil {
-		relaxedEndpoints.Store(key, retry)
+		relaxedEndpoints.Store(key, learned)
 	}
 	return resp, err
 }
@@ -170,23 +187,23 @@ func (p *provider) send(ctx context.Context, prompt Prompt, stream, lowReasoning
 var outputLimit = regexp.MustCompile(`max_tokens: \d+ > (\d+)`)
 
 // Current Claude models refuse any temperature, and older ones a max_tokens above their output limit.
-func relaxed(target endpoint, err error) (endpoint, bool) {
+func relaxed(target endpoint, known relaxation, err error) (relaxation, bool) {
 	if !refusedRequest(err) {
-		return target, false
+		return known, false
 	}
 	message := strings.ToLower(err.Error())
 	if strings.Contains(message, "temperature") && target.temperature != defaultTemperature {
-		target.temperature = defaultTemperature
-		return target, true
+		known.dropTemperature = true
+		return known, true
 	}
 	if match := outputLimit.FindStringSubmatch(message); match != nil {
 		limit, _ := strconv.Atoi(match[1])
 		if limit > 0 && (target.maxTokens == 0 || limit < target.maxTokens) {
-			target.maxTokens = limit
-			return target, true
+			known.maxTokens = limit
+			return known, true
 		}
 	}
-	return target, false
+	return known, false
 }
 
 // Returns only a successful response, so a stream never starts on an error.

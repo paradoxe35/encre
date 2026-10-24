@@ -49,7 +49,7 @@ type geminiInlineData struct {
 }
 
 type geminiGenerConfig struct {
-	Temperature    float64               `json:"temperature"`
+	Temperature    *float64              `json:"temperature,omitempty"`
 	ThinkingConfig *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
@@ -171,7 +171,7 @@ func geminiPromptFor(language string) string {
 }
 
 func sendGemini(ctx context.Context, cfg config.SpeechConfig, request geminiRequest, quiet bool) (string, error) {
-	request.GenerationConfig = &geminiGenerConfig{Temperature: 0}
+	request.GenerationConfig = &geminiGenerConfig{Temperature: temperatureFor(cfg.RemoteModel)}
 	if quiet {
 		request.GenerationConfig.ThinkingConfig = thinkingConfigFor(cfg.RemoteModel)
 	}
@@ -181,6 +181,15 @@ func sendGemini(ctx context.Context, cfg config.SpeechConfig, request geminiRequ
 		return "", err
 	}
 	return parseGeminiResponse(body)
+}
+
+// Gemini 3 below its default temperature of 1 may loop, repeating a phrase until the output limit.
+func temperatureFor(model string) *float64 {
+	if geminiMajorVersion(model) >= 3 {
+		return nil
+	}
+	zero := 0.0
+	return &zero
 }
 
 func postGemini(ctx context.Context, cfg config.SpeechConfig, path string, request any) ([]byte, error) {
@@ -245,6 +254,10 @@ func parseGeminiResponse(body []byte) (string, error) {
 	transcript := strings.TrimSpace(text.String())
 	if transcript == "" && candidate.FinishReason != "" && candidate.FinishReason != "STOP" {
 		return "", fmt.Errorf("Gemini returned no transcript (%s)", candidate.FinishReason)
+	}
+	// A transcript at the output limit is usually one phrase looped, not speech worth typing.
+	if candidate.FinishReason == "MAX_TOKENS" {
+		return "", errors.New("Gemini cut the transcript off at its output limit (MAX_TOKENS)")
 	}
 
 	return transcript, nil

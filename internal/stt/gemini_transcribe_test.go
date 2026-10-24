@@ -303,16 +303,51 @@ func TestGeminiReportsAnEmptyAnswer(t *testing.T) {
 	}
 }
 
-// Truncated is still better than lost: keep what came back.
-func TestGeminiKeepsTruncatedText(t *testing.T) {
-	body := `{"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[{"text":"half a sen"}]}}]}`
+// A looping model fills the output allowance; typing the loop would be worse than an error.
+func TestGeminiRefusesTruncatedText(t *testing.T) {
+	body := `{"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[{"text":"bonjour bonjour bonjour"}]}}]}`
 
 	text, err := parseGeminiResponse([]byte(body))
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "MAX_TOKENS") {
+		t.Fatalf("err = %v, want the cut-off reported", err)
 	}
-	if text != "half a sen" {
-		t.Errorf("text = %q", text)
+	if text != "" {
+		t.Errorf("text = %q, want nothing typed", text)
+	}
+}
+
+// Gemini 3 is meant to run at its default temperature; 2.x transcribes most faithfully at 0.
+func TestGeminiTemperatureMatchesModelGeneration(t *testing.T) {
+	cases := map[string]any{
+		"gemini-3.8-flash": nil,
+		"gemini-3-pro":     nil,
+		"gemini-2.5-flash": 0.0,
+		"my-custom-model":  0.0,
+	}
+
+	for model, want := range cases {
+		var sent map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			json.Unmarshal(body, &sent)
+			io.WriteString(w, `{"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"ok"}]}}]}`)
+		}))
+		cfg := geminiConfig(server.URL)
+		cfg.RemoteModel = model
+		_, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2})
+		server.Close()
+		if err != nil {
+			t.Fatalf("%s: %v", model, err)
+		}
+
+		generation, _ := sent["generationConfig"].(map[string]any)
+		got, has := generation["temperature"]
+		if want == nil && has {
+			t.Errorf("%s: sent temperature %v, want the default left alone", model, got)
+		}
+		if want != nil && got != want {
+			t.Errorf("%s: temperature = %v, want %v", model, got, want)
+		}
 	}
 }
 

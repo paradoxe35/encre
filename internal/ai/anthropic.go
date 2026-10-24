@@ -110,7 +110,7 @@ type messagesReply struct {
 
 func anthropicStop(reason string) error {
 	switch reason {
-	case "max_tokens":
+	case "max_tokens", "model_context_window_exceeded":
 		return errLengthLimit
 	case "refusal":
 		return errRefused
