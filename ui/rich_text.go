@@ -450,6 +450,9 @@ func tableCell(th fyne.Theme, variant fyne.ThemeVariant, segments []widget.RichT
 	var texts []fyne.CanvasObject
 	for _, segment := range segments {
 		if link, ok := segment.(*widget.HyperlinkSegment); ok {
+			segment = safeLink(link)
+		}
+		if link, ok := segment.(*widget.HyperlinkSegment); ok {
 			texts = append(texts, widget.NewHyperlink(link.Text, link.URL))
 			continue
 		}

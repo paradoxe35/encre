@@ -1151,3 +1151,24 @@ func TestTasksAndRulesTakeTheCardsColoursAndCannotBeTicked(t *testing.T) {
 		t.Errorf("copying the tasks gave %q", got)
 	}
 }
+
+func TestATableLinkOpensOnlyWebAddresses(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "Q", "| a | b |\n|---|---|\n| [web](https://example.com) | [file](file:///etc/passwd) [share](smb://host/share) |")
+
+	var links []string
+	for _, segment := range card.content.Segments {
+		table, ok := segment.(*cardTable)
+		if !ok {
+			continue
+		}
+		for _, object := range test.LaidOutObjects(table.Visual()) {
+			if link, ok := object.(*widget.Hyperlink); ok {
+				links = append(links, link.URL.String())
+			}
+		}
+	}
+	if len(links) != 1 || links[0] != "https://example.com" {
+		t.Fatalf("the table's links are %v, want only https://example.com", links)
+	}
+}
