@@ -536,22 +536,12 @@ func (p *Processor) parseProviderMention(cfg *config.Config, text string) (provi
 	}
 
 	mention, rest, _ := strings.Cut(trimmed, " ")
-	name, found := findProvider(cfg, strings.TrimPrefix(mention, "@"))
+	name, found := cfg.FindProvider(strings.TrimPrefix(mention, "@"))
 	if !found {
 		return "", text
 	}
 
 	return name, strings.TrimSpace(rest)
-}
-
-// Matches case-insensitively and returns the stored spelling.
-func findProvider(cfg *config.Config, name string) (string, bool) {
-	for stored := range cfg.AIProvider.Providers {
-		if strings.EqualFold(stored, name) {
-			return stored, true
-		}
-	}
-	return "", false
 }
 
 // limited names what an operation's character limit applies to.

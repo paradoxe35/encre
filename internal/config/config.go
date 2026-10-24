@@ -414,6 +414,18 @@ func BuiltInProviders() []string {
 }
 
 // canonicalProviderName is the built-in a name spells, in any case, or empty.
+// FindProvider matches case-insensitively and returns the stored spelling.
+func (c *Config) FindProvider(name string) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for stored := range c.AIProvider.Providers {
+		if strings.EqualFold(stored, name) {
+			return stored, true
+		}
+	}
+	return "", false
+}
+
 func canonicalProviderName(name string) string {
 	for _, p := range BuiltInProviders() {
 		if strings.EqualFold(p, name) {

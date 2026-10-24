@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -171,5 +172,24 @@ func TestAFallbackNeverOverwritesAConfigItCouldNotLoad(t *testing.T) {
 	}
 	if err := Fallback(os.ErrPermission).Save(); err != nil {
 		t.Fatalf("with no file left to keep, the defaults should save: %v", err)
+	}
+}
+
+func TestFindingAProviderWhileSettingsChangeIsSafe(t *testing.T) {
+	cfg := Default()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := range 200 {
+			cfg.SetProviderSettings(fmt.Sprintf("custom-%d", i), ProviderSettings{})
+		}
+	}()
+	for range 200 {
+		cfg.FindProvider("OPENAI")
+	}
+	wg.Wait()
+	if name, ok := cfg.FindProvider("Custom-7"); !ok || name != "custom-7" {
+		t.Fatalf("found %q, %v", name, ok)
 	}
 }
