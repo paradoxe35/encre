@@ -53,7 +53,6 @@ func (m *ModelList) build() {
 	m.list = widget.NewList(m.count, m.template, m.update)
 	m.empty = widget.NewLabel("")
 	m.empty.Alignment = fyne.TextAlignCenter
-	m.empty.Importance = widget.LowImportance
 	m.empty.Hide()
 
 	m.search = widget.NewEntry()

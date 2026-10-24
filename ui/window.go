@@ -82,7 +82,8 @@ type MainWindow struct {
 	speechRemoteURL     *widget.Entry
 	speechRemoteKey     *widget.Entry
 	speechRemoteForm    *widget.Form
-	actionsAccordion    *widget.Accordion
+	// Tabs not on screen at a theme change, which Fyne leaves in the old theme until re-applied.
+	themeStale          map[*container.TabItem]bool
 	speechKeyUnreadable bool
 	// The key and endpoint typed for each service, so one service's key is never sent to another.
 	speechServiceDrafts map[string]speechServiceDraft
@@ -262,6 +263,10 @@ func (w *MainWindow) createContent() fyne.CanvasObject {
 
 func (w *MainWindow) onTabSelected(tab *container.TabItem) {
 	w.stopCaptures()
+	if w.themeStale[tab] {
+		delete(w.themeStale, tab)
+		w.app.Settings().SetTheme(w.app.Settings().Theme())
+	}
 	// History shows other tabs' activity, so it re-reads on every visit.
 	if tab.Text == "History" {
 		fyne.Do(w.refreshHistory)

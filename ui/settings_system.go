@@ -112,11 +112,13 @@ func (w *MainWindow) createPasteShortcutControls() fyne.CanvasObject {
 
 func (w *MainWindow) applyTheme(themeName string) {
 	w.app.Settings().SetTheme(newAppTheme(themeVariant(themeName)))
-	// Fyne re-themes only what is on screen, and an accordion's refresh skips its sections, so the
-	// Actions forms would keep the old colours until reopened.
-	if w.actionsAccordion != nil {
-		for _, item := range w.actionsAccordion.Items {
-			item.Detail.Refresh()
+	if w.tabs == nil {
+		return
+	}
+	w.themeStale = make(map[*container.TabItem]bool)
+	for _, tab := range w.tabs.Items {
+		if tab != w.tabs.Selected() {
+			w.themeStale[tab] = true
 		}
 	}
 }
