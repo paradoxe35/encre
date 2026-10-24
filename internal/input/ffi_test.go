@@ -172,6 +172,30 @@ func TestFFIClipboardRefusesUseAfterClose(t *testing.T) {
 	}
 }
 
+// An update that could not start the new copy frees the clipboard, then carries on with it.
+func TestFFIClipboardReopensAfterClose(t *testing.T) {
+	requireDisplay(t)
+	clipboard, err := NewFFIClipboardManager()
+	if err != nil {
+		t.Fatalf("Failed to create clipboard: %v", err)
+	}
+	defer clipboard.Close()
+
+	clipboard.Close()
+	if err := clipboard.Reopen(); err != nil {
+		t.Fatalf("Reopen failed: %v", err)
+	}
+	if err := clipboard.Reopen(); err != nil {
+		t.Fatalf("Reopening an open clipboard failed: %v", err)
+	}
+	if err := clipboard.SetText("back"); err != nil {
+		t.Fatalf("SetText after Reopen: %v", err)
+	}
+	if text, ok := await(clipboard.text); !ok || text != "back" {
+		t.Fatalf("read %q, %v after Reopen", text, ok)
+	}
+}
+
 // An empty clipboard is the normal state while awaiting a copy, not a failure.
 func TestFFIClipboardEmptyIsNotAFailure(t *testing.T) {
 	requireDisplay(t)

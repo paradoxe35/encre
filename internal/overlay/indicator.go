@@ -46,7 +46,7 @@ type Indicator struct {
 	failedAt time.Time
 }
 
-// runOnMain must run its argument on the UI thread and wait for it.
+// runOnMain must run its argument on the UI thread and wait for it, or skip it once that thread is gone.
 func New(runOnMain func(func())) *Indicator {
 	return newIndicator(runOnMain, openSurface, time.Now, frameInterval)
 }
@@ -105,15 +105,22 @@ func (i *Indicator) Level(rms float32) {
 // Waits for the window to be gone; call before the window system goes away, and off the UI thread,
 // which the window needs in order to close.
 func (i *Indicator) Close() {
-	i.mu.Lock()
-	i.closing = true
-	clear(i.owners)
-	done := i.done
-	i.mu.Unlock()
-
-	if done != nil {
+	if done := i.stop(); done != nil {
 		<-done
 	}
+}
+
+// Abandon ends the indicator without waiting, for once the UI thread is gone and nothing could close the window.
+func (i *Indicator) Abandon() {
+	i.stop()
+}
+
+func (i *Indicator) stop() chan struct{} {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.closing = true
+	clear(i.owners)
+	return i.done
 }
 
 func (i *Indicator) startLocked() {
@@ -138,15 +145,25 @@ func (i *Indicator) snapshot() (wanted, closing bool, phase Phase, level float32
 // animate owns the surface from the first frame to the end of the fade-out.
 func (i *Indicator) animate(done chan struct{}) {
 	defer close(done)
+	// The window system can go away under a frame as the app quits.
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Warn("Indicator stopped", "error", r)
+			i.failed()
+		}
+	}()
 
 	var target surface
 	var openErr error
 	i.runOnMain(func() { target, openErr = i.open() })
 	if openErr != nil {
 		logger.Warn("Indicator unavailable", "error", openErr)
+		i.failed()
+		return
+	}
+	if target == nil {
 		i.mu.Lock()
 		i.running = false
-		i.failedAt = i.now()
 		i.mu.Unlock()
 		return
 	}
@@ -186,6 +203,13 @@ func (i *Indicator) animate(done chan struct{}) {
 	i.running = false
 	i.startLocked()
 	i.mu.Unlock()
+}
+
+func (i *Indicator) failed() {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.running = false
+	i.failedAt = i.now()
 }
 
 func fade(alpha float64, in bool, dt time.Duration) float64 {

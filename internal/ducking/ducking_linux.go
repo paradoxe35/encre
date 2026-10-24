@@ -176,9 +176,12 @@ func savedMatch(saved []pulseStream, now pulseStream) int {
 	return match
 }
 
-// Only ever raised: a stream louder than saved was turned up since, and is left as it is.
+// Only a stream still at its ducked level is raised: one set elsewhere since is left as it is.
 func raised(was, now proto.ChannelVolumes) (proto.ChannelVolumes, bool) {
-	if len(now) == 0 || len(was) != len(now) || slices.Max(now) >= slices.Max(was) {
+	if len(now) == 0 || len(was) != len(now) || slices.Max(was) == 0 {
+		return nil, false
+	}
+	if !stillDucked(math.Pow(float64(slices.Max(now))/float64(slices.Max(was)), 3)) {
 		return nil, false
 	}
 	return was, true

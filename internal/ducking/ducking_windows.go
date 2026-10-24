@@ -172,6 +172,7 @@ func (s *mixerSession) close() {
 }
 
 // Windows remembers each app's volume, so an app restarted since the crash is raised too.
+// A session no longer at its ducked level was set since and is left as it is.
 // It returns the sessions it could not reach yet, kept for a later try.
 func restore(data []byte) ([]byte, error) {
 	var saved []mixerLevel
@@ -214,7 +215,7 @@ func restore(data []byte) ([]byte, error) {
 		if volume.GetMasterVolume(&level) != nil {
 			return
 		}
-		if level < want {
+		if stillDucked(float64(level) / float64(want)) {
 			if err := volume.SetMasterVolume(want, nil); err != nil {
 				errs = append(errs, err)
 				return

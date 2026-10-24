@@ -4,6 +4,7 @@ import (
 	"errors"
 	"image"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -394,5 +395,102 @@ func TestAShowDuringTheFadeOutIsHonouredWithoutForcingIt(t *testing.T) {
 		if _, closed := surface.state(); !closed {
 			t.Fatalf("surface %d was left open", n)
 		}
+	}
+}
+
+// gatedMain runs work like the app's UI thread does, and skips it once the loop has ended.
+type gatedMain struct {
+	ended atomic.Bool
+}
+
+func (g *gatedMain) run(f func()) {
+	if !g.ended.Load() {
+		f()
+	}
+}
+
+// deadSurface panics as GLFW does once the window system is terminated.
+type deadSurface struct {
+	fakeSurface
+	dead atomic.Bool
+}
+
+func (d *deadSurface) Present(frame *image.RGBA) {
+	if d.dead.Load() {
+		panic("glfw: the GLFW library is not initialized")
+	}
+	d.fakeSurface.Present(frame)
+}
+
+func (d *deadSurface) Close() {
+	if d.dead.Load() {
+		panic("glfw: the GLFW library is not initialized")
+	}
+	d.fakeSurface.Close()
+}
+
+func newDeadSurface() *deadSurface {
+	clock := time.Now()
+	return &deadSurface{fakeSurface: fakeSurface{clock: &clock}}
+}
+
+func (i *Indicator) state() (running bool, failedAt time.Time) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.running, i.failedAt
+}
+
+func waitStopped(t *testing.T, i *Indicator) {
+	t.Helper()
+	(&bench{}).waitUntil(t, "the animation to stop", func() bool { running, _ := i.state(); return !running })
+}
+
+func waitFrame(t *testing.T, s *deadSurface) {
+	t.Helper()
+	(&bench{}).waitUntil(t, "a frame", func() bool { alphas, _ := s.state(); return len(alphas) > 0 })
+}
+
+// A signal ends Fyne's loop under a showing indicator; it must stop without touching the dead window.
+func TestAfterTheLoopEndsTheWindowIsLeftAlone(t *testing.T) {
+	main := &gatedMain{}
+	s := newDeadSurface()
+	i := newIndicator(main.run, func() (surface, error) { return s, nil }, time.Now, time.Millisecond)
+	i.Owner().Show(Listening)
+	waitFrame(t, s)
+
+	main.ended.Store(true)
+	s.dead.Store(true)
+	i.Abandon()
+	waitStopped(t, i)
+	if _, failedAt := i.state(); !failedAt.IsZero() {
+		t.Fatal("the terminated window was touched")
+	}
+}
+
+// Between Fyne terminating the window system and the app noticing, a frame can still get through.
+func TestAFrameOnATerminatedWindowSystemStopsTheIndicator(t *testing.T) {
+	s := newDeadSurface()
+	i := newIndicator(func(f func()) { f() }, func() (surface, error) { return s, nil }, time.Now, time.Millisecond)
+	i.Owner().Show(Listening)
+	waitFrame(t, s)
+
+	s.dead.Store(true)
+	waitStopped(t, i)
+	if _, failedAt := i.state(); failedAt.IsZero() {
+		t.Fatal("the failed frame was not noted")
+	}
+	i.Close()
+}
+
+func TestAShowAfterTheLoopEndsOpensNothing(t *testing.T) {
+	main := &gatedMain{}
+	main.ended.Store(true)
+	var opened atomic.Bool
+	i := newIndicator(main.run, func() (surface, error) { opened.Store(true); return nil, nil }, time.Now, time.Millisecond)
+	i.Owner().Show(Listening)
+	waitStopped(t, i)
+	i.Close()
+	if opened.Load() {
+		t.Fatal("a window was opened after the loop ended")
 	}
 }

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -59,5 +61,28 @@ func TestConcurrentReloadsAreSafe(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("reloads deadlocked")
+	}
+}
+
+// Fyne only catches SIGINT and SIGTERM once its loop runs; one arriving earlier must still stop the app.
+func TestSignalsStopTheAppWhoeverIsListening(t *testing.T) {
+	cases := []struct {
+		signal      os.Signal
+		loopStarted bool
+		stop, quit  bool
+	}{
+		{syscall.SIGHUP, true, true, false},
+		{syscall.SIGHUP, false, true, false},
+		{syscall.SIGTERM, true, false, false},
+		{os.Interrupt, true, false, false},
+		{syscall.SIGTERM, false, false, true},
+		{os.Interrupt, false, false, true},
+	}
+	for _, c := range cases {
+		var stopped, quit bool
+		onSignal(c.signal, c.loopStarted, func() { stopped = true }, func() { quit = true })
+		if stopped != c.stop || quit != c.quit {
+			t.Errorf("%v with the loop started %v: stopped %v, quit %v", c.signal, c.loopStarted, stopped, quit)
+		}
 	}
 }

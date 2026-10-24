@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/ducking"
@@ -82,9 +83,17 @@ func stopOnSignal(application *Application) {
 		logger.Info("Stopping on signal", "signal", received.String())
 		// A second signal kills outright if stopping hangs.
 		signal.Reset(os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-		// Fyne quits on the others itself, and Start cleans up once its loop ends.
-		if received == syscall.SIGHUP {
-			application.Stop()
-		}
+		onSignal(received, application.loopStarted.Load(), application.Stop, func() { fyne.Do(application.app.Quit) })
 	}()
+}
+
+// Fyne quits on SIGINT and SIGTERM itself once its loop runs, and Start cleans up once the loop ends.
+// Before that the quit is queued, so the loop ends as it starts and Start's teardown does not race Start.
+func onSignal(received os.Signal, loopStarted bool, stop, quit func()) {
+	switch {
+	case received == syscall.SIGHUP:
+		stop()
+	case !loopStarted:
+		quit()
+	}
 }

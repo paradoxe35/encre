@@ -19,6 +19,9 @@ import (
 // Other audio drops by 18 dB: clearly in the background, still there.
 var gain = math.Pow(10, -18.0/20)
 
+// A restore raises only what still sits within this of its ducked level; further off, someone chose it since.
+const duckedSlackDB = 3.0
+
 const (
 	fadeDown = 400 * time.Millisecond
 	fadeUp   = 800 * time.Millisecond
@@ -160,6 +163,11 @@ func between(from, to, t float64) float64 {
 	eased := t * t * (3 - 2*t)
 	fromDB, toDB := 20*math.Log10(from), 20*math.Log10(to)
 	return math.Pow(10, (fromDB+(toDB-fromDB)*eased)/20)
+}
+
+// share is the amplitude now over the amplitude found when lowering began.
+func stillDucked(share float64) bool {
+	return math.Abs(20*math.Log10(share/gain)) <= duckedSlackDB
 }
 
 func release(current session) {

@@ -57,6 +57,13 @@ func TestClosingTheOverlayAfterTheLoopDoesNotWait(t *testing.T) {
 	}
 }
 
+// Fyne runs work handed to it after its loop on the caller, where GLFW is already terminated.
+func TestTheOverlayRunsNothingOnMainAfterTheLoop(t *testing.T) {
+	app := &Application{}
+	app.loopEnded.Store(true)
+	app.onMain(func() { t.Fatal("ran on a loop that had ended") })
+}
+
 // The tray runs Quit on the UI thread, and closing the indicator needs that thread.
 func TestTrayQuitDoesNotWaitOnTheUIThread(t *testing.T) {
 	main := newFakeMain(t)

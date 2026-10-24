@@ -471,3 +471,16 @@ func TestLoweringWithNothingPendingRestoresNothing(t *testing.T) {
 		t.Fatalf("restored %v with nothing pending", got)
 	}
 }
+
+func TestStillDuckedOnlyNearTheDuckedLevel(t *testing.T) {
+	for _, share := range []float64{gain, gain * 1.2, gain / 1.2} {
+		if !stillDucked(share) {
+			t.Errorf("share %v counted as set since", share)
+		}
+	}
+	for _, share := range []float64{0, gain / 2, gain * 2, 0.5, 1, 1.5} {
+		if stillDucked(share) {
+			t.Errorf("share %v counted as still ducked", share)
+		}
+	}
+}

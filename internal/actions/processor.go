@@ -214,8 +214,13 @@ func (p *Processor) Halt() {
 	}
 }
 
-// Resume undoes Halt, for when the copy meant to replace this one never started.
+// Resume undoes Halt or Close, for when the copy meant to replace this one never started.
 func (p *Processor) Resume() {
+	if p.clipboardManager != nil {
+		if err := p.clipboardManager.Reopen(); err != nil {
+			logger.Error("The clipboard did not come back after the failed restart", "error", err)
+		}
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.halted = false

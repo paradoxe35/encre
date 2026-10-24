@@ -195,6 +195,22 @@ func (c *FFIClipboardManager) Close() {
 	}
 }
 
+// Reopen replaces a closed handle, for a process that carries on after all.
+func (c *FFIClipboardManager) Reopen() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.handle != nil {
+		return nil
+	}
+	handle := C.encre_clipboard_new()
+	if handle == nil {
+		return fmt.Errorf("failed to create clipboard manager: %s", getLastError())
+	}
+	c.handle = handle
+	return nil
+}
+
 func (c *FFIClipboardManager) CaptureSelection() (string, CaptureOutcome, error) {
 	return c.capture(false)
 }

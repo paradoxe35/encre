@@ -42,7 +42,9 @@ type Application struct {
 
 	instance     *platform.Instance
 	teardownOnce sync.Once
-	// loopEnded is set once Run returns: the window system is gone and nothing waits on the UI thread.
+	// loopStarted is set once Fyne's loop runs, and with it Fyne's own SIGINT and SIGTERM handling.
+	loopStarted atomic.Bool
+	// loopEnded is set once the loop stops: the window system is gone and nothing waits on the UI thread.
 	loopEnded atomic.Bool
 
 	permissionMonitorCancel    context.CancelFunc
@@ -151,10 +153,12 @@ func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instanc
 	}
 
 	app.Lifecycle().SetOnStarted(func() {
+		application.loopStarted.Store(true)
 		systray.SetTooltip("Encre")
 		installReopenHandler(application.ShowWindow)
 		prepareNotifications()
 	})
+	app.Lifecycle().SetOnStopped(func() { application.loopEnded.Store(true) })
 
 	mainWindow.SetCloseIntercept(func() {
 		mainWindow.HideWindow() // HideWindow, not a raw close, so the hide callbacks still fire
@@ -310,7 +314,7 @@ func (a *Application) applyOverlay(cfg *config.Config) {
 		a.indicator = nil
 	}
 	if choice.voice || choice.text {
-		a.indicator = overlay.New(fyne.DoAndWait)
+		a.indicator = overlay.New(a.onMain)
 	}
 	a.voice.SetOverlay(a.owner(choice.voice))
 	a.processor.SetOverlay(a.owner(choice.text))
@@ -323,17 +327,26 @@ func (a *Application) owner(on bool) overlay.Overlay {
 	return overlay.Disabled{}
 }
 
-// closeOverlay takes the window down while the window system is still there.
+// Once the loop has ended Fyne runs f on the caller, against a window system already terminated.
+func (a *Application) onMain(f func()) {
+	if !a.loopEnded.Load() {
+		fyne.DoAndWait(f)
+	}
+}
+
+// closeOverlay takes the window down while the window system is still there, and only stops it after.
 func (a *Application) closeOverlay() {
 	a.overlayMu.Lock()
 	defer a.overlayMu.Unlock()
-	if a.loopEnded.Load() {
+	if a.indicator == nil {
 		return
 	}
-	if a.indicator != nil {
+	if a.loopEnded.Load() {
+		a.indicator.Abandon()
+	} else {
 		a.indicator.Close()
-		a.indicator = nil
 	}
+	a.indicator = nil
 }
 
 func (a *Application) currentConfig() *config.Config {
@@ -503,10 +516,10 @@ func (a *Application) teardown() {
 }
 
 // The copy started in our place claims the lock and the shortcuts. The updater exits without teardown,
-// so the clipboard and lowered audio are given back here.
+// so the clipboard and lowered audio are given back here; freeing the clipboard hands it to the clipboard manager.
 func (a *Application) handOver() {
 	a.hotkeyManager.Stop()
-	a.processor.Halt()
+	a.processor.Close()
 	a.voice.Close()
 	a.instance.Release()
 }
