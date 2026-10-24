@@ -23,6 +23,10 @@ pub enum FFIErrorCode {
 
 static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
+/// Tests that assert on the shared error slot hold this so they do not take each other's errors.
+#[cfg(test)]
+pub static ERROR_SLOT: Mutex<()> = Mutex::new(());
+
 pub fn set_last_error(err: String) {
     *LAST_ERROR.lock() = Some(err);
 }
@@ -78,6 +82,7 @@ mod tests {
 
     #[test]
     fn test_error_storage() {
+        let _slot = ERROR_SLOT.lock();
         set_last_error("test error".to_string());
         let err = take_last_error();
         assert_eq!(err, Some("test error".to_string()));

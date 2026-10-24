@@ -8,7 +8,7 @@ use parking_lot::Mutex;
 use rdev::Event;
 use rdev::{EventType, Key};
 
-// Wayland needs rdev's evdev grab (user in `input` group); macOS uses tap_macos.
+// Linux listens through X11, which on Wayland means XWayland; macOS uses tap_macos.
 #[cfg(target_os = "windows")]
 use rdev::listen;
 #[cfg(target_os = "linux")]
@@ -30,6 +30,30 @@ fn is_wayland() -> bool {
     }
 
     std::env::var("WAYLAND_DISPLAY").is_ok()
+}
+
+#[cfg(target_os = "linux")]
+fn has_x_display() -> bool {
+    std::env::var_os("DISPLAY").is_some_and(|display| !display.is_empty())
+}
+
+/// rdev listens through X11 only, and its grab reports success even with no X server to grab from.
+#[cfg(target_os = "linux")]
+fn x11_problem(wayland: bool, display: bool) -> Option<&'static str> {
+    if !display {
+        Some(
+            "Global hotkeys need an X11 session, or XWayland with DISPLAY set, and no X display \
+             was found. Log in to an X11 session, or start Encre with DISPLAY set.",
+        )
+    } else if wayland {
+        Some(
+            "Global hotkeys need an X11 session, or XWayland with DISPLAY set. On Wayland they \
+             only fire while an XWayland window has focus; log in to an X11 session for hotkeys \
+             that work everywhere.",
+        )
+    } else {
+        None
+    }
 }
 
 pub type HotkeyCallback = extern "C" fn(*const c_char);
@@ -560,8 +584,21 @@ impl SimpleHotkeyManager {
 
                 #[cfg(target_os = "linux")]
                 {
-                    if is_wayland() {
-                        tracing::info!("Wayland session detected, using evdev grab for hotkeys");
+                    let wayland = is_wayland();
+                    let display = has_x_display();
+                    if let Some(problem) = x11_problem(wayland, display) {
+                        tracing::warn!("{problem}");
+                        *listen_error.lock() = Some(problem.to_string());
+                    }
+
+                    if !display {
+                        return;
+                    }
+
+                    if wayland {
+                        tracing::info!(
+                            "Wayland session detected, grabbing hotkeys through XWayland"
+                        );
                         let callback = move |event: Event| {
                             dispatch(&event);
                             Some(event)
@@ -569,8 +606,8 @@ impl SimpleHotkeyManager {
 
                         if let Err(e) = start_grab_listen(callback) {
                             *listen_error.lock() = Some(format!(
-                                "Could not listen for hotkeys on Wayland ({:?}). Add your user to the \
-                                 'input' group, then log out and back in: sudo usermod -aG input $USER",
+                                "Could not grab hotkeys through XWayland ({:?}). Global hotkeys \
+                                 need an X11 session, or XWayland with DISPLAY set.",
                                 e
                             ));
                         }
@@ -671,12 +708,19 @@ pub unsafe extern "C" fn encre_hotkey_unregister(
     let Some(manager) = manager(handle) else {
         return FFIErrorCode::NullPointer as c_int;
     };
+    if action.is_null() {
+        set_last_error("Null action provided".to_string());
+        return FFIErrorCode::NullPointer as c_int;
+    }
     match unsafe { c_str_to_string(action) } {
         Ok(action) => {
             manager.unregister(&action);
             FFIErrorCode::Success as c_int
         }
-        Err(_) => FFIErrorCode::InvalidUtf8 as c_int,
+        Err(e) => {
+            set_last_error(format!("Invalid action string: {}", e));
+            FFIErrorCode::InvalidUtf8 as c_int
+        }
     }
 }
 
@@ -1458,5 +1502,46 @@ mod tests {
             .id();
 
         assert_eq!(first, second, "resuming spawned a second listener");
+    }
+
+    #[test]
+    fn unregistering_an_invalid_action_says_why() {
+        let _slot = ERROR_SLOT.lock();
+        take_last_error();
+
+        // Not encre_hotkey_manager_new: its global log subscriber would leak into the ffi_log tests.
+        let handle = Box::into_raw(Box::new(SimpleHotkeyManager::new())) as HotkeyManagerHandle;
+        let invalid = [0xffu8 as c_char, 0];
+        let code = unsafe { encre_hotkey_unregister(handle, invalid.as_ptr()) };
+        unsafe { encre_hotkey_manager_free(handle) };
+
+        assert_eq!(code, FFIErrorCode::InvalidUtf8 as c_int);
+        let error = take_last_error().expect("an error was set");
+        assert!(error.contains("action"), "{error}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_x11_session_listens_as_before() {
+        assert_eq!(x11_problem(false, true), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn without_an_x_display_the_reason_is_the_missing_display() {
+        for wayland in [false, true] {
+            let problem = x11_problem(wayland, false).expect("a problem");
+            assert!(problem.contains("X11 session"), "{problem}");
+            assert!(problem.contains("DISPLAY"), "{problem}");
+            assert!(!problem.contains("input"), "{problem}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wayland_is_reported_rather_than_blamed_on_the_input_group() {
+        let problem = x11_problem(true, true).expect("a problem");
+        assert!(problem.contains("XWayland"), "{problem}");
+        assert!(!problem.contains("input"), "{problem}");
     }
 }

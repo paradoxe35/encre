@@ -25,6 +25,8 @@ const FLOOR_CEILING: f32 = 0.0005;
 /// Per 16 ms frame: the speech peak eases down about 4 dB a second, the noise floor creeps up about 2 dB a second.
 const PEAK_RELEASE: f32 = 0.993;
 const FLOOR_RISE: f32 = 1.004;
+/// About -100 dBFS RMS: under any microphone's own noise, so digital silence rather than a background.
+const SILENCE: f32 = 1e-5;
 
 /// Lifts a quiet microphone for the detector, which drops speech below about -40 dBFS.
 /// Only what the detector hears is lifted; the audio kept for recognition stays as captured.
@@ -50,10 +52,13 @@ impl Leveler {
         let peak = frame.iter().fold(0f32, |most, s| most.max(s.abs()));
         let rms = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt();
         self.peak = peak.max(self.peak * PEAK_RELEASE);
-        self.floor = if rms < self.floor {
+        // After silence the background is unknown: one too loud to lift is taken as it is, a quieter one creeps up.
+        self.floor = if rms < SILENCE {
+            0.0
+        } else if rms < self.floor || (self.floor < SILENCE && rms >= FLOOR_CEILING) {
             rms
         } else {
-            self.floor * FLOOR_RISE
+            self.floor.max(SILENCE) * FLOOR_RISE
         };
 
         let to_target = TARGET_PEAK / self.peak.max(f32::MIN_POSITIVE);
@@ -398,6 +403,21 @@ mod tests {
         assert!(
             gains.iter().all(|&g| g == 1.0),
             "a -50 dBFS background was lifted: {gains:?}"
+        );
+    }
+
+    #[test]
+    fn a_silent_frame_does_not_let_a_steady_background_be_lifted() {
+        let mut leveler = Leveler::default();
+        leveler.gain(&silence(0.1)[..VAD_FRAME]);
+        let background = hiss(2.0, 0.003);
+        let gains: Vec<f32> = background
+            .chunks(VAD_FRAME)
+            .map(|frame| leveler.gain(frame))
+            .collect();
+        assert!(
+            gains.iter().all(|&g| g == 1.0),
+            "a -50 dBFS background after a silent frame was lifted: {gains:?}"
         );
     }
 

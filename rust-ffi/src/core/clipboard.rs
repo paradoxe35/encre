@@ -28,21 +28,42 @@ fn content_of(text: Option<String>, image: impl FnOnce() -> Option<ImageData<'st
     }
 }
 
-struct Write {
-    text: String,
-    replaced: Option<String>,
-}
-
-/// Something new was copied since, so restoring would overwrite it.
-fn still_borrowed(write: Option<&Write>, current: Option<&str>) -> bool {
-    write.is_none_or(|write| {
-        current == Some(write.text.as_str()) || current == write.replaced.as_deref()
-    })
-}
-
+/// Anything on the clipboard that is not ours was copied by the user meanwhile and is left alone.
 struct Borrow {
     saved: Content,
-    write: Option<Write>,
+    /// What the capture copied and what Encre wrote.
+    ours: Vec<String>,
+}
+
+impl Borrow {
+    fn new(saved: Content) -> Self {
+        Self {
+            saved,
+            ours: Vec::new(),
+        }
+    }
+
+    /// Nothing is what Encre's clear leaves when no copy landed.
+    fn holds_ours(&self, current: &Content) -> bool {
+        match current {
+            Content::Nothing => true,
+            Content::Text(text) => self.ours.iter().any(|ours| ours == text),
+            Content::Image(_) => false,
+        }
+    }
+
+    /// Encre must overwrite to paste, so a copy made meanwhile becomes what is put back.
+    fn before_write(&mut self, current: Content) {
+        if !self.holds_ours(&current) {
+            self.saved = current;
+        }
+    }
+
+    fn take_restore(&mut self, current: &Content) -> Option<Content> {
+        let restore = self.holds_ours(current).then(|| self.saved.clone());
+        self.ours.clear();
+        restore
+    }
 }
 
 pub struct ClipboardManager {
@@ -54,55 +75,57 @@ impl ClipboardManager {
     pub fn new() -> Result<Self> {
         Ok(Self {
             clipboard: Mutex::new(Clipboard::new()?),
-            borrow: Mutex::new(Borrow {
-                saved: Content::Nothing,
-                write: None,
-            }),
+            borrow: Mutex::new(Borrow::new(Content::Nothing)),
         })
     }
 
     /// `None` covers both empty and image; neither is a failure.
-    pub fn get_text(&self) -> Option<String> {
-        self.clipboard.lock().get_text().ok()
+    pub fn get_text(&self) -> Result<Option<String>> {
+        match self.clipboard.lock().get_text() {
+            Ok(text) => Ok(Some(text)),
+            Err(arboard::Error::ContentNotAvailable) => Ok(None),
+            Err(e) => Err(e).context("Failed to read the clipboard"),
+        }
     }
 
     pub fn set_text(&self, text: String) -> Result<()> {
-        let replaced = self.get_text();
+        let current = self.snapshot();
+        self.borrow.lock().before_write(current);
         self.put(Content::Text(text.clone()))
             .context("Failed to set clipboard text")?;
-        self.borrow.lock().write = Some(Write { text, replaced });
+        self.borrow.lock().ours.push(text);
         Ok(())
+    }
+
+    /// What the host's simulated copy produced, so restoring can tell it from a copy by the user.
+    pub fn captured(&self, text: String) {
+        self.borrow.lock().ours.push(text);
     }
 
     pub fn clear(&self) -> Result<()> {
         self.put(Content::Nothing)
-            .context("Failed to clear clipboard")?;
-        self.borrow.lock().write = None;
-        Ok(())
+            .context("Failed to clear clipboard")
     }
 
     pub fn save_clipboard(&self) {
-        let saved = {
-            let mut clipboard = self.clipboard.lock();
-            let text = clipboard.get_text().ok();
-            content_of(text, || clipboard.get_image().ok())
-        };
-        *self.borrow.lock() = Borrow { saved, write: None };
+        let saved = self.snapshot();
+        *self.borrow.lock() = Borrow::new(saved);
     }
 
     pub fn restore_clipboard(&self) -> Result<()> {
-        let current = self.get_text();
+        let current = self.snapshot();
         // Lock released before writing, which blocks on X11 while handing over the selection.
-        let saved = {
-            let mut borrow = self.borrow.lock();
-            let write = borrow.write.take();
-            if !still_borrowed(write.as_ref(), current.as_deref()) {
-                tracing::info!("something new was copied; leaving the clipboard as it is");
-                return Ok(());
-            }
-            borrow.saved.clone()
+        let Some(saved) = self.borrow.lock().take_restore(&current) else {
+            tracing::info!("something new was copied; leaving the clipboard as it is");
+            return Ok(());
         };
         self.put(saved).context("Failed to restore the clipboard")
+    }
+
+    fn snapshot(&self) -> Content {
+        let mut clipboard = self.clipboard.lock();
+        let text = clipboard.get_text().ok();
+        content_of(text, || clipboard.get_image().ok())
     }
 
     /// Kept out of clipboard history: Encre's text is transient and the restored content is already there.
@@ -128,11 +151,24 @@ mod tests {
         }
     }
 
-    fn write(text: &str, replaced: Option<&str>) -> Write {
-        Write {
-            text: text.to_string(),
-            replaced: replaced.map(str::to_string),
-        }
+    fn text(text: &str) -> Content {
+        Content::Text(text.to_string())
+    }
+
+    fn is_text(content: Option<Content>, expected: &str) -> bool {
+        matches!(content, Some(Content::Text(text)) if text == expected)
+    }
+
+    /// The state after save, clear, and a copy of the selection that landed.
+    fn captured(saved: &str, selection: &str) -> Borrow {
+        let mut borrow = Borrow::new(text(saved));
+        borrow.ours.push(selection.to_string());
+        borrow
+    }
+
+    fn pasted(borrow: &mut Borrow, current: Content, written: &str) {
+        borrow.before_write(current);
+        borrow.ours.push(written.to_string());
     }
 
     #[test]
@@ -167,26 +203,71 @@ mod tests {
     }
 
     #[test]
-    fn the_clipboard_is_put_back_while_it_holds_encres_text() {
-        let pasted = write("revised", Some("selection"));
-        assert!(still_borrowed(Some(&pasted), Some("revised")));
+    fn abandoning_puts_back_the_original_while_the_selection_is_on_the_clipboard() {
+        let mut borrow = captured("original", "selection");
+        assert!(is_text(borrow.take_restore(&text("selection")), "original"));
     }
 
     #[test]
-    fn the_clipboard_is_put_back_when_encres_text_never_took() {
-        let pasted = write("revised", Some("selection"));
-        assert!(still_borrowed(Some(&pasted), Some("selection")));
+    fn abandoning_puts_back_the_original_when_the_copy_never_landed() {
+        let mut borrow = Borrow::new(text("original"));
+        assert!(is_text(borrow.take_restore(&Content::Nothing), "original"));
     }
 
     #[test]
-    fn a_new_copy_is_never_overwritten() {
-        let pasted = write("revised", Some("selection"));
-        assert!(!still_borrowed(Some(&pasted), Some("copied meanwhile")));
+    fn a_copy_made_while_waiting_survives_abandoning() {
+        let mut borrow = captured("original", "selection");
+        assert!(borrow.take_restore(&text("https://example.com")).is_none());
     }
 
     #[test]
-    fn without_a_write_the_clipboard_is_always_put_back() {
-        assert!(still_borrowed(None, Some("anything")));
-        assert!(still_borrowed(None, None));
+    fn an_image_copied_while_waiting_survives_abandoning() {
+        let mut borrow = captured("original", "selection");
+        assert!(borrow.take_restore(&Content::Image(picture())).is_none());
+    }
+
+    #[test]
+    fn the_original_is_put_back_after_pasting() {
+        let mut borrow = captured("original", "selection");
+        pasted(&mut borrow, text("selection"), "revised");
+        assert!(is_text(borrow.take_restore(&text("revised")), "original"));
+    }
+
+    #[test]
+    fn the_original_is_put_back_when_encres_text_never_took() {
+        let mut borrow = captured("original", "selection");
+        pasted(&mut borrow, text("selection"), "revised");
+        assert!(is_text(borrow.take_restore(&text("selection")), "original"));
+    }
+
+    #[test]
+    fn a_copy_made_while_waiting_is_what_comes_back_after_pasting() {
+        let mut borrow = captured("original", "selection");
+        pasted(&mut borrow, text("https://example.com"), "revised");
+        assert!(is_text(
+            borrow.take_restore(&text("revised")),
+            "https://example.com"
+        ));
+    }
+
+    #[test]
+    fn a_copy_made_after_pasting_is_never_overwritten() {
+        let mut borrow = captured("original", "selection");
+        pasted(&mut borrow, text("selection"), "revised");
+        assert!(borrow.take_restore(&text("copied later")).is_none());
+    }
+
+    #[test]
+    fn inserting_without_a_capture_puts_back_the_original() {
+        let mut borrow = Borrow::new(text("original"));
+        pasted(&mut borrow, text("original"), "dictated");
+        assert!(is_text(borrow.take_restore(&text("dictated")), "original"));
+    }
+
+    #[test]
+    fn a_second_restore_leaves_the_restored_clipboard_alone() {
+        let mut borrow = captured("original", "selection");
+        assert!(borrow.take_restore(&text("selection")).is_some());
+        assert!(borrow.take_restore(&text("original")).is_none());
     }
 }

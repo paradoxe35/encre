@@ -18,8 +18,10 @@ package input
 */
 import "C"
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -43,7 +45,11 @@ const (
 	clipboardPasteSettle  = 400 * time.Millisecond
 )
 
+var errClipboardClosed = errors.New("clipboard manager is closed")
+
+// Shared by every C call; Close takes it exclusively so an action still running never uses a freed handle.
 type FFIClipboardManager struct {
+	mu     sync.RWMutex
 	handle C.encre_ClipboardHandle
 }
 
@@ -56,39 +62,56 @@ func NewFFIClipboardManager() (*FFIClipboardManager, error) {
 	return &FFIClipboardManager{handle: handle}, nil
 }
 
-// text reads the clipboard; ok is false when it holds no text (empty or an image, not a failure).
-func (c *FFIClipboardManager) text() (string, bool) {
+func (c *FFIClipboardManager) call(op func(C.encre_ClipboardHandle) C.int) (C.int, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if c.handle == nil {
-		return "", false
+		return 0, errClipboardClosed
+	}
+	return op(c.handle), nil
+}
+
+// Empty when the clipboard holds no text (empty or an image); an error only when reading failed.
+func (c *FFIClipboardManager) read() (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.handle == nil {
+		return "", errClipboardClosed
 	}
 
 	cStr := C.encre_clipboard_get_text(c.handle)
 	if cStr == nil {
-		return "", false
+		return "", fmt.Errorf("failed to read clipboard: %s", getLastError())
 	}
 	defer C.encre_free_string(cStr)
 
-	text := C.GoString(cStr)
-	return text, text != ""
+	return C.GoString(cStr), nil
+}
+
+// ok is false when the clipboard holds no text yet or could not be read.
+func (c *FFIClipboardManager) text() (string, bool) {
+	text, err := c.read()
+	return text, err == nil && text != ""
 }
 
 func (c *FFIClipboardManager) GetText() (string, error) {
-	if c.handle == nil {
-		return "", fmt.Errorf("clipboard manager not initialized")
+	text, err := c.read()
+	if err != nil {
+		return "", err
 	}
-	if text, ok := c.text(); ok {
-		return text, nil
+	if text == "" {
+		return "", fmt.Errorf("clipboard holds no text")
 	}
-	return "", fmt.Errorf("clipboard holds no text")
+	return text, nil
 }
 
 // Clearing is what makes a following copy observable.
 func (c *FFIClipboardManager) Clear() error {
-	if c.handle == nil {
-		return fmt.Errorf("clipboard manager not initialized")
+	result, err := c.call(func(h C.encre_ClipboardHandle) C.int { return C.encre_clipboard_clear(h) })
+	if err != nil {
+		return err
 	}
-
-	if result := C.encre_clipboard_clear(c.handle); result != 0 {
+	if result != 0 {
 		return fmt.Errorf("failed to clear clipboard: %s", getLastError())
 	}
 
@@ -110,14 +133,13 @@ func await(read func() (string, bool)) (string, bool) {
 }
 
 func (c *FFIClipboardManager) SetText(text string) error {
-	if c.handle == nil {
-		return fmt.Errorf("clipboard manager not initialized")
-	}
-
 	cText := C.CString(text)
 	defer C.free(unsafe.Pointer(cText))
 
-	result := C.encre_clipboard_set_text(c.handle, cText)
+	result, err := c.call(func(h C.encre_ClipboardHandle) C.int { return C.encre_clipboard_set_text(h, cText) })
+	if err != nil {
+		return err
+	}
 	if result != 0 {
 		return fmt.Errorf("failed to set clipboard text: %s", getLastError())
 	}
@@ -125,12 +147,25 @@ func (c *FFIClipboardManager) SetText(text string) error {
 	return nil
 }
 
-func (c *FFIClipboardManager) SaveCurrent() error {
-	if c.handle == nil {
-		return fmt.Errorf("clipboard manager not initialized")
-	}
+// Tells the copied selection apart from a copy the user makes meanwhile, which restoring leaves alone.
+func (c *FFIClipboardManager) markCaptured(text string) {
+	cText := C.CString(text)
+	defer C.free(unsafe.Pointer(cText))
 
-	result := C.encre_clipboard_save(c.handle)
+	result, err := c.call(func(h C.encre_ClipboardHandle) C.int { return C.encre_clipboard_captured(h, cText) })
+	if err == nil && result != 0 {
+		err = errors.New(getLastError())
+	}
+	if err != nil {
+		logger.Warn("Could not note the copied selection", "error", err)
+	}
+}
+
+func (c *FFIClipboardManager) SaveCurrent() error {
+	result, err := c.call(func(h C.encre_ClipboardHandle) C.int { return C.encre_clipboard_save(h) })
+	if err != nil {
+		return err
+	}
 	if result != 0 {
 		return fmt.Errorf("failed to save clipboard: %s", getLastError())
 	}
@@ -139,11 +174,10 @@ func (c *FFIClipboardManager) SaveCurrent() error {
 }
 
 func (c *FFIClipboardManager) Restore() error {
-	if c.handle == nil {
-		return fmt.Errorf("clipboard manager not initialized")
+	result, err := c.call(func(h C.encre_ClipboardHandle) C.int { return C.encre_clipboard_restore(h) })
+	if err != nil {
+		return err
 	}
-
-	result := C.encre_clipboard_restore(c.handle)
 	if result != 0 {
 		return fmt.Errorf("failed to restore clipboard: %s", getLastError())
 	}
@@ -152,6 +186,9 @@ func (c *FFIClipboardManager) Restore() error {
 }
 
 func (c *FFIClipboardManager) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.handle != nil {
 		C.encre_clipboard_free(c.handle)
 		c.handle = nil
@@ -211,6 +248,7 @@ func (c *FFIClipboardManager) capture(selectAllFirst bool) (string, CaptureOutco
 		}
 		return "", CaptureNothingSelected, nil
 	}
+	c.markCaptured(copied)
 	if strings.TrimSpace(copied) == "" {
 		c.Abandon()
 		return "", CaptureNothingSelected, nil

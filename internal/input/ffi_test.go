@@ -114,6 +114,84 @@ func TestFFIHotkeyManagerConcurrentRegisterAndClose(t *testing.T) {
 	wg.Wait()
 }
 
+// Reproduces quitting while an action is still reading the clipboard. Run with -race.
+func TestFFIClipboardConcurrentUseAndClose(t *testing.T) {
+	requireDisplay(t)
+	clipboard, err := NewFFIClipboardManager()
+	if err != nil {
+		t.Fatalf("Failed to create clipboard: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			_, _ = clipboard.GetText()
+			_ = clipboard.SaveCurrent()
+			_ = clipboard.Restore()
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		time.Sleep(5 * time.Millisecond)
+		clipboard.Close()
+	}()
+
+	wg.Wait()
+}
+
+func TestFFIClipboardRefusesUseAfterClose(t *testing.T) {
+	requireDisplay(t)
+	clipboard, err := NewFFIClipboardManager()
+	if err != nil {
+		t.Fatalf("Failed to create clipboard: %v", err)
+	}
+	clipboard.Close()
+	clipboard.Close()
+
+	if _, err := clipboard.GetText(); err == nil {
+		t.Error("GetText after Close returned no error")
+	}
+	if err := clipboard.SetText("late"); err == nil {
+		t.Error("SetText after Close returned no error")
+	}
+	if err := clipboard.Clear(); err == nil {
+		t.Error("Clear after Close returned no error")
+	}
+	if err := clipboard.SaveCurrent(); err == nil {
+		t.Error("SaveCurrent after Close returned no error")
+	}
+	if err := clipboard.Restore(); err == nil {
+		t.Error("Restore after Close returned no error")
+	}
+	if _, outcome, err := clipboard.CaptureSelection(); err == nil || outcome != CaptureCopyFailed {
+		t.Errorf("CaptureSelection after Close = %v, %v", outcome, err)
+	}
+}
+
+// An empty clipboard is the normal state while awaiting a copy, not a failure.
+func TestFFIClipboardEmptyIsNotAFailure(t *testing.T) {
+	requireDisplay(t)
+	clipboard, err := NewFFIClipboardManager()
+	if err != nil {
+		t.Fatalf("Failed to create clipboard: %v", err)
+	}
+	defer clipboard.Close()
+
+	if err := clipboard.Clear(); err != nil {
+		t.Fatalf("Failed to clear: %v", err)
+	}
+	if _, err := clipboard.read(); err != nil {
+		t.Errorf("reading an empty clipboard failed: %v", err)
+	}
+	if reason := getLastError(); reason != "unknown error" {
+		t.Errorf("reading an empty clipboard set the error %q", reason)
+	}
+}
+
 func TestEscapeCanBeBoundAloneAndReleased(t *testing.T) {
 	manager := NewFFIHotkeyManager()
 	if manager == nil {

@@ -251,11 +251,9 @@ pub unsafe extern "C" fn encre_stt_stop_pcm(handle: SttHandle, out_len: *mut usi
         }
     };
 
-    let mut bytes = pcm16_bytes(&stopped.speech.samples);
-    bytes.shrink_to_fit();
+    let bytes = pcm16_bytes(&stopped.speech.samples).into_boxed_slice();
     let len = bytes.len();
-    let ptr = bytes.as_mut_ptr();
-    std::mem::forget(bytes);
+    let ptr = Box::into_raw(bytes).cast::<u8>();
     unsafe {
         *out_len = len;
     }
@@ -268,7 +266,7 @@ pub unsafe extern "C" fn encre_stt_free_bytes(ptr: *mut u8, len: usize) {
         return;
     }
     unsafe {
-        drop(Vec::from_raw_parts(ptr, len, len));
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)));
     }
 }
 

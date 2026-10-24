@@ -56,9 +56,15 @@ void encre_free_string(char *s);
 encre_ClipboardHandle encre_clipboard_new(void);
 
 /**
- * Null when the clipboard holds no text, including an image. Free with `encre_free_string`.
+ * Empty when the clipboard holds no text, including an image; null only on failure.
+ * Free with `encre_free_string`.
  */
 char *encre_clipboard_get_text(encre_ClipboardHandle handle);
+
+/**
+ * Records the text a simulated copy put on the clipboard, so restoring can tell it from the user's.
+ */
+int encre_clipboard_captured(encre_ClipboardHandle handle, const char *text);
 
 int encre_clipboard_set_text(encre_ClipboardHandle handle, const char *text);
 

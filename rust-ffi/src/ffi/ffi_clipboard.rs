@@ -24,18 +24,46 @@ pub unsafe extern "C" fn encre_clipboard_new() -> ClipboardHandle {
     }
 }
 
-/// Null when the clipboard holds no text, including an image. Free with `encre_free_string`.
+/// Empty when the clipboard holds no text, including an image; null only on failure.
+/// Free with `encre_free_string`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_get_text(handle: ClipboardHandle) -> *mut c_char {
     let Some(clipboard) = clipboard(handle) else {
         return std::ptr::null_mut();
     };
 
+    // No text is the normal state while awaiting a copy, so it must not touch the error slot.
     match clipboard.get_text() {
-        Some(text) => string_to_c_str(text),
-        None => {
-            set_last_error("Clipboard holds no text".to_string());
+        Ok(text) => string_to_c_str(text.unwrap_or_default()),
+        Err(e) => {
+            set_last_error(format!("{:#}", e));
             std::ptr::null_mut()
+        }
+    }
+}
+
+/// Records the text a simulated copy put on the clipboard, so restoring can tell it from the user's.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn encre_clipboard_captured(
+    handle: ClipboardHandle,
+    text: *const c_char,
+) -> c_int {
+    let Some(clipboard) = clipboard(handle) else {
+        return FFIErrorCode::NullPointer as c_int;
+    };
+    if text.is_null() {
+        set_last_error("Null text provided".to_string());
+        return FFIErrorCode::NullPointer as c_int;
+    }
+
+    match unsafe { c_str_to_string(text) } {
+        Ok(text) => {
+            clipboard.captured(text);
+            FFIErrorCode::Success as c_int
+        }
+        Err(e) => {
+            set_last_error(format!("Invalid text string: {}", e));
+            FFIErrorCode::InvalidUtf8 as c_int
         }
     }
 }
