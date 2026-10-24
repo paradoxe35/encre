@@ -37,6 +37,7 @@ func (w *MainWindow) createActionsSection() fyne.CanvasObject {
 	}
 
 	accordion := widget.NewAccordion(items...)
+	w.actionsAccordion = accordion
 
 	w.mentionsCheck = w.dirtyCheck("Enable @provider mentions", w.config.ProviderMentionsEnabled())
 

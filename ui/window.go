@@ -82,6 +82,7 @@ type MainWindow struct {
 	speechRemoteURL     *widget.Entry
 	speechRemoteKey     *widget.Entry
 	speechRemoteForm    *widget.Form
+	actionsAccordion    *widget.Accordion
 	speechKeyUnreadable bool
 	// The key and endpoint typed for each service, so one service's key is never sent to another.
 	speechServiceDrafts map[string]speechServiceDraft

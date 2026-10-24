@@ -30,6 +30,7 @@ type ModelList struct {
 	progress map[string]stt.Progress
 
 	list   *widget.List
+	empty  *widget.Label
 	search *widget.Entry
 	filter *widget.Select
 }
@@ -50,6 +51,10 @@ func NewModelList(store *stt.Store, window fyne.Window, selected string, onSelec
 
 func (m *ModelList) build() {
 	m.list = widget.NewList(m.count, m.template, m.update)
+	m.empty = widget.NewLabel("")
+	m.empty.Alignment = fyne.TextAlignCenter
+	m.empty.Importance = widget.LowImportance
+	m.empty.Hide()
 
 	m.search = widget.NewEntry()
 	m.search.SetPlaceHolder("Search models")
@@ -97,6 +102,18 @@ func (m *ModelList) apply() {
 	m.filtered = out
 	m.mu.Unlock()
 	m.list.Refresh()
+
+	// An empty filter would otherwise leave a blank area under a summary that counts the whole catalogue.
+	switch {
+	case len(out) > 0:
+		m.empty.Hide()
+	case mode == "Downloaded" && query == "":
+		m.empty.SetText("No models downloaded yet")
+		m.empty.Show()
+	default:
+		m.empty.SetText("No models match")
+		m.empty.Show()
+	}
 }
 
 // Reload is for when the catalogue was replaced underneath the list.
@@ -331,7 +348,7 @@ func errorsIsCancelled(err error) bool {
 
 func (m *ModelList) CreateRenderer() fyne.WidgetRenderer {
 	header := container.NewBorder(nil, nil, nil, m.filter, m.search)
-	return widget.NewSimpleRenderer(container.NewBorder(header, nil, nil, nil, m.list))
+	return widget.NewSimpleRenderer(container.NewBorder(header, nil, nil, nil, container.NewStack(m.list, m.empty)))
 }
 
 func (m *ModelList) SetActiveChanged(callback func(string)) {
