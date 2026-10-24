@@ -2,7 +2,9 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,6 +44,9 @@ type Config struct {
 
 	// A selection starting with "@name" picks that provider, in every AI-backed action.
 	EnableProviderMentions bool `json:"enable_provider_mentions"`
+
+	// unsaved keeps a stand-in config from writing over a file that is still there but could not be loaded.
+	unsaved error
 
 	// Paste only matters on Linux: macOS always pastes with Cmd+V.
 	Paste PasteShortcut `json:"paste_shortcut"`
@@ -215,11 +220,23 @@ func setAside(parseErr error) error {
 	return fmt.Errorf("%w (moved to %s)", parseErr, backup)
 }
 
+// Fallback stands in for a config Load failed on; while the file is still in place it is never overwritten.
+func Fallback(loadErr error) *Config {
+	cfg := Default()
+	if _, err := os.Stat(ConfigPath()); !errors.Is(err, fs.ErrNotExist) {
+		cfg.unsaved = fmt.Errorf("settings are not saved, so %s is kept as it is: %w", ConfigPath(), loadErr)
+	}
+	return cfg
+}
+
 // Saves come from several goroutines; one at a time, so the last snapshot taken is the one kept.
 var writeMu sync.Mutex
 
 // write persists without notifying, so a default config can be written during Load.
 func (c *Config) write() error {
+	if c.unsaved != nil {
+		return c.unsaved
+	}
 	writeMu.Lock()
 	defer writeMu.Unlock()
 

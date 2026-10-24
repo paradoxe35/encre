@@ -146,3 +146,30 @@ func TestConcurrentSavesLeaveAValidFile(t *testing.T) {
 		}
 	}
 }
+
+func TestAFallbackNeverOverwritesAConfigItCouldNotLoad(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resetListeners(t)
+	if err := os.MkdirAll(filepath.Dir(ConfigPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	kept := []byte(`{"ai_provider": {"providers": {"openai": {"api_key": "sk-keep"}}}}`)
+	if err := os.WriteFile(ConfigPath(), kept, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Fallback(os.ErrPermission)
+	if err := cfg.Save(); err == nil {
+		t.Fatal("a stand-in config saved over the file it could not load")
+	}
+	if data, _ := os.ReadFile(ConfigPath()); string(data) != string(kept) {
+		t.Fatalf("the config file now reads %q", data)
+	}
+
+	if err := os.Remove(ConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := Fallback(os.ErrPermission).Save(); err != nil {
+		t.Fatalf("with no file left to keep, the defaults should save: %v", err)
+	}
+}

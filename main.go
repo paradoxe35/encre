@@ -49,7 +49,7 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Error("Failed to load configuration", "error", err)
-		cfg = config.Default()
+		cfg = config.Fallback(err)
 	}
 
 	myApp := app.NewWithID(config.APP_ID)
