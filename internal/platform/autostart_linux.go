@@ -27,9 +27,9 @@ func escapeExecPath(path string) string {
 }
 
 func (a *autoStart) Enable() error {
-	homeDir, err := os.UserHomeDir()
+	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return fmt.Errorf("failed to get the config directory: %w", err)
 	}
 
 	executable, err := launchPath()
@@ -37,7 +37,7 @@ func (a *autoStart) Enable() error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	autostartDir := filepath.Join(homeDir, ".config", "autostart")
+	autostartDir := filepath.Join(configDir, "autostart")
 	if err := os.MkdirAll(autostartDir, 0755); err != nil {
 		return fmt.Errorf("failed to create autostart directory: %w", err)
 	}
@@ -67,12 +67,12 @@ Categories=Utility;Office;
 }
 
 func (a *autoStart) Disable() error {
-	homeDir, err := os.UserHomeDir()
+	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return fmt.Errorf("failed to get the config directory: %w", err)
 	}
 
-	desktopFilePath := filepath.Join(homeDir, ".config", "autostart", "encre.desktop")
+	desktopFilePath := filepath.Join(configDir, "autostart", "encre.desktop")
 
 	if err := os.Remove(desktopFilePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove desktop file: %w", err)
@@ -83,12 +83,12 @@ func (a *autoStart) Disable() error {
 }
 
 func (a *autoStart) IsEnabled() bool {
-	homeDir, err := os.UserHomeDir()
+	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return false
 	}
 
-	desktopFilePath := filepath.Join(homeDir, ".config", "autostart", "encre.desktop")
+	desktopFilePath := filepath.Join(configDir, "autostart", "encre.desktop")
 	_, err = os.Stat(desktopFilePath)
 	return err == nil
 }

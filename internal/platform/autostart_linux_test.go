@@ -29,6 +29,7 @@ func TestExecPathsAreQuotedThenEscapedAsDesktopEntryStrings(t *testing.T) {
 func TestEnableWritesTheEscapedLaunchPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("APPIMAGE", `/home/me/$work/100%/Encre.AppImage`)
 
 	a := &autoStart{}
@@ -47,5 +48,22 @@ func TestEnableWritesTheEscapedLaunchPath(t *testing.T) {
 	}
 	if err := a.Disable(); err != nil || a.IsEnabled() {
 		t.Fatalf("still enabled after Disable: %v", err)
+	}
+}
+
+func TestAutostartFollowsXDGConfigHome(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	config := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+
+	a := &autoStart{}
+	if err := a.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(config, "autostart", "encre.desktop")); err != nil {
+		t.Fatalf("the entry is not where the session looks for it: %v", err)
+	}
+	if !a.IsEnabled() {
+		t.Fatal("not enabled after Enable")
 	}
 }
