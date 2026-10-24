@@ -199,7 +199,7 @@ func NewHotkeyCapture(binding binding.String) *HotkeyCapture {
 	h.displayLabel.TextStyle.Monospace = true
 
 	h.entry = &captureEntry{parent: h}
-	h.entry.PlaceHolder = "Press keys in sequence (Esc to cancel, Enter to save)"
+	h.entry.PlaceHolder = "Press keys… (Esc/Enter)"
 	h.entry.TextStyle.Bold = true
 	h.entry.TextStyle.Monospace = true
 	h.entry.Hide()
@@ -419,7 +419,7 @@ func (h *HotkeyCapture) combo() string {
 func (h *HotkeyCapture) saveHotkey() bool {
 	valid := len(h.modifiers) > 0 && (len(h.pressedKeys) > 0 || isModifierOnlyAllowed(h.modifiers))
 	if !valid {
-		h.entry.SetText("Invalid combination (need modifier + key)")
+		h.entry.SetText("Needs a modifier + key")
 		return false
 	}
 

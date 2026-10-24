@@ -329,12 +329,17 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 	apiKeyEntry := widget.NewPasswordEntry()
 	apiKeyEntry.PlaceHolder = "Enter your API key"
 
+	var form *widget.Form
 	requiresKey := widget.NewCheck("Requires an API key", func(checked bool) {
 		if checked {
 			apiKeyEntry.Enable()
 		} else {
 			apiKeyEntry.SetText("")
 			apiKeyEntry.Disable()
+		}
+		// A form greys its labels only when refreshed, not when a field is turned off.
+		if form != nil {
+			form.Refresh()
 		}
 	})
 	requiresKey.SetChecked(true)
@@ -355,7 +360,7 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 	nameEntry.OnChanged = func(string) { addReport.Clear() }
 	baseURLEntry.OnChanged = func(string) { addReport.Clear() }
 
-	form := widget.NewForm(
+	form = widget.NewForm(
 		widget.NewFormItem("Name", nameEntry),
 		widget.NewFormItem("Base URL", baseURLEntry),
 		widget.NewFormItem("API key", apiKeyEntry),

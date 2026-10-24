@@ -130,5 +130,5 @@ func matchingModels(models []ai.ModelInfo, query string) []ai.ModelInfo {
 
 // Keeps a provider error inside the one line the status bar has.
 func shortMessage(message string) string {
-	return truncateRunes(strings.ReplaceAll(message, "\n", " "), 80)
+	return truncateRunes(strings.ReplaceAll(message, "\n", " "), statusErrorLimit)
 }

@@ -239,15 +239,13 @@ func (w *MainWindow) remoteSpeechPane() *fyne.Container {
 	note.Wrapping = fyne.TextWrapWord
 	note.TextStyle.Italic = true
 
-	return container.NewPadded(container.NewVBox(
-		widget.NewForm(
-			widget.NewFormItem("Service", w.speechRemote),
-			widget.NewFormItem("Model", w.speechRemoteModel),
-			widget.NewFormItem("Endpoint", w.speechRemoteURL),
-			widget.NewFormItem("API key", w.speechRemoteKey),
-		),
-		note,
-	))
+	w.speechRemoteForm = widget.NewForm(
+		widget.NewFormItem("Service", w.speechRemote),
+		widget.NewFormItem("Model", w.speechRemoteModel),
+		widget.NewFormItem("Endpoint", w.speechRemoteURL),
+		widget.NewFormItem("API key", w.speechRemoteKey),
+	)
+	return container.NewPadded(container.NewVBox(w.speechRemoteForm, note))
 }
 
 // The endpoint is locked for known services so a typo cannot break a working provider.
@@ -264,6 +262,10 @@ func (w *MainWindow) applyPreset(name string) {
 	} else {
 		w.speechRemoteURL.SetText(preset.BaseURL)
 		w.speechRemoteURL.Disable()
+	}
+	// A form greys its labels only when refreshed, not when a field is turned off.
+	if w.speechRemoteForm != nil {
+		w.speechRemoteForm.Refresh()
 	}
 	w.adoptPresetModel(preset)
 	w.refreshLanguages(config.SpeechRemote)

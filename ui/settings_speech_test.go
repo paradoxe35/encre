@@ -3,9 +3,11 @@ package ui
 import (
 	"testing"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/stt"
@@ -417,5 +419,46 @@ func TestAModelChosenWhileTheHostedPaneShowsLeavesItsLanguageAlone(t *testing.T)
 	if w.languageSetKey != key || w.selectedSpeechLanguage() != language {
 		t.Fatalf("a finished download moved the hosted pane from %q/%q to %q/%q",
 			key, language, w.languageSetKey, w.selectedSpeechLanguage())
+	}
+}
+
+func TestTheEndpointLabelFollowsWhetherItCanBeEdited(t *testing.T) {
+	w := &MainWindow{config: config.Default(), initializing: true}
+	w.Window = test.NewWindow(nil)
+	defer w.Window.Close()
+	w.statusBinding = binding.NewString()
+	w.createSpeechSection()
+	w.initializing = false
+
+	label := func() fyne.ThemeColorName {
+		var found fyne.ThemeColorName
+		var walk func(fyne.CanvasObject)
+		walk = func(o fyne.CanvasObject) {
+			if text, ok := o.(*widget.RichText); ok && len(text.Segments) > 0 {
+				if segment, ok := text.Segments[len(text.Segments)-1].(*widget.TextSegment); ok && segment.Text == "Endpoint" {
+					found = segment.Style.ColorName
+				}
+			}
+			if c, ok := o.(*fyne.Container); ok {
+				for _, child := range c.Objects {
+					walk(child)
+				}
+			} else if widgetObject, ok := o.(fyne.Widget); ok {
+				for _, child := range test.WidgetRenderer(widgetObject).Objects() {
+					walk(child)
+				}
+			}
+		}
+		walk(w.speechRemoteForm)
+		return found
+	}
+
+	w.speechRemote.SetSelected("Custom")
+	if got := label(); got != theme.ColorNameForeground {
+		t.Fatalf("the editable endpoint's label is %q", got)
+	}
+	w.speechRemote.SetSelected("OpenAI")
+	if got := label(); got != theme.ColorNameDisabled {
+		t.Fatalf("the locked endpoint's label is %q", got)
 	}
 }

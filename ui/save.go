@@ -11,7 +11,9 @@ import (
 	"github.com/paradoxe35/encre/internal/platform"
 )
 
-const statusErrorLimit = 60
+// The status bar ellipsises what it cannot fit; its detail dialog reads the same text, so this only
+// stops a runaway message, and leaves the reason in it.
+const statusErrorLimit = 300
 
 // encryptAPIKey is swapped in tests to make encryption fail.
 var encryptAPIKey = config.EncryptAPIKey

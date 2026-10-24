@@ -414,7 +414,7 @@ func TestShortenedErrorsKeepWholeCharacters(t *testing.T) {
 	if got := status(w); !utf8.ValidString(got) {
 		t.Errorf("status bar message %q is not valid UTF-8", got)
 	}
-	if got := shortMessage(strings.Repeat("ü", 100)); !utf8.ValidString(got) || utf8.RuneCountInString(got) != 80 {
+	if got := shortMessage(strings.Repeat("ü", 400)); !utf8.ValidString(got) || utf8.RuneCountInString(got) != statusErrorLimit {
 		t.Errorf("shortMessage = %q", got)
 	}
 }
