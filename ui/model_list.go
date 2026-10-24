@@ -152,8 +152,10 @@ func matches(model stt.Model, query, mode string, store *stt.Store) bool {
 }
 
 type modelRow struct {
-	title  *widget.Label
-	meta   *widget.Label
+	title *widget.Label
+	meta  *widget.Label
+	// state stands in for the action when there is nothing to do, as a disabled button is too faint.
+	state  *widget.Label
 	action *widget.Button
 	remove *widget.Button
 	info   *widget.Button
@@ -174,6 +176,7 @@ func (m *ModelList) template() fyne.CanvasObject {
 	row := &modelRow{
 		title:  widget.NewLabel(""),
 		meta:   widget.NewLabel(""),
+		state:  widget.NewLabel(""),
 		action: widget.NewButton("Get", nil),
 		remove: widget.NewButtonWithIcon("", theme.DeleteIcon(), nil),
 		info:   widget.NewButtonWithIcon("", theme.InfoIcon(), nil),
@@ -189,7 +192,7 @@ func (m *ModelList) template() fyne.CanvasObject {
 		row: row,
 		content: container.NewVBox(
 			container.NewBorder(nil, nil, nil,
-				container.NewHBox(row.action, row.remove, row.info), row.title),
+				container.NewHBox(row.state, row.action, row.remove, row.info), row.title),
 			row.meta,
 		),
 	}
@@ -218,14 +221,12 @@ func (m *ModelList) update(i widget.ListItemID, item fyne.CanvasObject) {
 
 	row.remove.Hide()
 	row.info.Show()
+	row.state.Hide()
 	row.action.Show()
-	row.action.Enable()
-	row.action.SetIcon(nil)
-	row.action.Importance = widget.MediumImportance
 
 	switch {
 	case downloading && progress.Stage == stt.StageVerifying:
-		showState(row.action, "Verifying", theme.HistoryIcon())
+		showState(row, "Verifying…")
 
 	case downloading:
 		row.action.SetText(fmt.Sprintf("Cancel (%.0f%%)", progress.Fraction()*100))
@@ -235,7 +236,7 @@ func (m *ModelList) update(i widget.ListItemID, item fyne.CanvasObject) {
 		row.remove.Show()
 		row.remove.OnTapped = func() { m.confirmDelete(model) }
 		if model.ID == m.selected {
-			showState(row.action, "In use", theme.ConfirmIcon())
+			showState(row, "In use")
 		} else {
 			row.action.SetText("Use")
 			row.action.OnTapped = func() { m.choose(model) }
@@ -253,12 +254,10 @@ func (m *ModelList) update(i widget.ListItemID, item fyne.CanvasObject) {
 	row.action.Refresh()
 }
 
-// showState names a state on the button that does nothing in it: a disabled button is too faint to read.
-func showState(button *widget.Button, text string, icon fyne.Resource) {
-	button.SetText(text)
-	button.SetIcon(icon)
-	button.Importance = widget.LowImportance
-	button.OnTapped = nil
+func showState(row *modelRow, text string) {
+	row.state.SetText(text)
+	row.state.Show()
+	row.action.Hide()
 }
 
 func summarise(model stt.Model, host stt.Machine) string {

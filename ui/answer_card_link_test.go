@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"runtime"
 	"strings"
 	"testing"
@@ -32,25 +33,31 @@ func hyperlinksIn(o fyne.CanvasObject) []*widget.Hyperlink {
 // Links are made anew at every render, after the reading theme was applied to what was there.
 func TestLinksTakeTheCardDesignsColour(t *testing.T) {
 	for _, style := range config.CardStyles {
-		t.Run(string(style), func(t *testing.T) {
-			card, app := newCard(t)
-			variant := theme.VariantDark
-			app.Settings().SetTheme(newAppTheme(&variant))
-			card.SetStyle(style)
-			answered(card, "q", "Plain first.")
-			answered(card, "q", "See [docs](https://go.dev).\n\n| a | b |\n|---|---|\n| [x](https://a.example) | y |")
+		for _, size := range config.TextSizes {
+			t.Run(fmt.Sprintf("%s-%s", style, size), func(t *testing.T) {
+				card, app := newCard(t)
+				variant := theme.VariantDark
+				app.Settings().SetTheme(newAppTheme(&variant))
+				card.SetStyle(style)
+				card.SetTextSize(size)
+				answered(card, "q", "Plain first.")
+				answered(card, "q", "See [docs](https://go.dev).\n\n- an item with [a link](https://b.example)\n\n| a | b |\n|---|---|\n| [x](https://a.example) | y |")
 
-			want := card.readingTheme().Color(theme.ColorNameHyperlink, variant)
-			links := hyperlinksIn(card.content)
-			if len(links) == 0 {
-				t.Fatal("no links drawn")
-			}
-			for _, link := range links {
-				if got := link.Theme().Color(theme.ColorNameHyperlink, variant); got != want {
-					t.Errorf("%q is drawn in %v, want the design's %v", link.Text, got, want)
+				want := card.readingTheme().Color(theme.ColorNameHyperlink, variant)
+				links := hyperlinksIn(card.content)
+				if len(links) == 0 {
+					t.Fatal("no links drawn")
 				}
-			}
-		})
+				for _, link := range links {
+					if got := link.Theme().Color(theme.ColorNameHyperlink, variant); got != want {
+						t.Errorf("%q is drawn in %v, want the design's %v", link.Text, got, want)
+					}
+				}
+				if len(links) != 3 {
+					t.Errorf("found %d links, want the paragraph's, the list item's and the table's", len(links))
+				}
+			})
+		}
 	}
 }
 
@@ -121,6 +128,8 @@ func TestStreamingAnAnswerWithLinksDoesNotGrowMemory(t *testing.T) {
 		update(answer+strings.Repeat("more words ", i), false)
 		card.window.Canvas().(test.WindowlessCanvas).Capture()
 	}
+	update(answer+strings.Repeat("more words ", 60), true)
+	card.window.Canvas().(test.WindowlessCanvas).Capture()
 	if grown := int64(heap()) - int64(before); grown > 100<<20 {
 		t.Errorf("rendering grew the heap by %d MB", grown>>20)
 	}

@@ -605,7 +605,7 @@ func drawn(link *widget.Hyperlink) {
 	}
 }
 
-// hook repaints the marks as a scroll within the text scrolls; each render brings new scrolls, so only those drawn now are kept.
+// sideways is the scroll a code block or table scrolls with, whether wrapped or not.
 func sideways(object fyne.Widget) *container.Scroll {
 	if side, ok := object.(*sideScroll); ok {
 		return side.Scroll
@@ -613,6 +613,7 @@ func sideways(object fyne.Widget) *container.Scroll {
 	return object.(*container.Scroll)
 }
 
+// hook repaints the marks as a scroll within the text scrolls; each render brings new scrolls, so only those drawn now are kept.
 func (s *selectableText) hook(scroll *container.Scroll, hooked map[*container.Scroll]bool) {
 	hooked[scroll] = true
 	if s.hooked[scroll] {

@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -46,6 +47,8 @@ func (w *MainWindow) loadModels(provider, apiKey, baseURL, current string, repor
 
 func (w *MainWindow) showModelPicker(models []ai.ModelInfo, current string, apply func(string)) {
 	visible := models
+	// Most providers list IDs only; a second line under each would be blank.
+	described := slices.ContainsFunc(models, func(model ai.ModelInfo) bool { return describeModel(model) != "" })
 
 	list := widget.NewList(
 		func() int { return len(visible) },
@@ -56,6 +59,7 @@ func (w *MainWindow) showModelPicker(models []ai.ModelInfo, current string, appl
 			name := widget.NewLabel("")
 			name.TextStyle.Italic = true
 			name.Truncation = fyne.TextTruncateEllipsis
+			name.Hidden = !described
 			return container.New(layout.NewCustomPaddedVBoxLayout(0), id, name)
 		},
 		func(item widget.ListItemID, obj fyne.CanvasObject) {

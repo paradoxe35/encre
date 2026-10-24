@@ -344,7 +344,6 @@ func (c *AnswerCard) focusInput() {
 func (c *AnswerCard) render() {
 	c.content.Segments = c.segments()
 	c.selection.Refresh()
-	c.adoptLinks(c.content)
 	if len(c.content.Segments) == 0 {
 		c.reading.Hide()
 	} else {
@@ -355,15 +354,25 @@ func (c *AnswerCard) render() {
 	if size := c.fit(); size != c.target {
 		c.resizeTo(size)
 	}
+	// After the resize: a list item lays its links out, and so makes them, only once it has a width.
+	if c.done {
+		c.adoptLinks(c.content)
+	}
 	c.rendered = time.Now()
 }
 
 // Fyne gives a theme override's scope to new widgets only when the override is refreshed, and every
-// refresh is a new scope whose fonts are parsed and kept anew; this hands the links made at a render the
-// card's own scope.
+// refresh is a new scope whose fonts are parsed and kept anew; this hands links the card's own scope.
+// Fyne also keeps what each adopted link draws for good, so links are adopted once the answer is
+// whole rather than at every render of a stream.
 //
 //go:linkname themeLikeParent fyne.io/fyne/v2/internal/cache.OverrideThemeMatchingScope
 func themeLikeParent(o, parent fyne.CanvasObject) bool
+
+// Made here if not drawn yet, as the links of a list item may not be.
+//
+//go:linkname widgetRenderer fyne.io/fyne/v2/internal/cache.Renderer
+func widgetRenderer(fyne.Widget) fyne.WidgetRenderer
 
 // adoptLinks gives the links drawn under o the reading theme, so they take the card design's colour.
 func (c *AnswerCard) adoptLinks(o fyne.CanvasObject) {
@@ -377,7 +386,7 @@ func (c *AnswerCard) adoptLinks(o fyne.CanvasObject) {
 			c.adoptLinks(child)
 		}
 	case fyne.Widget:
-		if renderer, ok := cachedRenderer(o); ok {
+		if renderer := widgetRenderer(o); renderer != nil {
 			for _, child := range renderer.Objects() {
 				c.adoptLinks(child)
 			}
