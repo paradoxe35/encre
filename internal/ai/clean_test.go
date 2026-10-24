@@ -28,9 +28,24 @@ func TestCleanResponse(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := CleanResponse(tc.raw); got != tc.want {
+			if got := CleanResponse(tc.raw, ""); got != tc.want {
 				t.Errorf("CleanResponse(%q) = %q, want %q", tc.raw, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAWrapperTheSelectionHadIsKept(t *testing.T) {
+	cases := []struct{ raw, source, want string }{
+		{`"I'll be back."`, `"Ill be back."`, `"I'll be back."`},
+		{"«Bonjour.»", "«Bonjour»", "«Bonjour.»"},
+		{"```go\n// Retourne la somme\nfunc add() {}\n```", "```go\n// Returns the sum\nfunc add() {}\n```", "```go\n// Retourne la somme\nfunc add() {}\n```"},
+		{`"Fixed sentence."`, "fixd sentence", "Fixed sentence."},
+		{"```\nfixed\n```", "fixd", "fixed"},
+	}
+	for _, c := range cases {
+		if got := CleanResponse(c.raw, c.source); got != c.want {
+			t.Errorf("CleanResponse(%q, %q) = %q, want %q", c.raw, c.source, got, c.want)
+		}
 	}
 }

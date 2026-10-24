@@ -2,15 +2,21 @@ package ai
 
 import "strings"
 
-// The reply is pasted into the user's text, so a fence or quotes wrapping all of it are stripped.
-func CleanResponse(raw string) string {
+// The reply is pasted into the user's text, so a fence or quotes wrapping all of it are stripped,
+// unless the source text came wrapped the same way and the model rightly kept it.
+func CleanResponse(raw, source string) string {
 	text := strings.TrimSpace(raw)
 	if text == "" {
 		return ""
 	}
+	source = strings.TrimSpace(source)
 
-	text = stripCodeFence(text)
-	text = stripWrappingQuotes(text)
+	if stripped := stripCodeFence(text); stripped == text || stripCodeFence(source) == source {
+		text = stripped
+	}
+	if stripped := stripWrappingQuotes(text); stripped == text || stripWrappingQuotes(source) == source {
+		text = stripped
+	}
 
 	return strings.TrimSpace(text)
 }

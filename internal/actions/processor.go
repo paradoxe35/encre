@@ -346,7 +346,7 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 		return reply{}, err
 	}
 
-	result.text = ai.CleanResponse(result.text)
+	result.text = ai.CleanResponse(result.text, source)
 	if result.text == "" {
 		return reply{}, fmt.Errorf("the model returned an empty result")
 	}
@@ -628,7 +628,7 @@ func (p *Processor) CleanTranscript(text string) (string, error) {
 		return "", fmt.Errorf("transcript cleanup failed: %w", err)
 	}
 
-	cleaned = ai.CleanResponse(cleaned)
+	cleaned = ai.CleanResponse(cleaned, trimmed)
 	if cleaned == "" {
 		return "", fmt.Errorf("transcript cleanup returned empty text")
 	}
