@@ -467,8 +467,17 @@ func tableCell(th fyne.Theme, variant fyne.ThemeVariant, segments []widget.RichT
 	if len(segments) == 0 {
 		segments = []widget.RichTextSegment{&widget.TextSegment{Text: " ", Style: widget.RichTextStyleInline}}
 	}
-	var texts []fyne.CanvasObject
+	// A bare address in a cell is a link, as it is in a paragraph.
+	var parts []widget.RichTextSegment
 	for _, segment := range segments {
+		if text, ok := segment.(*widget.TextSegment); ok {
+			parts = append(parts, linked(text)...)
+		} else {
+			parts = append(parts, segment)
+		}
+	}
+	var texts []fyne.CanvasObject
+	for _, segment := range parts {
 		if link, ok := segment.(*widget.HyperlinkSegment); ok {
 			segment = safeLink(link)
 		}
