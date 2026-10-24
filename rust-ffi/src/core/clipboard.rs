@@ -61,11 +61,22 @@ fn without_cr(path: PathBuf) -> PathBuf {
     }
 }
 
+/// Firefox on Windows adds a temporary file to a copied image; Explorer's file copies carry no picture.
+/// Elsewhere a file manager's copy may carry the file's icon, so the files win there.
+const IMAGE_BEATS_FILES: bool = cfg!(target_os = "windows");
+
 /// Files first, since their names come along as text that pastes no file. HTML keeps its text as
 /// the plain alternative. Text beats an image, since a document copy also carries a picture of it,
 /// but an image beats HTML without text, which a browser adds to a copied image as a bare tag.
 fn content_of(formats: &mut impl Formats) -> Content {
+    content_by(formats, IMAGE_BEATS_FILES)
+}
+
+fn content_by(formats: &mut impl Formats, image_beats_files: bool) -> Content {
     if let Some(files) = formats.files().filter(|files| !files.is_empty()) {
+        if image_beats_files && let Some(image) = formats.image() {
+            return Content::Image(image);
+        }
         return Content::Files(files.into_iter().map(without_cr).collect());
     }
     let text = formats.text().filter(|text| !text.is_empty());
@@ -210,7 +221,18 @@ impl ClipboardManager {
     fn put(&self, content: Content) -> Result<(), arboard::Error> {
         let mut clipboard = self.clipboard.lock();
         match content {
-            Content::Files(files) => clipboard.set().exclude_from_history().file_list(&files),
+            // A file deleted meanwhile cannot be listed; its path still beats Encre's text left behind.
+            Content::Files(files) => clipboard
+                .set()
+                .exclude_from_history()
+                .file_list(&files)
+                .or_else(|_| {
+                    let paths: Vec<_> = files.iter().map(|file| file.to_string_lossy()).collect();
+                    clipboard
+                        .set()
+                        .exclude_from_history()
+                        .text(paths.join("\n"))
+                }),
             Content::Html { html, alt } => clipboard.set().exclude_from_history().html(html, alt),
             Content::Text(text) => clipboard.set().exclude_from_history().text(text),
             Content::Image(image) => clipboard.set().exclude_from_history().image(image),
@@ -304,6 +326,26 @@ mod tests {
         let content = content_of(&mut fake);
         assert!(matches!(content, Content::Text(text) if text == "user's own text"));
         assert!(!fake.image_read, "text was enough");
+    }
+
+    #[test]
+    fn a_browser_image_with_a_temporary_file_stays_an_image_where_that_happens() {
+        let copied = || Fake {
+            files: Some(files(&["/tmp/image.png"])),
+            image: Some(picture()),
+            ..Fake::default()
+        };
+        assert!(matches!(content_by(&mut copied(), true), Content::Image(_)));
+        assert!(matches!(
+            content_by(&mut copied(), false),
+            Content::Files(_)
+        ));
+
+        let mut explorer = Fake {
+            files: Some(files(&["/home/me/report.pdf"])),
+            ..Fake::default()
+        };
+        assert!(matches!(content_by(&mut explorer, true), Content::Files(_)));
     }
 
     #[test]

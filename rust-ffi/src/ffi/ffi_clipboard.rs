@@ -52,24 +52,26 @@ pub unsafe extern "C" fn encre_clipboard_captured(
     handle: ClipboardHandle,
     text: *const c_char,
 ) -> c_int {
-    let Some(clipboard) = clipboard(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    if text.is_null() {
-        set_last_error("Null text provided".to_string());
-        return FFIErrorCode::NullPointer as c_int;
-    }
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(clipboard) = clipboard(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        if text.is_null() {
+            set_last_error("Null text provided".to_string());
+            return FFIErrorCode::NullPointer as c_int;
+        }
 
-    match unsafe { c_str_to_string(text) } {
-        Ok(text) => {
-            clipboard.captured(text);
-            FFIErrorCode::Success as c_int
+        match unsafe { c_str_to_string(text) } {
+            Ok(text) => {
+                clipboard.captured(text);
+                FFIErrorCode::Success as c_int
+            }
+            Err(e) => {
+                set_last_error(format!("Invalid text string: {}", e));
+                FFIErrorCode::InvalidUtf8 as c_int
+            }
         }
-        Err(e) => {
-            set_last_error(format!("Invalid text string: {}", e));
-            FFIErrorCode::InvalidUtf8 as c_int
-        }
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
