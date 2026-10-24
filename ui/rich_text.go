@@ -26,25 +26,26 @@ import (
 	gtext "github.com/yuin/goldmark/text"
 )
 
-// adopt gives nested text the holder's theme, which Fyne gives only to top-level text.
-func adopt(holder *widget.RichText, segments []widget.RichTextSegment) []widget.RichTextSegment {
-	return adoptWithin(holder, holder, segments)
+// adopt gives nested text the holder's theme, which Fyne gives only to top-level text, and passes
+// the wheel from code and tables that scroll sideways on to outer, the scroll the text reads in.
+func adopt(holder *widget.RichText, outer fyne.Scrollable, segments []widget.RichTextSegment) []widget.RichTextSegment {
+	return adoptWithin(holder, holder, outer, segments)
 }
 
 // adoptWithin takes the theme from holder, and lays lists out across within, the rich text they sit in.
-func adoptWithin(holder, within *widget.RichText, segments []widget.RichTextSegment) []widget.RichTextSegment {
+func adoptWithin(holder, within *widget.RichText, outer fyne.Scrollable, segments []widget.RichTextSegment) []widget.RichTextSegment {
 	adopted := make([]widget.RichTextSegment, 0, len(segments))
 	for _, segment := range segments {
 		switch segment := segment.(type) {
 		case *widget.ListSegment:
-			adopted = append(adopted, newCardList(holder, within, segment))
+			adopted = append(adopted, newCardList(holder, within, outer, segment))
 		case *widget.ParagraphSegment:
-			segment.Texts = adoptWithin(holder, within, segment.Texts)
+			segment.Texts = adoptWithin(holder, within, outer, segment.Texts)
 			adopted = append(adopted, segment)
 		case *widget.TableSegment:
-			adopted = append(adopted, &cardTable{TableSegment: segment, holder: holder})
+			adopted = append(adopted, &cardTable{TableSegment: segment, holder: holder, outer: outer})
 		case *widget.CodeBlockSegment:
-			adopted = append(adopted, &cardCode{CodeBlockSegment: segment, holder: holder})
+			adopted = append(adopted, &cardCode{CodeBlockSegment: segment, holder: holder, outer: outer})
 		case *widget.SeparatorSegment:
 			adopted = append(adopted, &cardRule{holder: holder})
 		case *widget.CheckBoxSegment:
@@ -166,7 +167,7 @@ type listItem struct {
 	text   *widget.RichText
 }
 
-func newCardList(holder, within *widget.RichText, list *widget.ListSegment) *cardList {
+func newCardList(holder, within *widget.RichText, outer fyne.Scrollable, list *widget.ListSegment) *cardList {
 	l := &cardList{within: within}
 	for _, item := range list.Segments() {
 		texts := item.(*widget.ParagraphSegment).Texts
@@ -179,7 +180,7 @@ func newCardList(holder, within *widget.RichText, list *widget.ListSegment) *car
 		}
 		text := widget.NewRichText()
 		text.Wrapping = fyne.TextWrapWord
-		text.Segments = adoptWithin(holder, text, texts)
+		text.Segments = adoptWithin(holder, text, outer, texts)
 		l.items = append(l.items, listItem{marker: marker, text: text})
 	}
 	return l
@@ -277,6 +278,7 @@ func (l *listLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 type cardCode struct {
 	*widget.CodeBlockSegment
 	holder *widget.RichText
+	outer  fyne.Scrollable
 }
 
 func (c *cardCode) Visual() fyne.CanvasObject {
@@ -290,7 +292,7 @@ func (c *cardCode) Visual() fyne.CanvasObject {
 		ColorName: theme.ColorNameForeground, SizeName: theme.SizeNameText, TextStyle: fyne.TextStyle{Monospace: true},
 	}}
 	setHolder(text, c.holder)
-	code := container.NewStack(panel, container.NewHScroll(widget.NewRichText(text)))
+	code := container.NewStack(panel, newSideScroll(widget.NewRichText(text), c.outer))
 	// Fyne indents quoted code only for its own segment type.
 	if depth := quotingLevel(c.CodeBlockSegment); depth > 0 {
 		inset := th.Size(theme.SizeNameLineSpacing) * 4 * float32(depth)
@@ -403,6 +405,7 @@ func (r *cardRule) Update(fyne.CanvasObject) {}
 type cardTable struct {
 	*widget.TableSegment
 	holder *widget.RichText
+	outer  fyne.Scrollable
 }
 
 func (t *cardTable) rows() [][][]widget.RichTextSegment {
@@ -440,7 +443,7 @@ func (t *cardTable) Visual() fyne.CanvasObject {
 		lines[i] = canvas.NewRectangle(th.Color(theme.ColorNameSeparator, variant))
 	}
 	grid := &fyne.Container{Layout: &tableLayout{cols: cols, rows: len(rows)}, Objects: append(cells, lines...)}
-	return container.NewHScroll(grid)
+	return newSideScroll(grid, t.outer)
 }
 
 func (t *cardTable) align(col int) fyne.TextAlign {
@@ -726,4 +729,26 @@ func restoreTags(segments []widget.RichTextSegment) []widget.RichTextSegment {
 		restored = append(restored, segment)
 	}
 	return restored
+}
+
+// sideScroll scrolls wide content sideways, and gives a wheel turned only up or down to outer:
+// Fyne turns it sideways, so the reader would stop moving whenever the pointer is over code.
+type sideScroll struct {
+	*container.Scroll
+	outer fyne.Scrollable
+}
+
+func newSideScroll(content fyne.CanvasObject, outer fyne.Scrollable) *sideScroll {
+	// Not NewHScroll: a scroll extends only once, and this one must be drawn as the sideScroll.
+	s := &sideScroll{Scroll: &container.Scroll{Direction: container.ScrollHorizontalOnly, Content: content}, outer: outer}
+	s.ExtendBaseWidget(s)
+	return s
+}
+
+func (s *sideScroll) Scrolled(event *fyne.ScrollEvent) {
+	if s.outer != nil && event.Scrolled.DX == 0 {
+		s.outer.Scrolled(event)
+		return
+	}
+	s.Scroll.Scrolled(event)
 }

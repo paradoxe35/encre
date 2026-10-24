@@ -10,7 +10,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
@@ -807,7 +806,7 @@ func TestATableKeepsItsAlignmentLinksAndEmptyRows(t *testing.T) {
 		t.Error("the link in a cell lost its hyperlink")
 	}
 
-	grid := table.Visual().(*container.Scroll).Content.(*fyne.Container)
+	grid := table.Visual().(*sideScroll).Content.(*fyne.Container)
 	layout := grid.Layout.(*tableLayout)
 	_, heights := layout.measure(grid.Objects)
 	if empty := heights[len(heights)-1]; empty < heights[0] {

@@ -343,6 +343,10 @@ func (c *AnswerCard) focusInput() {
 func (c *AnswerCard) render() {
 	c.content.Segments = c.segments()
 	c.selection.Refresh()
+	// Widgets the text is drawn with are made anew here, and a theme override reaches only those there when it is refreshed.
+	if madeOfWidgets(c.content.Segments) {
+		c.reading.Refresh()
+	}
 	if len(c.content.Segments) == 0 {
 		c.reading.Hide()
 	} else {
@@ -354,6 +358,15 @@ func (c *AnswerCard) render() {
 		c.resizeTo(size)
 	}
 	c.rendered = time.Now()
+}
+
+func madeOfWidgets(segments []widget.RichTextSegment) bool {
+	for _, segment := range segments {
+		if _, plain := segment.(*widget.TextSegment); !plain {
+			return true
+		}
+	}
+	return false
 }
 
 // shownQuestion is the start of a long question: the answer must show without scrolling past what was asked.
@@ -377,7 +390,7 @@ func (c *AnswerCard) segments() []widget.RichTextSegment {
 	}
 	switch {
 	case c.text != "":
-		segments = append(segments, adopt(c.content, markdownSegments(c.text))...)
+		segments = append(segments, adopt(c.content, c.scroll, markdownSegments(c.text))...)
 	case c.status != "":
 		for _, line := range strings.Split(c.status, "\n") {
 			segments = append(segments, &widget.TextSegment{Text: line + "…", Style: mutedStyle()})
