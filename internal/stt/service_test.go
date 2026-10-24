@@ -1,6 +1,7 @@
 package stt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +20,7 @@ type fakeEngine struct {
 	mu       sync.Mutex
 	log      []string
 	stopErr  error
+	startErr error
 	stopGate chan struct{}
 }
 
@@ -45,7 +47,7 @@ func (f *fakeEngine) SetCaptureOnly(enabled bool) error {
 	f.record(fmt.Sprintf("capture %v", enabled))
 	return nil
 }
-func (f *fakeEngine) Start() error { f.record("start"); return nil }
+func (f *fakeEngine) Start() error { f.record("start"); return f.startErr }
 func (f *fakeEngine) Stop() (string, error) {
 	f.mu.Lock()
 	f.log = append(f.log, "stop")
@@ -297,4 +299,69 @@ func TestCloseDoesNotWaitForATakeStillTranscribing(t *testing.T) {
 
 	close(gate)
 	<-stopped
+}
+
+func TestAFailedStartReleasesTheModelWhenNotKept(t *testing.T) {
+	service, fake, cfg := newTestService(t, false)
+	fake.startErr = errors.New("no microphone")
+
+	if err := service.StartRecording(cfg); err == nil {
+		t.Fatal("expected the start failure to surface")
+	}
+	if got := commands(fake.entries(), "use", "start", "unload"); len(got) != 3 || got[2] != "unload" {
+		t.Errorf("commands = %v, want the model unloaded after the failed start", got)
+	}
+
+	fake.startErr = nil
+	if err := service.StartRecording(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands(fake.entries(), "use"); len(got) != 2 {
+		t.Errorf("use commands = %v, want the model asked for again", got)
+	}
+}
+
+func TestAFailedStartKeepsAModelThatIsKept(t *testing.T) {
+	service, fake, cfg := newTestService(t, true)
+	fake.startErr = errors.New("no microphone")
+
+	if err := service.StartRecording(cfg); err == nil {
+		t.Fatal("expected the start failure to surface")
+	}
+	if slices.Contains(fake.entries(), "unload") {
+		t.Error("a model kept in memory was unloaded")
+	}
+}
+
+func TestWitAIPartialTranscriptIsTyped(t *testing.T) {
+	fake := &fakeEngine{}
+	service := &Service{store: &Store{dir: t.TempDir()}, newEngine: func() (speechEngine, error) { return fake, nil }}
+	service.activeEngine = config.SpeechWitAI
+	service.speech, service.recording, service.takes = fake, true, 1
+
+	previous := witaiTranscribe
+	witaiTranscribe = func(context.Context, []byte, string) (string, error) {
+		return "the first minute", errors.New("wit.ai chunk 4 of 9: timeout")
+	}
+	t.Cleanup(func() { witaiTranscribe = previous })
+
+	text, err := service.StopRecording()
+	if err != nil || text != "the first minute" {
+		t.Fatalf("got %q, %v, want the partial transcript", text, err)
+	}
+}
+
+func TestWitAIFailureWithNoTextStillFails(t *testing.T) {
+	fake := &fakeEngine{}
+	service := &Service{store: &Store{dir: t.TempDir()}, newEngine: func() (speechEngine, error) { return fake, nil }}
+	service.activeEngine = config.SpeechWitAI
+	service.speech, service.recording, service.takes = fake, true, 1
+
+	previous := witaiTranscribe
+	witaiTranscribe = func(context.Context, []byte, string) (string, error) { return "", errors.New("offline") }
+	t.Cleanup(func() { witaiTranscribe = previous })
+
+	if _, err := service.StopRecording(); err == nil {
+		t.Fatal("expected the failure to surface")
+	}
 }

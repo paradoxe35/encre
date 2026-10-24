@@ -2,7 +2,9 @@ package stt
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -120,9 +122,53 @@ func TestRemoteTranscribeSizeGuard(t *testing.T) {
 }
 
 func TestRemoteAPIKeyFallsBackToPlaintext(t *testing.T) {
-	cfg := config.SpeechConfig{RemoteAPIKey: "sk-plainkey-not-encrypted"}
-	if got := remoteAPIKey(cfg); got != "sk-plainkey-not-encrypted" {
-		t.Fatalf("got %q", got)
+	for _, key := range []string{"sk-plainkey-not-encrypted", "gsk_abc123", "AIzaSyA1234567890abcdefghijklmnopqrstu"} {
+		got, err := remoteAPIKey(config.SpeechConfig{RemoteAPIKey: key})
+		if err != nil || got != key {
+			t.Errorf("%q: got %q, %v", key, got, err)
+		}
+	}
+}
+
+// Sent as is, a key encrypted on another machine only earns a puzzling 401.
+func TestRemoteAPIKeyThatFailsToDecryptIsReported(t *testing.T) {
+	foreign := base64.StdEncoding.EncodeToString(make([]byte, 48))
+	if _, err := remoteAPIKey(config.SpeechConfig{RemoteAPIKey: foreign}); err == nil || !strings.Contains(err.Error(), "re-enter it in Settings") {
+		t.Fatalf("got %v, want the advice to re-enter the key", err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
+	defer server.Close()
+	cfg := config.SpeechConfig{RemoteBaseURL: server.URL, RemoteModel: "whisper-1", RemoteAPIKey: foreign}
+	if _, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2}); err == nil || requests != 0 {
+		t.Fatalf("got %v after %d requests, want an error before any request", err, requests)
+	}
+}
+
+func TestRemoteErrorPageIsCut(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		io.WriteString(w, "<html>"+strings.Repeat("x", 1<<20)+"</html>")
+	}))
+	defer server.Close()
+
+	cfg := config.SpeechConfig{RemoteBaseURL: server.URL, RemoteModel: "whisper-1"}
+	_, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2})
+	if err == nil || len(err.Error()) > 500 {
+		t.Fatalf("got an error of %d bytes", len(err.Error()))
+	}
+}
+
+func TestRemoteResponseIsBounded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"text":"`+strings.Repeat("x", remoteMaxResponseBytes)+`"}`)
+	}))
+	defer server.Close()
+
+	cfg := config.SpeechConfig{RemoteBaseURL: server.URL, RemoteModel: "whisper-1"}
+	if _, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2}); err == nil {
+		t.Fatal("an oversized response was accepted")
 	}
 }
 
@@ -132,8 +178,8 @@ func TestRemoteAPIKeyDecrypts(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.SpeechConfig{RemoteAPIKey: encrypted}
-	if got := remoteAPIKey(cfg); got != "sk-secret" {
-		t.Fatalf("got %q", got)
+	if got, err := remoteAPIKey(cfg); err != nil || got != "sk-secret" {
+		t.Fatalf("got %q, %v", got, err)
 	}
 }
 

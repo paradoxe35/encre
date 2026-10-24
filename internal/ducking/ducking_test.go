@@ -3,6 +3,8 @@ package ducking
 import (
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +27,8 @@ func (f *fakeSession) current() float64 {
 	shares, _ := f.seen()
 	return last(shares)
 }
+
+func (f *fakeSession) found() any { return map[string]float64{"player": 0.8} }
 
 func (f *fakeSession) close() {
 	f.mu.Lock()
@@ -61,8 +65,41 @@ func (f *fakeAudio) opened() []*fakeSession {
 	return append([]*fakeSession(nil), f.sessions...)
 }
 
-func ducker(audio *fakeAudio) *Ducker {
-	return newDucker(audio.open, time.Millisecond)
+func ducker(t *testing.T, audio *fakeAudio) *Ducker {
+	return stepped(t, audio, time.Millisecond)
+}
+
+// Closed after each test, so no test inherits another's saved levels.
+func stepped(t *testing.T, audio *fakeAudio, step time.Duration) *Ducker {
+	d := newDucker(audio.open, step)
+	t.Cleanup(d.Close)
+	return d
+}
+
+// Saved levels go to a scratch directory, never the real app's.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "ducking")
+	if err != nil {
+		panic(err)
+	}
+	statePath = func() string { return filepath.Join(dir, "ducked-audio.json") }
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+func saved() bool {
+	_, err := os.Stat(statePath())
+	return err == nil
+}
+
+func stubRestore(t *testing.T) *[]string {
+	t.Helper()
+	var got []string
+	previous := restoreFound
+	restoreFound = func(data []byte) error { got = append(got, string(data)); return nil }
+	t.Cleanup(func() { restoreFound = previous })
+	return &got
 }
 
 func waitFor(t *testing.T, what string, done func() bool) {
@@ -85,7 +122,7 @@ func last(shares []float64) float64 {
 
 func TestLoweringFadesDownInManyStepsToTheDrop(t *testing.T) {
 	audio := &fakeAudio{}
-	d := ducker(audio)
+	d := ducker(t, audio)
 
 	d.Lower()
 	waitFor(t, "the fade down", func() bool {
@@ -106,7 +143,7 @@ func TestLoweringFadesDownInManyStepsToTheDrop(t *testing.T) {
 
 func TestRestoringFadesBackUpAndLetsGo(t *testing.T) {
 	audio := &fakeAudio{}
-	d := ducker(audio)
+	d := ducker(t, audio)
 
 	d.Lower()
 	waitFor(t, "the fade down", func() bool { return len(audio.opened()) == 1 && first(audio.opened()).current() == gain })
@@ -122,7 +159,7 @@ func TestRestoringFadesBackUpAndLetsGo(t *testing.T) {
 // A take that starts while the music is coming back must turn it around, not start from scratch.
 func TestAWishMidFadeTurnsItAround(t *testing.T) {
 	audio := &fakeAudio{}
-	d := newDucker(audio.open, 5*time.Millisecond)
+	d := stepped(t, audio, 5*time.Millisecond)
 
 	d.Lower()
 	waitFor(t, "the fade down", func() bool { return len(audio.opened()) == 1 && first(audio.opened()).current() == gain })
@@ -141,7 +178,7 @@ func TestAWishMidFadeTurnsItAround(t *testing.T) {
 
 func TestCloseRestoresAtOnceAndWaits(t *testing.T) {
 	audio := &fakeAudio{}
-	d := newDucker(audio.open, 50*time.Millisecond)
+	d := stepped(t, audio, 50*time.Millisecond)
 
 	d.Lower()
 	waitFor(t, "a session", func() bool { return len(audio.opened()) == 1 })
@@ -154,13 +191,13 @@ func TestCloseRestoresAtOnceAndWaits(t *testing.T) {
 }
 
 func TestCloseWithNothingLoweredReturns(t *testing.T) {
-	d := ducker(&fakeAudio{})
+	d := ducker(t, &fakeAudio{})
 	d.Close()
 }
 
 func TestAFailedOpenLeavesNothingToRestore(t *testing.T) {
 	audio := &fakeAudio{fail: errors.New("no sound server")}
-	d := ducker(audio)
+	d := ducker(t, audio)
 
 	d.Lower()
 	d.Close()
@@ -181,3 +218,80 @@ func TestTheFadeIsEvenInDecibelsAndEasedAtTheEnds(t *testing.T) {
 }
 
 func first(sessions []*fakeSession) *fakeSession { return sessions[0] }
+
+func TestLoweringSavesWhatWasFoundAndRestoringForgetsIt(t *testing.T) {
+	audio := &fakeAudio{}
+	d := ducker(t, audio)
+
+	d.Lower()
+	waitFor(t, "the levels to be saved", saved)
+	data, err := os.ReadFile(statePath())
+	if err != nil || string(data) != `{"player":0.8}` {
+		t.Fatalf("saved %q, %v", data, err)
+	}
+	if info, err := os.Stat(statePath()); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("saved with %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+
+	d.Restore()
+	waitFor(t, "the fade up", func() bool { _, closed := first(audio.opened()).seen(); return closed })
+	if saved() {
+		t.Fatal("the saved levels outlived the restore")
+	}
+}
+
+func TestCloseForgetsTheSavedLevels(t *testing.T) {
+	audio := &fakeAudio{}
+	d := stepped(t, audio, 50*time.Millisecond)
+
+	d.Lower()
+	waitFor(t, "the levels to be saved", saved)
+	d.Close()
+	if saved() {
+		t.Fatal("the saved levels outlived Close")
+	}
+}
+
+func TestRecoverStalePutsBackWhatACrashLeftLowered(t *testing.T) {
+	restored := stubRestore(t)
+	if err := os.WriteFile(statePath(), []byte(`{"player":0.8}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RecoverStale(); err != nil {
+		t.Fatal(err)
+	}
+	if len(*restored) != 1 || (*restored)[0] != `{"player":0.8}` {
+		t.Fatalf("restored %v", *restored)
+	}
+	if saved() {
+		t.Fatal("the saved levels outlived the recovery")
+	}
+}
+
+func TestRecoverStaleWithNothingSavedDoesNothing(t *testing.T) {
+	restored := stubRestore(t)
+	if err := RecoverStale(); err != nil {
+		t.Fatal(err)
+	}
+	if len(*restored) != 0 {
+		t.Fatalf("restored %v with nothing saved", *restored)
+	}
+}
+
+// A duck this run is still holding is not a crash's leftover.
+func TestRecoverStaleLeavesALiveDuckAlone(t *testing.T) {
+	restored := stubRestore(t)
+	audio := &fakeAudio{}
+	d := ducker(t, audio)
+	d.Lower()
+	waitFor(t, "the levels to be saved", saved)
+
+	if err := RecoverStale(); err != nil {
+		t.Fatal(err)
+	}
+	if len(*restored) != 0 || !saved() {
+		t.Fatalf("recovered a live duck: restored %v, saved %v", *restored, saved())
+	}
+	d.Close()
+}

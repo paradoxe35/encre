@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -176,7 +176,7 @@ func sendGemini(ctx context.Context, cfg config.SpeechConfig, request geminiRequ
 		request.GenerationConfig.ThinkingConfig = thinkingConfigFor(cfg.RemoteModel)
 	}
 
-	body, err := postGemini(ctx, cfg, "/v1beta/models/"+cfg.RemoteModel+":generateContent", request)
+	body, err := postGemini(ctx, cfg, "/v1beta/models/"+url.PathEscape(cfg.RemoteModel)+":generateContent", request)
 	if err != nil {
 		return "", err
 	}
@@ -184,6 +184,10 @@ func sendGemini(ctx context.Context, cfg config.SpeechConfig, request geminiRequ
 }
 
 func postGemini(ctx context.Context, cfg config.SpeechConfig, path string, request any) ([]byte, error) {
+	key, err := remoteAPIKey(cfg)
+	if err != nil {
+		return nil, err
+	}
 	payload, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
@@ -194,7 +198,7 @@ func postGemini(ctx context.Context, cfg config.SpeechConfig, path string, reque
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", remoteAPIKey(cfg))
+	req.Header.Set("x-goog-api-key", key)
 
 	resp, err := remoteClient.Do(req)
 	if err != nil {
@@ -202,7 +206,7 @@ func postGemini(ctx context.Context, cfg config.SpeechConfig, path string, reque
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readRemoteBody(resp)
 	if err != nil {
 		return nil, err
 	}

@@ -2,11 +2,18 @@
 package ducking
 
 import (
+	"encoding/json"
+	"errors"
+	"io/fs"
 	"math"
+	"os"
+	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/paradoxe35/encre/internal/logger"
+	"github.com/paradoxe35/encre/internal/utils"
 )
 
 // Other audio drops by 18 dB: clearly in the background, still there.
@@ -22,6 +29,8 @@ const (
 type session interface {
 	// scale sets every stream to share of the amplitude it had when found; 1 puts it back.
 	scale(share float64) error
+	// found is what restoreFound needs to put the levels back if this process dies lowered.
+	found() any
 	close()
 }
 
@@ -86,6 +95,7 @@ func (d *Ducker) run() {
 					break
 				}
 				current, share = opened, 1
+				save(current)
 			}
 			if current == nil {
 				break
@@ -93,7 +103,7 @@ func (d *Ducker) run() {
 
 			if w.done != nil {
 				d.apply(current, 1)
-				current.close()
+				release(current)
 				current = nil
 				break
 			}
@@ -108,7 +118,7 @@ func (d *Ducker) run() {
 				continue
 			}
 			if !w.lowered {
-				current.close()
+				release(current)
 				current = nil
 			}
 			break
@@ -149,4 +159,82 @@ func between(from, to, t float64) float64 {
 	eased := t * t * (3 - 2*t)
 	fromDB, toDB := 20*math.Log10(from), 20*math.Log10(to)
 	return math.Pow(10, (fromDB+(toDB-fromDB)*eased)/20)
+}
+
+func release(current session) {
+	current.close()
+	forget()
+}
+
+var (
+	statePath    = func() string { return utils.AppHomeDir("ducked-audio.json") }
+	restoreFound = restore
+)
+
+// held counts this process's live ducks, whose saved levels are not a crash's leftover.
+var state struct {
+	sync.Mutex
+	held int
+}
+
+func save(current session) {
+	state.Lock()
+	defer state.Unlock()
+	state.held++
+
+	data, err := json.Marshal(current.found())
+	if err == nil {
+		err = writePrivate(statePath(), data)
+	}
+	if err != nil {
+		logger.Warn("Could not save the audio levels to restore after a crash", "error", err)
+	}
+}
+
+func forget() {
+	state.Lock()
+	defer state.Unlock()
+	state.held--
+	if state.held > 0 {
+		return
+	}
+	if err := os.Remove(statePath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.Warn("Could not remove the saved audio levels", "error", err)
+	}
+}
+
+// Renamed into place, so a crash mid-write never leaves half a file to restore from.
+func writePrivate(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// RecoverStale puts back other audio that a crashed or killed run left lowered.
+// It does nothing when no levels were left behind or a duck in this process is holding them.
+func RecoverStale() error {
+	state.Lock()
+	defer state.Unlock()
+	if state.held > 0 {
+		return nil
+	}
+
+	data, err := os.ReadFile(statePath())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	err = restoreFound(data)
+	if removeErr := os.Remove(statePath()); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+		err = errors.Join(err, removeErr)
+	}
+	return err
 }

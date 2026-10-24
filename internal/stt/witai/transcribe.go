@@ -12,7 +12,10 @@ import (
 	"time"
 )
 
-const endpoint = "https://api.wit.ai/speech"
+var endpoint = "https://api.wit.ai/speech"
+
+// A chunk has chunkTimeout; the whole take gets chunkBudget per chunk on top of one chunkTimeout.
+var chunkTimeout, chunkBudget = 30 * time.Second, 15 * time.Second
 
 const (
 	captureSampleRate = 16_000 // what encre_stt_stop_pcm delivers
@@ -20,11 +23,16 @@ const (
 	bytesPerSample    = 2
 	chunkSeconds      = 20
 	bytesPerChunk     = witSampleRate * bytesPerSample * chunkSeconds
+
+	maxResponseBytes = 1 << 20
+	maxErrorBytes    = 4 << 10
+	maxErrorChars    = 300
 )
 
-var client = &http.Client{Timeout: 30 * time.Second}
+var client = &http.Client{}
 
 // Wit.ai caps audio per request, so it is downsampled to 8 kHz, chunked, and joined.
+// A failed chunk still returns the text of the chunks before it, along with the error.
 func Transcribe(ctx context.Context, pcm []byte, lang string) (string, error) {
 	token, ok := tokenFor(lang)
 	if !ok {
@@ -36,23 +44,32 @@ func Transcribe(ctx context.Context, pcm []byte, lang string) (string, error) {
 		return "", nil
 	}
 
+	chunks := (len(downsampled) + bytesPerChunk - 1) / bytesPerChunk
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(chunks)*chunkBudget+chunkTimeout)
+	defer cancel()
+
 	var parts []string
-	for start := 0; start < len(downsampled); start += bytesPerChunk {
+	joined := func() string { return strings.TrimSpace(strings.Join(parts, " ")) }
+	for i := range chunks {
+		start := i * bytesPerChunk
 		end := min(start+bytesPerChunk, len(downsampled))
 
 		text, err := transcribeChunk(ctx, token, downsampled[start:end])
 		if err != nil {
-			return "", err
+			return joined(), fmt.Errorf("wit.ai chunk %d of %d: %w", i+1, chunks, err)
 		}
 		if text != "" {
 			parts = append(parts, text)
 		}
 	}
 
-	return strings.TrimSpace(strings.Join(parts, " ")), nil
+	return joined(), nil
 }
 
 func transcribeChunk(ctx context.Context, token string, chunk []byte) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, chunkTimeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(chunk))
 	if err != nil {
 		return "", err
@@ -71,15 +88,27 @@ func transcribeChunk(ctx context.Context, token string, chunk []byte) (string, e
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
+		return "", fmt.Errorf("wit.ai returned %s: %s", resp.Status, truncate(strings.TrimSpace(string(body)), maxErrorChars))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return "", err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("wit.ai returned %s: %s", resp.Status, bytes.TrimSpace(body))
+	if len(body) > maxResponseBytes {
+		return "", fmt.Errorf("wit.ai response is larger than %d MB", maxResponseBytes>>20)
 	}
 
 	return parseResponse(body)
+}
+
+func truncate(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return strings.TrimSpace(string(runes[:limit])) + "…"
 }
 
 type response struct {

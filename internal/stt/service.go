@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	locale "github.com/jeandeaual/go-locale"
 
@@ -17,6 +16,8 @@ import (
 )
 
 var ErrNoModel = errors.New("no speech model selected - choose one in Settings > Speech")
+
+var witaiTranscribe = witai.Transcribe
 
 type speechEngine interface {
 	UseModel(path string) error
@@ -218,6 +219,10 @@ func (s *Service) StartRecording(cfg config.SpeechConfig) error {
 
 	s.applyDevice(speech, cfg)
 	if err := speech.Start(); err != nil {
+		if !s.keepLoaded && s.model != "" && s.takes == 0 {
+			s.model = ""
+			speech.Unload()
+		}
 		return err
 	}
 
@@ -264,13 +269,14 @@ func (s *Service) stopWitAI(speech speechEngine, lang string) (string, error) {
 		return "", err
 	}
 
-	// Generous: a long dictation is sent to Wit.ai in several sequential chunk requests.
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	text, err := witai.Transcribe(ctx, pcm, lang)
-	if err != nil {
+	// Transcribe times each chunk itself: a long take is many sequential requests.
+	text, err := witaiTranscribe(context.Background(), pcm, lang)
+	if err != nil && text == "" {
 		return "", err
+	}
+	if err != nil {
+		// Dropping minutes of dictation for one failed chunk would be worse than typing what came back.
+		logger.Warn("Wit.ai transcribed only part of the dictation", "characters", len(text), "error", err)
 	}
 
 	logger.Info("Dictation transcribed", "characters", len(text), "engine", "witai")

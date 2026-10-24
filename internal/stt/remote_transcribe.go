@@ -3,8 +3,10 @@ package stt
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -21,7 +23,13 @@ const (
 	remoteChannels       = 1
 	remoteMaxAudioBytes  = 25 * 1024 * 1024 // OpenAI and Groq's free tier both cap uploads here
 	remoteRequestTimeout = 3 * time.Minute
+
+	remoteMaxResponseBytes = 4 << 20
+	remoteMaxErrorBytes    = 4 << 10
+	remoteMaxErrorChars    = 300
 )
+
+var errUndecryptableKey = errors.New("the saved API key could not be decrypted; re-enter it in Settings")
 
 var remoteClient = &http.Client{Timeout: remoteRequestTimeout}
 
@@ -40,6 +48,10 @@ func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) 
 		return "", fmt.Errorf("recording is too large for the hosted service (limit is %d MB)", remoteMaxAudioBytes/(1024*1024))
 	}
 
+	key, err := remoteAPIKey(cfg)
+	if err != nil {
+		return "", err
+	}
 	body, contentType, err := remoteRequestBody(cfg, wav)
 	if err != nil {
 		return "", err
@@ -52,7 +64,7 @@ func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) 
 	}
 	req.Header.Set("Content-Type", contentType)
 
-	if key := remoteAPIKey(cfg); key != "" {
+	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 
@@ -62,7 +74,7 @@ func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) 
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readRemoteBody(resp)
 	if err != nil {
 		return "", err
 	}
@@ -111,15 +123,39 @@ func remoteLanguageField(model string) string {
 }
 
 // Falls back to the raw value for a key stored in plaintext.
-func remoteAPIKey(cfg config.SpeechConfig) string {
+func remoteAPIKey(cfg config.SpeechConfig) (string, error) {
 	if cfg.RemoteAPIKey == "" {
-		return ""
+		return "", nil
 	}
 	plain, err := config.DecryptAPIKey(cfg.RemoteAPIKey)
-	if err != nil {
-		return cfg.RemoteAPIKey
+	if err == nil {
+		return plain, nil
 	}
-	return plain
+	if looksEncrypted(cfg.RemoteAPIKey) {
+		return "", errUndecryptableKey
+	}
+	return cfg.RemoteAPIKey, nil
+}
+
+// EncryptAPIKey stores standard base64 of a 12-byte nonce, the key, and a 16-byte tag.
+func looksEncrypted(stored string) bool {
+	raw, err := base64.StdEncoding.DecodeString(stored)
+	return err == nil && len(raw) > 12+16
+}
+
+// Bounded, so a misbehaving server can neither fill memory nor paste a whole HTML page into an error.
+func readRemoteBody(resp *http.Response) ([]byte, error) {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return io.ReadAll(io.LimitReader(resp.Body, remoteMaxErrorBytes))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, remoteMaxResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > remoteMaxResponseBytes {
+		return nil, fmt.Errorf("the response is larger than %d MB", remoteMaxResponseBytes>>20)
+	}
+	return body, nil
 }
 
 type remoteResponse struct {
@@ -142,21 +178,29 @@ func remoteErrorMessage(body []byte, status string) string {
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &withObject); err == nil && withObject.Error.Message != "" {
-		return withObject.Error.Message
+		return truncateText(withObject.Error.Message, remoteMaxErrorChars)
 	}
 
 	var withString struct {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(body, &withString); err == nil && withString.Error != "" {
-		return withString.Error
+		return truncateText(withString.Error, remoteMaxErrorChars)
 	}
 
 	trimmed := strings.TrimSpace(string(body))
 	if trimmed != "" {
-		return trimmed
+		return truncateText(trimmed, remoteMaxErrorChars)
 	}
 	return status
+}
+
+func truncateText(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return strings.TrimSpace(string(runes[:limit])) + "…"
 }
 
 // A canonical 44-byte header, so the audio posts as audio/wav without a WAV dependency.

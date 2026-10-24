@@ -516,3 +516,21 @@ func TestGeminiRemembersARefusedThinkingConfig(t *testing.T) {
 		t.Errorf("thinking config per attempt = %v, want %v", sentConfig, want)
 	}
 }
+
+func TestGeminiModelIsEscapedInThePath(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"STOP"}]}`)
+	}))
+	defer server.Close()
+
+	cfg := geminiConfig(server.URL)
+	cfg.RemoteModel = "../files/x?y"
+	if _, err := RemoteTranscribe(context.Background(), cfg, []byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	if want := "/v1beta/models/..%2Ffiles%2Fx%3Fy:generateContent"; gotPath != want {
+		t.Fatalf("path = %q, want %q", gotPath, want)
+	}
+}
