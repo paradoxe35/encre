@@ -55,7 +55,6 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	if version.IsProduction(w.app) {
 		versionLabel := widget.NewLabel(fmt.Sprintf("Version: %s", version.GetVersion(w.app)))
 		versionLabel.TextStyle.Italic = true
-		versionLabel.Importance = widget.LowImportance
 
 		form.Add(widget.NewSeparator())
 		form.Add(container.NewPadded(versionLabel))
@@ -77,7 +76,7 @@ func (w *MainWindow) createIndicatorControls() fyne.CanvasObject {
 	voice.Disable()
 	text.Disable()
 	hint := widget.NewLabel("Not available on Wayland.")
-	hint.Importance = widget.LowImportance
+	hint.TextStyle.Italic = true
 	return container.NewVBox(voice, text, hint)
 }
 
@@ -87,7 +86,7 @@ func (w *MainWindow) createUpdateControls() fyne.CanvasObject {
 
 	if w.updates == nil {
 		hint := widget.NewLabel("Updates are checked in release builds.")
-		hint.Importance = widget.LowImportance
+		hint.TextStyle.Italic = true
 		return container.NewVBox(label, hint)
 	}
 	return container.NewVBox(label, w.updates.content())
