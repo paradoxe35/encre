@@ -690,3 +690,34 @@ func TestCodeInsideHTMLAndQuotedHeadingsShowAsWritten(t *testing.T) {
 		}
 	}
 }
+
+func TestATaskThatStartsWithFormattingShowsWhole(t *testing.T) {
+	cases := map[string]string{
+		"- [ ] **bold** task":            "[ ] bold task",
+		"- [x] *em* done":                "[x] em done",
+		"- [ ] `code` task":              "[ ] code task",
+		"- [ ] [link](https://e.com) go": "[ ] link go",
+		"1. [ ] ~~gone~~ now":            "[ ] gone now",
+		"> - [ ] **q** quoted":           "[ ] q quoted",
+		"- [ ] plain **bold**":           "[ ] plain bold",
+		"- [x] plain":                    "[x] plain",
+		"- [ ] <b>x</b>":                 "[ ] <b>x</b>",
+	}
+	for answer, want := range cases {
+		card, _ := newCard(t)
+		answered(card, "", answer)
+		card.selection.SelectAll()
+		if got := card.selection.SelectedText(); !strings.Contains(got, want) {
+			t.Errorf("%q reads %q, want %q", answer, got, want)
+		}
+	}
+}
+
+func TestAParagraphOfManyFormattedPiecesRendersQuickly(t *testing.T) {
+	answer := strings.Repeat("plain **bold** `code` ", 80)
+	start := time.Now()
+	markdownSegments(answer)
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("laying out %d formatted pieces took %v", 240, took)
+	}
+}

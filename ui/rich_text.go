@@ -18,9 +18,11 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	extast "github.com/yuin/goldmark/extension/ast"
 	gtext "github.com/yuin/goldmark/text"
 )
 
@@ -545,22 +547,48 @@ func (l *tableLayout) Layout(objects []fyne.CanvasObject, _ fyne.Size) {
 	}
 }
 
+// markdownSegments lays the answer out as Fyne's Markdown does; should Fyne's renderer fail on some
+// shape of reply, as it did on formatted task items, the answer shows as plain text rather than
+// taking the app down.
+func markdownSegments(markdown string) (segments []widget.RichTextSegment) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Could not lay the answer out as Markdown", "error", r)
+			segments = []widget.RichTextSegment{&widget.TextSegment{Text: markdown, Style: widget.RichTextStyleInline}}
+		}
+	}()
+	return restoreTags(widget.NewRichTextFromMarkdown(literalTags(markdown)).Segments)
+}
+
 // tagMark stands in for the '<' of HTML the model wrote, which Fyne's Markdown would drop. An entity
 // would not do: Fyne decodes them in some text and not others, and never in code. The mark is plain
 // text to every parser, and restoreTags puts the '<' back once Fyne has laid the answer out.
 const tagMark = "\uE000"
+
+// Fyne's Markdown panics on a task item whose text starts with formatting, and keeps only its first
+// words; the checkbox is written as one of these instead, so the item parses as text and the card
+// draws the box.
+const (
+	openTask = "\uE001"
+	doneTask = "\uE002"
+)
 
 // literalTags marks the '<' of the answer's HTML, found by parsing it as Fyne does, so code,
 // autolinks and everything else are left alone.
 func literalTags(markdown string) string {
 	source := []byte(markdown)
 	var spans [][2]int
+	var tasks []task
 	ast.Walk(markdownParser.Parse(gtext.NewReader(source)), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
 		var lines *gtext.Segments
 		switch node := node.(type) {
+		case *extast.TaskCheckBox:
+			if first := node.Parent().Lines(); first.Len() > 0 {
+				tasks = append(tasks, task{at: first.At(0).Start, done: node.IsChecked})
+			}
 		case *ast.RawHTML:
 			lines = node.Segments
 		case *ast.HTMLBlock:
@@ -574,8 +602,22 @@ func literalTags(markdown string) string {
 		}
 		return ast.WalkContinue, nil
 	})
-	if len(spans) == 0 {
+	if len(spans) == 0 && len(tasks) == 0 {
 		return markdown
+	}
+	// "[ ]", "[x]" and a mark are each three bytes, so swapping them moves no other offset.
+	if len(tasks) > 0 {
+		marked := []byte(markdown)
+		for _, t := range tasks {
+			if t.at+3 <= len(marked) && marked[t.at] == '[' && marked[t.at+2] == ']' {
+				mark := openTask
+				if t.done {
+					mark = doneTask
+				}
+				copy(marked[t.at:], mark)
+			}
+		}
+		markdown = string(marked)
 	}
 	slices.SortFunc(spans, func(a, b [2]int) int { return a[0] - b[0] })
 
@@ -593,15 +635,40 @@ func literalTags(markdown string) string {
 	return out.String()
 }
 
+type task struct {
+	at   int
+	done bool
+}
+
 var markdownParser = goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.TaskList, extension.Table)).Parser()
 
-// restoreTags turns literalTags' marks back into '<' in every text Fyne made of the answer.
+// taskFrom reads a text that opens with a task mark as the checkbox, labelled with the rest of its
+// item as plain text: Fyne's own checkbox label is plain, and that is what this stands in for.
+func taskFrom(text string, rest []widget.RichTextSegment) *widget.CheckBoxSegment {
+	for _, mark := range []string{openTask, doneTask} {
+		if first, ok := strings.CutPrefix(text, mark); ok {
+			label := first
+			for _, segment := range rest {
+				label += segment.Textual()
+			}
+			return &widget.CheckBoxSegment{Text: strings.TrimSpace(label), Checked: mark == doneTask}
+		}
+	}
+	return nil
+}
+
+// restoreTags turns literalTags' marks back into '<', and a task mark back into a checkbox, in every
+// text Fyne made of the answer.
 func restoreTags(segments []widget.RichTextSegment) []widget.RichTextSegment {
 	put := func(text string) string { return strings.ReplaceAll(text, tagMark, "<") }
-	for _, segment := range segments {
+	restored := make([]widget.RichTextSegment, 0, len(segments))
+	for i, segment := range segments {
 		switch segment := segment.(type) {
 		case *widget.TextSegment:
 			segment.Text = put(segment.Text)
+			if strings.HasPrefix(segment.Text, openTask) || strings.HasPrefix(segment.Text, doneTask) {
+				return append(restored, taskFrom(segment.Text, restoreTags(segments[i+1:])))
+			}
 		case *widget.HyperlinkSegment:
 			segment.Text = put(segment.Text)
 		case *widget.CodeBlockSegment:
@@ -611,19 +678,20 @@ func restoreTags(segments []widget.RichTextSegment) []widget.RichTextSegment {
 		case *widget.ImageSegment:
 			segment.Title = put(segment.Title)
 		case *widget.ParagraphSegment:
-			restoreTags(segment.Texts)
+			segment.Texts = restoreTags(segment.Texts)
 		case *widget.ListSegment:
-			restoreTags(segment.Items)
+			segment.Items = restoreTags(segment.Items)
 		case *widget.TableSegment:
-			for _, cell := range segment.Headers {
-				restoreTags(cell)
+			for i, cell := range segment.Headers {
+				segment.Headers[i] = restoreTags(cell)
 			}
 			for _, row := range segment.Rows {
-				for _, cell := range row {
-					restoreTags(cell)
+				for i, cell := range row {
+					row[i] = restoreTags(cell)
 				}
 			}
 		}
+		restored = append(restored, segment)
 	}
-	return segments
+	return restored
 }
