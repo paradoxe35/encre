@@ -32,6 +32,10 @@ func appBundlePath(executable string) (string, bool) {
 }
 
 func (a *autoStart) Enable() error {
+	// System Events adds a duplicate login item on every call, and Disable would then remove only one.
+	if a.IsEnabled() {
+		return nil
+	}
 	appPath, err := getAppPath()
 	if err != nil {
 		return err
@@ -61,7 +65,7 @@ func (a *autoStart) Disable() error {
 
 	appName := filepath.Base(appPath)
 
-	script := fmt.Sprintf(`tell application "System Events" to delete login item %s`, appleScriptString(strings.TrimSuffix(appName, ".app")))
+	script := fmt.Sprintf(`tell application "System Events" to delete (every login item whose name is %s)`, appleScriptString(strings.TrimSuffix(appName, ".app")))
 
 	cmd := exec.Command("osascript", "-e", script)
 	output, err := cmd.CombinedOutput()
