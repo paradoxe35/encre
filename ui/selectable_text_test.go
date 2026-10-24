@@ -693,21 +693,25 @@ func TestCodeInsideHTMLAndQuotedHeadingsShowAsWritten(t *testing.T) {
 
 func TestATaskThatStartsWithFormattingShowsWhole(t *testing.T) {
 	cases := map[string]string{
-		"- [ ] **bold** task":            "[ ] bold task",
-		"- [x] *em* done":                "[x] em done",
-		"- [ ] `code` task":              "[ ] code task",
-		"- [ ] [link](https://e.com) go": "[ ] link go",
-		"1. [ ] ~~gone~~ now":            "[ ] gone now",
-		"> - [ ] **q** quoted":           "[ ] q quoted",
-		"- [ ] plain **bold**":           "[ ] plain bold",
-		"- [x] plain":                    "[x] plain",
-		"- [ ] <b>x</b>":                 "[ ] <b>x</b>",
+		"- [ ] **bold** task":               "[ ] bold task",
+		"- [x] *em* done":                   "[x] em done",
+		"- [ ] `code` task":                 "[ ] code task",
+		"- [ ] [link](https://e.com) go":    "[ ] link go",
+		"1. [ ] ~~gone~~ now":               "[ ] gone now",
+		"> - [ ] **q** quoted":              "[ ] q quoted",
+		"- [ ] plain **bold**":              "[ ] plain bold",
+		"- [x] plain":                       "[x] plain",
+		"- [ ] <b>x</b>":                    "[ ] <b>x</b>",
+		"- [ ] first para\n\n  second para": "second para",
+		"- [ ] a\n\n  ```\n  code\n  ```":   "code",
+		"<details>\n<summary>Plan</summary>\n- [ ] **Install** Go\n</details>\n\n# Title\n\n**bold**": "[ ] Install Go",
 	}
 	for answer, want := range cases {
 		card, _ := newCard(t)
 		answered(card, "", answer)
 		card.selection.SelectAll()
-		if got := card.selection.SelectedText(); !strings.Contains(got, want) {
+		got := card.selection.SelectedText()
+		if !strings.Contains(got, want) || strings.Contains(got, "parasecond") || strings.Contains(got, "acode") || strings.Contains(got, "**bold**") {
 			t.Errorf("%q reads %q, want %q", answer, got, want)
 		}
 	}

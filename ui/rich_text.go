@@ -576,19 +576,23 @@ const (
 // literalTags marks the '<' of the answer's HTML, found by parsing it as Fyne does, so code,
 // autolinks and everything else are left alone.
 func literalTags(markdown string) string {
-	source := []byte(markdown)
-	var spans [][2]int
-	var tasks []task
-	ast.Walk(markdownParser.Parse(gtext.NewReader(source)), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
+	markdown = markTags(markdown)
+	// Once the tags are text, lines that were HTML may parse as task items; until none are left.
+	for range 8 {
+		marked, found := markTasks(markdown)
+		if !found {
+			break
 		}
+		markdown = marked
+	}
+	return markdown
+}
+
+func markTags(markdown string) string {
+	var spans [][2]int
+	walk(markdown, func(node ast.Node) {
 		var lines *gtext.Segments
 		switch node := node.(type) {
-		case *extast.TaskCheckBox:
-			if first := node.Parent().Lines(); first.Len() > 0 {
-				tasks = append(tasks, task{at: first.At(0).Start, done: node.IsChecked})
-			}
 		case *ast.RawHTML:
 			lines = node.Segments
 		case *ast.HTMLBlock:
@@ -600,24 +604,9 @@ func literalTags(markdown string) string {
 		for i := 0; lines != nil && i < lines.Len(); i++ {
 			spans = append(spans, [2]int{lines.At(i).Start, lines.At(i).Stop})
 		}
-		return ast.WalkContinue, nil
 	})
-	if len(spans) == 0 && len(tasks) == 0 {
+	if len(spans) == 0 {
 		return markdown
-	}
-	// "[ ]", "[x]" and a mark are each three bytes, so swapping them moves no other offset.
-	if len(tasks) > 0 {
-		marked := []byte(markdown)
-		for _, t := range tasks {
-			if t.at+3 <= len(marked) && marked[t.at] == '[' && marked[t.at+2] == ']' {
-				mark := openTask
-				if t.done {
-					mark = doneTask
-				}
-				copy(marked[t.at:], mark)
-			}
-		}
-		markdown = string(marked)
 	}
 	slices.SortFunc(spans, func(a, b [2]int) int { return a[0] - b[0] })
 
@@ -635,9 +624,36 @@ func literalTags(markdown string) string {
 	return out.String()
 }
 
-type task struct {
-	at   int
-	done bool
+// markTasks swaps each task item's "[ ]" or "[x]" for a mark; each is three bytes, so no offset moves.
+func markTasks(markdown string) (string, bool) {
+	marked := []byte(markdown)
+	found := false
+	walk(markdown, func(node ast.Node) {
+		box, ok := node.(*extast.TaskCheckBox)
+		if !ok || box.Parent().Lines().Len() == 0 {
+			return
+		}
+		at := box.Parent().Lines().At(0).Start
+		if at+3 > len(marked) || marked[at] != '[' || marked[at+2] != ']' {
+			return
+		}
+		mark := openTask
+		if box.IsChecked {
+			mark = doneTask
+		}
+		copy(marked[at:], mark)
+		found = true
+	})
+	return string(marked), found
+}
+
+func walk(markdown string, visit func(ast.Node)) {
+	ast.Walk(markdownParser.Parse(gtext.NewReader([]byte(markdown))), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			visit(node)
+		}
+		return ast.WalkContinue, nil
+	})
 }
 
 var markdownParser = goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.TaskList, extension.Table)).Parser()
@@ -667,7 +683,13 @@ func restoreTags(segments []widget.RichTextSegment) []widget.RichTextSegment {
 		case *widget.TextSegment:
 			segment.Text = put(segment.Text)
 			if strings.HasPrefix(segment.Text, openTask) || strings.HasPrefix(segment.Text, doneTask) {
-				return append(restored, taskFrom(segment.Text, restoreTags(segments[i+1:])))
+				// The label is the item's first line; a paragraph, code block or heading after it stays its own.
+				end := i + 1
+				for end < len(segments) && segments[end].Inline() {
+					end++
+				}
+				restored = append(restored, taskFrom(segment.Text, restoreTags(segments[i+1:end])))
+				return append(restored, restoreTags(segments[end:])...)
 			}
 		case *widget.HyperlinkSegment:
 			segment.Text = put(segment.Text)
