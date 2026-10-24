@@ -58,6 +58,9 @@ type Store struct {
 // maxLine bounds a single entry; a longer line is skipped rather than read into memory.
 const maxLine = 1 << 20
 
+// fileMu spans stores: the app opens more than one on the same file, and a trim must not drop another's append.
+var fileMu sync.Mutex
+
 func NewStore() *Store { return &Store{path: utils.AppHomeDir("history.jsonl")} }
 
 // Fired outside the lock, so a handler may read the store back without deadlocking.
@@ -78,6 +81,8 @@ func (s *Store) Add(entry Entry) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	fileMu.Lock()
+	defer fileMu.Unlock()
 
 	if entry.At.IsZero() {
 		entry.At = time.Now()
@@ -136,6 +141,8 @@ func countLines(path string) int {
 func (s *Store) Recent(kind Kind) []Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	fileMu.Lock()
+	defer fileMu.Unlock()
 
 	file, err := os.Open(s.path)
 	if err != nil {
@@ -192,6 +199,8 @@ func readEntries(r io.Reader) []Entry {
 func (s *Store) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	fileMu.Lock()
+	defer fileMu.Unlock()
 	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
 		logger.Error("Failed to clear history file", "path", s.path, "error", err)
 		return err
