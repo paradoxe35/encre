@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/paradoxe35/encre/internal/testhome"
 )
 
 func mode(t *testing.T, path string) os.FileMode {
@@ -69,7 +71,7 @@ func TestEnsureAppHomeDirIsPrivate(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("no POSIX modes on Windows")
 	}
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	EnsureAppHomeDir()
 	if got := mode(t, AppHomeDir()); got != 0o700 {
 		t.Errorf("mode = %o, want 700", got)

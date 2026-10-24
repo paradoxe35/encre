@@ -10,6 +10,7 @@ import (
 	"github.com/paradoxe35/encre/internal/ai"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/history"
+	"github.com/paradoxe35/encre/internal/testhome"
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
@@ -86,7 +87,7 @@ func (r recordingProvider) Model() string { return "m" }
 
 func askProcessor(t *testing.T, memory int) (*Processor, *[]ai.Prompt) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	if err := os.MkdirAll(utils.AppHomeDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}

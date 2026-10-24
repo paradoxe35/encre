@@ -5,6 +5,7 @@ import (
 
 	"fyne.io/fyne/v2/test"
 	"github.com/paradoxe35/encre/internal/stt"
+	"github.com/paradoxe35/encre/internal/testhome"
 )
 
 func TestActiveModelTextRemainsVisibleForLongLists(t *testing.T) {
@@ -48,7 +49,7 @@ func TestModelListReloadRebuildsRowsAndActiveLabel(t *testing.T) {
 
 func TestAnEmptyModelFilterSaysSo(t *testing.T) {
 	test.NewApp()
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	list := NewModelList(stt.NewStore(), test.NewWindow(nil), "", nil)
 
 	list.filter.SetSelected("Downloaded")

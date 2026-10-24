@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/paradoxe35/encre/internal/testhome"
 )
 
 type clock struct {
@@ -301,7 +303,7 @@ func TestInitCreatesAPrivateLogDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("no POSIX modes on Windows")
 	}
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	previous, previousDefault := defaultLogger, slog.Default()
 	t.Cleanup(func() {
 		defaultLogger = previous

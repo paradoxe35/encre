@@ -16,12 +16,13 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/testhome"
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
 // Without its BaseURL, GetConfiguredProviderNames drops the provider and resets any override.
 func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	cfg := config.Default()
@@ -80,7 +81,7 @@ func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 
 // Publishing early would re-register shortcuts from a config that still says this one is off.
 func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	cfg := config.Default()
@@ -150,7 +151,7 @@ func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
 }
 
 func TestSavingAskKeepsItsSettingsAndRefusesBadOnes(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	cfg := config.Default()
@@ -184,7 +185,7 @@ func TestSavingAskKeepsItsSettingsAndRefusesBadOnes(t *testing.T) {
 }
 
 func TestThinkingLessIsOnByDefaultAndSavedPerProvider(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	cfg := config.Default()
@@ -220,7 +221,7 @@ func TestThinkingLessIsOnByDefaultAndSavedPerProvider(t *testing.T) {
 // newSettingsWindow builds every tab saveSettings reads except System, whose overlay check needs a real display.
 func newSettingsWindow(t *testing.T, cfg *config.Config) *MainWindow {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	a := withDefaultTheme(t)
@@ -663,7 +664,7 @@ func TestADeleteThatCannotBeSavedStillLeavesTheTabConsistent(t *testing.T) {
 }
 
 func TestAnAddThatCannotBeSavedLeavesNoProviderBehind(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	if err := os.MkdirAll(filepath.Dir(config.ConfigPath()), 0o700); err != nil {
 		t.Fatal(err)
 	}

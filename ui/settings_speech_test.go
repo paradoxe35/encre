@@ -11,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/stt"
+	"github.com/paradoxe35/encre/internal/testhome"
 )
 
 func TestAdoptPresetModel(t *testing.T) {
@@ -356,7 +357,7 @@ func TestSwitchStartsFromTheUnsavedPick(t *testing.T) {
 }
 
 func TestBuildingTheSpeechSectionKeepsTheSavedLanguage(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	local := multilingualDetectingModel(t)
 	if !local.Speaks("fr") {
 		t.Skip("the detecting model does not speak French")
