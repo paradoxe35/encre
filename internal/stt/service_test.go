@@ -474,3 +474,26 @@ func TestEveryEngineLeftToATakeIsClosedThoughCloseCameTwice(t *testing.T) {
 		}
 	}
 }
+
+func TestSwitchingToAHostedEngineFreesAKeptModel(t *testing.T) {
+	service, fake, cfg := newTestService(t, true)
+	if err := service.Prepare(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg.Engine = config.SpeechRemote
+	if err := service.Prepare(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands(fake.entries(), "unload"); len(got) != 1 {
+		t.Errorf("unload commands = %v, want the kept model freed once the hosted engine is chosen", got)
+	}
+
+	cfg.Engine = config.SpeechLocal
+	if err := service.Prepare(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands(fake.entries(), "use"); len(got) != 2 {
+		t.Errorf("use commands = %v, want the model loaded again on switching back", got)
+	}
+}

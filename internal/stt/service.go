@@ -116,12 +116,14 @@ func (s *Service) applyEngine(speech speechEngine, cfg config.SpeechConfig) erro
 
 	switch engine {
 	case config.SpeechWitAI:
+		s.unloadIdleModel(speech)
 		if err := s.applyCaptureOnly(speech, true); err != nil {
 			return err
 		}
 		s.witaiLang = cfg.Language
 		return nil
 	case config.SpeechRemote:
+		s.unloadIdleModel(speech)
 		if err := s.applyCaptureOnly(speech, true); err != nil {
 			return err
 		}
@@ -145,6 +147,16 @@ func (s *Service) applyEngine(speech speechEngine, cfg config.SpeechConfig) erro
 		s.model = path
 	}
 	return nil
+}
+
+// unloadIdleModel frees a model kept loaded for an engine no longer in use, once no take needs it.
+func (s *Service) unloadIdleModel(speech speechEngine) {
+	if s.model == "" || s.takes > 0 {
+		return
+	}
+	s.model = ""
+	speech.Unload()
+	logger.Info("Speech model unloaded")
 }
 
 func (s *Service) applyCaptureOnly(speech speechEngine, capture bool) error {
