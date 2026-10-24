@@ -1,5 +1,6 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Once;
 
 use parking_lot::Mutex;
@@ -70,6 +71,19 @@ pub fn result_to_error_code<T>(result: Result<T, anyhow::Error>) -> c_int {
     }
 }
 
+/// A panic escaping `extern "C"` aborts the host, so it becomes the entry point's failure value.
+pub fn guard<T>(fallback: T, f: impl FnOnce() -> T) -> T {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|panic| {
+        let reason = panic
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown cause".to_string());
+        set_last_error(format!("Internal error: {reason}"));
+        fallback
+    })
+}
+
 static INIT_LOGGING: Once = Once::new();
 
 pub fn init_logging() {
@@ -89,6 +103,24 @@ mod tests {
 
         let err2 = take_last_error();
         assert_eq!(err2, None);
+    }
+
+    #[test]
+    fn a_panic_becomes_the_fallback_and_the_last_error() {
+        let _slot = ERROR_SLOT.lock();
+        take_last_error();
+
+        let code = guard(FFIErrorCode::OperationFailed as c_int, || {
+            panic!("clipboard went away")
+        });
+        assert_eq!(code, FFIErrorCode::OperationFailed as c_int);
+        assert_eq!(
+            take_last_error().as_deref(),
+            Some("Internal error: clipboard went away")
+        );
+
+        assert_eq!(guard(-1, || 7), 7);
+        assert_eq!(take_last_error(), None, "success leaves the slot alone");
     }
 
     #[test]

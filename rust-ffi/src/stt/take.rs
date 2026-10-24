@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::Result;
 use parking_lot::{Mutex, MutexGuard};
 
-use super::audio::{Command, SAMPLE_RATE, Stopped};
+use super::audio::{Command, SAMPLE_RATE, Stopped, Ticket};
 use super::pipeline::Pipeline;
 use super::speech::Speech;
 
@@ -59,6 +59,8 @@ pub struct Take<S: Source> {
     /// Positions into `spoken` are relative to this.
     dropped: usize,
     language: Option<String>,
+    /// Audio handed back for a batch pass is counted here before the stop is answered.
+    queued: Arc<AtomicUsize>,
 }
 
 enum Captured<'a, E> {
@@ -72,7 +74,11 @@ enum Streamed {
 }
 
 impl<S: Source> Take<S> {
-    pub fn new(source: Result<S, String>, language: Option<String>) -> Self {
+    pub fn new(
+        source: Result<S, String>,
+        language: Option<String>,
+        queued: Arc<AtomicUsize>,
+    ) -> Self {
         let rate = source.as_ref().map(Source::rate).unwrap_or(SAMPLE_RATE);
         Self {
             source,
@@ -81,6 +87,7 @@ impl<S: Source> Take<S> {
             keep_at_most: KEEP_AT_MOST,
             dropped: 0,
             language,
+            queued,
         }
     }
 
@@ -213,6 +220,7 @@ impl<S: Source> Take<S> {
                 speech: Speech::default(),
                 text: Ok(Some(text)),
                 language: self.language.clone(),
+                ticket: None,
             },
             Ok(None) => {
                 tracing::info!("stream produced no text, falling back to batch");
@@ -262,10 +270,13 @@ impl<S: Source> Take<S> {
             Ok(_) => Ok(None),
             Err(reason) => Err(reason.clone()),
         };
+        let speech = self.spoken.take();
+        let ticket = (text.is_ok() && !speech.is_empty()).then(|| Ticket::new(&self.queued));
         Stopped {
-            speech: self.spoken.take(),
+            speech,
             text,
             language: self.language.clone(),
+            ticket,
         }
     }
 }
@@ -423,7 +434,17 @@ mod tests {
             resident: resident.map(PathBuf::from),
             state: state.clone(),
         }));
-        let queued = Arc::new(AtomicUsize::new(0));
+        follow(state, engine, Arc::default(), model, keep)
+    }
+
+    /// The next take on the same engine, as the recorder runs them.
+    fn follow(
+        state: Arc<Mutex<FakeState>>,
+        engine: Arc<Mutex<FakeEngine>>,
+        queued: Arc<AtomicUsize>,
+        model: Option<&str>,
+        keep: usize,
+    ) -> Harness {
         let (commands, rx) = channel();
         let (audio, incoming) = channel();
 
@@ -436,9 +457,13 @@ mod tests {
                 queued: &thread_queued,
                 model,
             });
-            Take::new(Ok(Microphone(incoming)), Some("fr".to_owned()))
-                .keeping(keep)
-                .run(&rx, wanted)
+            Take::new(
+                Ok(Microphone(incoming)),
+                Some("fr".to_owned()),
+                thread_queued.clone(),
+            )
+            .keeping(keep)
+            .run(&rx, wanted)
         });
 
         Harness {
@@ -504,8 +529,12 @@ mod tests {
     fn a_take_without_a_microphone_reports_why() {
         let (commands, rx) = channel();
         let handle = thread::spawn(move || {
-            Take::<Microphone>::new(Err("no input device available".to_owned()), None)
-                .run::<FakeEngine>(&rx, None)
+            Take::<Microphone>::new(
+                Err("no input device available".to_owned()),
+                None,
+                Arc::default(),
+            )
+            .run::<FakeEngine>(&rx, None)
         });
 
         let (reply, stopped) = channel();
@@ -517,6 +546,7 @@ mod tests {
         assert!(handle.join().unwrap(), "a stop keeps the recorder running");
         assert_eq!(stopped.text, Err("no input device available".to_owned()));
         assert!(stopped.speech.samples.is_empty());
+        assert!(stopped.ticket.is_none(), "there is nothing to transcribe");
     }
 
     #[test]
@@ -539,6 +569,44 @@ mod tests {
         let begins = take.begins();
         take.stop();
         assert_eq!(begins, 0, "queued work goes first");
+    }
+
+    #[test]
+    fn a_batch_pass_keeps_the_next_take_off_the_engine_until_it_is_done() {
+        let take = start(streams("bonjour"), None, Some(MODEL));
+        take.speak(0.5);
+        let (state, engine, queued) =
+            (take.state.clone(), take.engine.clone(), take.queued.clone());
+
+        let (stopped, _) = take.stop();
+        assert!(stopped.ticket.is_some());
+        assert_eq!(queued.load(Ordering::SeqCst), 1, "counted before the reply");
+
+        engine.lock().resident = Some(PathBuf::from(MODEL));
+        let next = follow(state, engine, queued.clone(), Some(MODEL), usize::MAX);
+        next.speak(0.5);
+        assert_eq!(
+            next.begins(),
+            0,
+            "the earlier take's transcription goes first"
+        );
+
+        drop(stopped);
+        assert_eq!(queued.load(Ordering::SeqCst), 0);
+        next.wait_until("the switch to streaming", |s| s.begins == 1);
+        let (stopped, _) = next.stop();
+        assert_eq!(stopped.text, Ok(Some("bonjour".to_owned())));
+        assert!(stopped.ticket.is_none(), "a streamed take queues nothing");
+    }
+
+    #[test]
+    fn a_silent_take_queues_nothing() {
+        let take = start(FakeState::default(), None, Some(MODEL));
+        let queued = take.queued.clone();
+        let (stopped, _) = take.stop();
+        assert!(stopped.speech.is_empty());
+        assert!(stopped.ticket.is_none());
+        assert_eq!(queued.load(Ordering::SeqCst), 0);
     }
 
     #[test]

@@ -40,7 +40,12 @@ pub enum EngineCommand {
     /// A failure is reported by the transcription that needed it.
     Load(PathBuf),
     Unload,
-    Transcribe(Speech, Option<String>, Sender<Result<String>>),
+    Transcribe(
+        Speech,
+        Option<String>,
+        Option<Ticket>,
+        Sender<Result<String>>,
+    ),
     Shutdown,
 }
 
@@ -49,6 +54,23 @@ pub struct Stopped {
     pub speech: Speech,
     pub text: Result<Option<String>, String>,
     pub language: Option<String>,
+    /// Counts the batch pass as queued before the next take can look, until it is done or dropped.
+    pub ticket: Option<Ticket>,
+}
+
+pub struct Ticket(Arc<AtomicUsize>);
+
+impl Ticket {
+    pub fn new(queued: &Arc<AtomicUsize>) -> Self {
+        queued.fetch_add(1, Ordering::SeqCst);
+        Self(queued.clone())
+    }
+}
+
+impl Drop for Ticket {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 pub struct Recorder {
@@ -126,9 +148,14 @@ impl Recorder {
         let _ = self.queue(EngineCommand::Unload);
     }
 
-    pub fn transcribe(&self, speech: Speech, language: Option<String>) -> Result<String> {
+    pub fn transcribe(
+        &self,
+        speech: Speech,
+        language: Option<String>,
+        ticket: Option<Ticket>,
+    ) -> Result<String> {
         let (tx, rx) = channel();
-        self.queue(EngineCommand::Transcribe(speech, language, tx))?;
+        self.queue(EngineCommand::Transcribe(speech, language, ticket, tx))?;
         rx.recv().map_err(|_| anyhow!("engine dropped the reply"))?
     }
 
@@ -226,7 +253,7 @@ fn run_engine(
                 }
             }
             EngineCommand::Unload => engine.lock().unload(),
-            EngineCommand::Transcribe(speech, language, reply) => {
+            EngineCommand::Transcribe(speech, language, _ticket, reply) => {
                 let _ = reply.send(engine.lock().transcribe(&speech, language.as_deref()));
             }
             EngineCommand::Shutdown => unreachable!(),
@@ -240,7 +267,7 @@ fn record(
     commands: &Receiver<Command>,
     levels: Sender<f32>,
     engine: &Arc<Mutex<Engine>>,
-    queued: &AtomicUsize,
+    queued: &Arc<AtomicUsize>,
     settings: Settings,
 ) -> bool {
     let Settings {
@@ -263,7 +290,7 @@ fn record(
         }),
         _ => None,
     };
-    Take::new(source, language).run(commands, wanted)
+    Take::new(source, language, queued.clone()).run(commands, wanted)
 }
 
 struct StreamGuard {
@@ -558,7 +585,7 @@ mod tests {
 
         let missing = std::env::temp_dir().join("encre-nonexistent-model.gguf");
         recorder.use_model(missing.clone());
-        let result = recorder.transcribe(Speech::from(vec![0.0; 1600]), None);
+        let result = recorder.transcribe(Speech::from(vec![0.0; 1600]), None, None);
 
         recorder.shutdown();
         let message = result
@@ -623,6 +650,21 @@ mod worker_tests {
     }
 
     #[test]
+    fn a_ticket_is_released_once_its_transcription_is_handled() {
+        let (levels, _level_rx) = channel();
+        let recorder = Recorder::spawn(levels);
+        let ticket = Ticket::new(&recorder.queued);
+
+        let _ = recorder.transcribe(Speech::from(vec![0.0; 1600]), None, Some(ticket));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while recorder.queued.load(Ordering::SeqCst) != 0 {
+            assert!(std::time::Instant::now() < deadline, "the ticket was kept");
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+        recorder.shutdown();
+    }
+
+    #[test]
     fn start_reports_a_recorder_that_is_gone() {
         let (levels, _level_rx) = channel();
         let recorder = Recorder::spawn(levels);
@@ -678,6 +720,7 @@ mod degraded_tests {
             speech: Speech::from(vec![0.1, 0.2, 0.3]),
             text: Ok(None),
             language: None,
+            ticket: None,
         };
 
         assert!(
@@ -697,6 +740,7 @@ mod degraded_tests {
             speech: Speech::default(),
             text: Ok(None),
             language: None,
+            ticket: None,
         };
         assert!(stopped.speech.is_empty());
     }

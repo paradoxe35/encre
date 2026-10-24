@@ -25,67 +25,79 @@ fn outcome(result: Result<()>, failure: &str) -> c_int {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_simulator_new() -> SimulatorHandle {
-    init_logging();
+    guard(std::ptr::null_mut(), || {
+        init_logging();
 
-    match KeySimulator::new() {
-        Ok(simulator) => Box::into_raw(Box::new(simulator)) as SimulatorHandle,
-        Err(e) => {
-            set_last_error(format!("Failed to create key simulator: {:#}", e));
-            std::ptr::null_mut()
+        match KeySimulator::new() {
+            Ok(simulator) => Box::into_raw(Box::new(simulator)) as SimulatorHandle,
+            Err(e) => {
+                set_last_error(format!("Failed to create key simulator: {:#}", e));
+                std::ptr::null_mut()
+            }
         }
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_simulate_select_all(handle: SimulatorHandle) -> c_int {
-    let Some(simulator) = simulator(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    outcome(simulator.select_all(), "Select all simulation failed")
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(simulator) = simulator(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        outcome(simulator.select_all(), "Select all simulation failed")
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_simulate_copy(handle: SimulatorHandle) -> c_int {
-    let Some(simulator) = simulator(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    outcome(simulator.copy(), "Copy simulation failed")
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(simulator) = simulator(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        outcome(simulator.copy(), "Copy simulation failed")
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_simulate_paste(handle: SimulatorHandle) -> c_int {
-    let Some(simulator) = simulator(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    outcome(simulator.paste(), "Paste simulation failed")
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(simulator) = simulator(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        outcome(simulator.paste(), "Paste simulation failed")
+    })
 }
 
 /// Ctrl+Shift+V, the paste chord terminals bind; Cmd+V on macOS.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_simulate_paste_terminal(handle: SimulatorHandle) -> c_int {
-    let Some(simulator) = simulator(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    outcome(
-        simulator.paste_terminal(),
-        "Terminal paste simulation failed",
-    )
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(simulator) = simulator(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        outcome(
+            simulator.paste_terminal(),
+            "Terminal paste simulation failed",
+        )
+    })
 }
 
 /// Drops modifiers the triggering hotkey left down. Call once before any combo.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_simulate_release_modifiers(handle: SimulatorHandle) -> c_int {
-    let Some(simulator) = simulator(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    outcome(simulator.release_modifiers(), "Releasing modifiers failed")
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(simulator) = simulator(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        outcome(simulator.release_modifiers(), "Releasing modifiers failed")
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_simulator_free(handle: SimulatorHandle) {
-    unsafe {
+    guard((), || unsafe {
         if !handle.is_null() {
             let _ = Box::from_raw(handle as *mut KeySimulator);
         }
-    }
+    })
 }

@@ -13,33 +13,37 @@ fn clipboard<'a>(handle: ClipboardHandle) -> Option<&'a ClipboardManager> {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_new() -> ClipboardHandle {
-    init_logging();
+    guard(std::ptr::null_mut(), || {
+        init_logging();
 
-    match ClipboardManager::new() {
-        Ok(clipboard) => Box::into_raw(Box::new(clipboard)) as ClipboardHandle,
-        Err(e) => {
-            set_last_error(format!("Failed to create clipboard manager: {:#}", e));
-            std::ptr::null_mut()
+        match ClipboardManager::new() {
+            Ok(clipboard) => Box::into_raw(Box::new(clipboard)) as ClipboardHandle,
+            Err(e) => {
+                set_last_error(format!("Failed to create clipboard manager: {:#}", e));
+                std::ptr::null_mut()
+            }
         }
-    }
+    })
 }
 
 /// Empty when the clipboard holds no text, including an image; null only on failure.
 /// Free with `encre_free_string`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_get_text(handle: ClipboardHandle) -> *mut c_char {
-    let Some(clipboard) = clipboard(handle) else {
-        return std::ptr::null_mut();
-    };
+    guard(std::ptr::null_mut(), || {
+        let Some(clipboard) = clipboard(handle) else {
+            return std::ptr::null_mut();
+        };
 
-    // No text is the normal state while awaiting a copy, so it must not touch the error slot.
-    match clipboard.get_text() {
-        Ok(text) => string_to_c_str(text.unwrap_or_default()),
-        Err(e) => {
-            set_last_error(format!("{:#}", e));
-            std::ptr::null_mut()
+        // No text is the normal state while awaiting a copy, so it must not touch the error slot.
+        match clipboard.get_text() {
+            Ok(text) => string_to_c_str(text.unwrap_or_default()),
+            Err(e) => {
+                set_last_error(format!("{:#}", e));
+                std::ptr::null_mut()
+            }
         }
-    }
+    })
 }
 
 /// Records the text a simulated copy put on the clipboard, so restoring can tell it from the user's.
@@ -73,55 +77,63 @@ pub unsafe extern "C" fn encre_clipboard_set_text(
     handle: ClipboardHandle,
     text: *const c_char,
 ) -> c_int {
-    let Some(clipboard) = clipboard(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    if text.is_null() {
-        set_last_error("Null text provided".to_string());
-        return FFIErrorCode::NullPointer as c_int;
-    }
-
-    match unsafe { c_str_to_string(text) } {
-        Ok(text) => result_to_error_code(clipboard.set_text(text)),
-        Err(e) => {
-            set_last_error(format!("Invalid text string: {}", e));
-            FFIErrorCode::InvalidUtf8 as c_int
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(clipboard) = clipboard(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        if text.is_null() {
+            set_last_error("Null text provided".to_string());
+            return FFIErrorCode::NullPointer as c_int;
         }
-    }
+
+        match unsafe { c_str_to_string(text) } {
+            Ok(text) => result_to_error_code(clipboard.set_text(text)),
+            Err(e) => {
+                set_last_error(format!("Invalid text string: {}", e));
+                FFIErrorCode::InvalidUtf8 as c_int
+            }
+        }
+    })
 }
 
 /// Lets the host observe when a following simulated copy lands.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_clear(handle: ClipboardHandle) -> c_int {
-    let Some(clipboard) = clipboard(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    result_to_error_code(clipboard.clear())
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(clipboard) = clipboard(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        result_to_error_code(clipboard.clear())
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_save(handle: ClipboardHandle) -> c_int {
-    let Some(clipboard) = clipboard(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    clipboard.save_clipboard();
-    FFIErrorCode::Success as c_int
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(clipboard) = clipboard(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        clipboard.save_clipboard();
+        FFIErrorCode::Success as c_int
+    })
 }
 
 /// Skipped if something new was copied meanwhile.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_restore(handle: ClipboardHandle) -> c_int {
-    let Some(clipboard) = clipboard(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    result_to_error_code(clipboard.restore_clipboard())
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(clipboard) = clipboard(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        result_to_error_code(clipboard.restore_clipboard())
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_clipboard_free(handle: ClipboardHandle) {
-    unsafe {
+    guard((), || unsafe {
         if !handle.is_null() {
             let _ = Box::from_raw(handle as *mut ClipboardManager);
         }
-    }
+    })
 }

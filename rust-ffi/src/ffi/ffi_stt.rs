@@ -7,7 +7,7 @@ use std::thread;
 use parking_lot::Mutex;
 
 use crate::ffi::ffi_types::{
-    FFIErrorCode, SttHandle, c_str_to_string, init_logging, set_last_error, string_to_c_str,
+    FFIErrorCode, SttHandle, c_str_to_string, guard, init_logging, set_last_error, string_to_c_str,
 };
 use crate::stt::audio::{self, Recorder};
 
@@ -46,17 +46,21 @@ fn recogniser<'a>(handle: SttHandle) -> Option<&'a SpeechRecogniser> {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn encre_stt_new(level: LevelCallback) -> SttHandle {
-    init_logging();
-    Box::into_raw(Box::new(SpeechRecogniser::new(level))) as SttHandle
+    guard(std::ptr::null_mut(), || {
+        init_logging();
+        Box::into_raw(Box::new(SpeechRecogniser::new(level))) as SttHandle
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_stt_free(handle: SttHandle) {
-    if handle.is_null() {
-        return;
-    }
-    let recogniser = unsafe { Box::from_raw(handle as *mut SpeechRecogniser) };
-    recogniser.recorder.shutdown();
+    guard((), || {
+        if handle.is_null() {
+            return;
+        }
+        let recogniser = unsafe { Box::from_raw(handle as *mut SpeechRecogniser) };
+        recogniser.recorder.shutdown();
+    })
 }
 
 /// Returns at once; a load failure is reported by the first transcription that needs it.
@@ -93,75 +97,82 @@ pub unsafe extern "C" fn encre_stt_unload(handle: SttHandle) -> c_int {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_stt_start(handle: SttHandle) -> c_int {
-    let Some(recogniser) = recogniser(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(recogniser) = recogniser(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
 
-    let mut recording = recogniser.recording.lock();
-    if *recording {
-        set_last_error("Already recording".to_string());
-        return FFIErrorCode::OperationFailed as c_int;
-    }
+        let mut recording = recogniser.recording.lock();
+        if *recording {
+            set_last_error("Already recording".to_string());
+            return FFIErrorCode::OperationFailed as c_int;
+        }
 
-    if let Err(e) = recogniser.recorder.start() {
-        set_last_error(e.to_string());
-        return FFIErrorCode::OperationFailed as c_int;
-    }
-    *recording = true;
-    FFIErrorCode::Success as c_int
+        if let Err(e) = recogniser.recorder.start() {
+            set_last_error(e.to_string());
+            return FFIErrorCode::OperationFailed as c_int;
+        }
+        *recording = true;
+        FFIErrorCode::Success as c_int
+    })
 }
 
 /// Blocks for as long as inference takes; call it off the UI thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_stt_stop(handle: SttHandle) -> *mut c_char {
-    let Some(recogniser) = recogniser(handle) else {
-        return std::ptr::null_mut();
-    };
-
-    let stopped = match end_take(recogniser) {
-        Ok(stopped) => stopped,
-        Err(e) => {
-            set_last_error(e.to_string());
+    guard(std::ptr::null_mut(), || {
+        let Some(recogniser) = recogniser(handle) else {
             return std::ptr::null_mut();
-        }
-    };
+        };
 
-    match stopped.text {
-        Ok(Some(text)) => string_to_c_str(text),
-
-        Ok(None) => {
-            if stopped.speech.is_empty() {
-                return string_to_c_str(String::new());
+        let stopped = match end_take(recogniser) {
+            Ok(stopped) => stopped,
+            Err(e) => {
+                set_last_error(e.to_string());
+                return std::ptr::null_mut();
             }
-            match recogniser
-                .recorder
-                .transcribe(stopped.speech, stopped.language)
-            {
-                Ok(text) => string_to_c_str(text),
-                Err(e) => {
-                    set_last_error(e.to_string());
-                    std::ptr::null_mut()
+        };
+
+        match stopped.text {
+            Ok(Some(text)) => string_to_c_str(text),
+
+            Ok(None) => {
+                if stopped.speech.is_empty() {
+                    return string_to_c_str(String::new());
+                }
+                match recogniser.recorder.transcribe(
+                    stopped.speech,
+                    stopped.language,
+                    stopped.ticket,
+                ) {
+                    Ok(text) => string_to_c_str(text),
+                    Err(e) => {
+                        set_last_error(e.to_string());
+                        std::ptr::null_mut()
+                    }
                 }
             }
-        }
 
-        Err(message) => {
-            set_last_error(message);
-            std::ptr::null_mut()
+            Err(message) => {
+                set_last_error(message);
+                std::ptr::null_mut()
+            }
         }
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_stt_cancel(handle: SttHandle) -> c_int {
-    let Some(recogniser) = recogniser(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(recogniser) = recogniser(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
 
-    let mut recording = recogniser.recording.lock();
-    recogniser.recorder.cancel();
-    *recording = false;
-    FFIErrorCode::Success as c_int
+        let mut recording = recogniser.recording.lock();
+        recogniser.recorder.cancel();
+        *recording = false;
+        FFIErrorCode::Success as c_int
+    })
 }
 
 /// Stop is sent under the lock so no Start overtakes it; the wait happens outside it.
@@ -235,29 +246,31 @@ pub unsafe extern "C" fn encre_stt_set_capture_only(handle: SttHandle, enabled: 
 /// 16-bit LE mono PCM at `encre_SAMPLE_RATE`; free with `encre_stt_free_bytes`. Null on failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_stt_stop_pcm(handle: SttHandle, out_len: *mut usize) -> *mut u8 {
-    let Some(recogniser) = recogniser(handle) else {
-        return std::ptr::null_mut();
-    };
-    if out_len.is_null() {
-        set_last_error("Null length pointer provided".to_string());
-        return std::ptr::null_mut();
-    }
-
-    let stopped = match end_take(recogniser) {
-        Ok(stopped) => stopped,
-        Err(e) => {
-            set_last_error(e.to_string());
+    guard(std::ptr::null_mut(), || {
+        let Some(recogniser) = recogniser(handle) else {
+            return std::ptr::null_mut();
+        };
+        if out_len.is_null() {
+            set_last_error("Null length pointer provided".to_string());
             return std::ptr::null_mut();
         }
-    };
 
-    let bytes = pcm16_bytes(&stopped.speech.samples).into_boxed_slice();
-    let len = bytes.len();
-    let ptr = Box::into_raw(bytes).cast::<u8>();
-    unsafe {
-        *out_len = len;
-    }
-    ptr
+        let stopped = match end_take(recogniser) {
+            Ok(stopped) => stopped,
+            Err(e) => {
+                set_last_error(e.to_string());
+                return std::ptr::null_mut();
+            }
+        };
+
+        let bytes = pcm16_bytes(&stopped.speech.samples).into_boxed_slice();
+        let len = bytes.len();
+        let ptr = Box::into_raw(bytes).cast::<u8>();
+        unsafe {
+            *out_len = len;
+        }
+        ptr
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -282,19 +295,21 @@ fn pcm16_bytes(samples: &[f32]) -> Vec<u8> {
 /// Newline separated; the default is marked with a leading '*'. Free with `encre_free_string`.
 #[unsafe(no_mangle)]
 pub extern "C" fn encre_stt_devices() -> *mut c_char {
-    let (devices, default) = audio::devices();
+    guard(std::ptr::null_mut(), || {
+        let (devices, default) = audio::devices();
 
-    let listed = devices
-        .into_iter()
-        .map(|name| {
-            if Some(&name) == default.as_ref() {
-                format!("*{name}")
-            } else {
-                name
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+        let listed = devices
+            .into_iter()
+            .map(|name| {
+                if Some(&name) == default.as_ref() {
+                    format!("*{name}")
+                } else {
+                    name
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
-    string_to_c_str(listed)
+        string_to_c_str(listed)
+    })
 }

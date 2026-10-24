@@ -696,11 +696,13 @@ pub unsafe extern "C" fn encre_hotkey_manager_new() -> HotkeyManagerHandle {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_clear(handle: HotkeyManagerHandle) -> c_int {
-    let Some(manager) = manager(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    manager.clear_bindings();
-    FFIErrorCode::Success as c_int
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(manager) = manager(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        manager.clear_bindings();
+        FFIErrorCode::Success as c_int
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -708,23 +710,25 @@ pub unsafe extern "C" fn encre_hotkey_unregister(
     handle: HotkeyManagerHandle,
     action: *const c_char,
 ) -> c_int {
-    let Some(manager) = manager(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    if action.is_null() {
-        set_last_error("Null action provided".to_string());
-        return FFIErrorCode::NullPointer as c_int;
-    }
-    match unsafe { c_str_to_string(action) } {
-        Ok(action) => {
-            manager.unregister(&action);
-            FFIErrorCode::Success as c_int
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(manager) = manager(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        if action.is_null() {
+            set_last_error("Null action provided".to_string());
+            return FFIErrorCode::NullPointer as c_int;
         }
-        Err(e) => {
-            set_last_error(format!("Invalid action string: {}", e));
-            FFIErrorCode::InvalidUtf8 as c_int
+        match unsafe { c_str_to_string(action) } {
+            Ok(action) => {
+                manager.unregister(&action);
+                FFIErrorCode::Success as c_int
+            }
+            Err(e) => {
+                set_last_error(format!("Invalid action string: {}", e));
+                FFIErrorCode::InvalidUtf8 as c_int
+            }
         }
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -734,13 +738,15 @@ pub unsafe extern "C" fn encre_hotkey_register(
     action: *const c_char,
     callback: HotkeyCallback,
 ) -> c_int {
-    let Some(manager) = manager(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    match unsafe { registration(binding, action) } {
-        Ok((binding, action)) => registered(manager.register(binding, action, callback)),
-        Err(code) => code,
-    }
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(manager) = manager(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        match unsafe { registration(binding, action) } {
+            Ok((binding, action)) => registered(manager.register(binding, action, callback)),
+            Err(code) => code,
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -750,41 +756,47 @@ pub unsafe extern "C" fn encre_hotkey_register_hold(
     action: *const c_char,
     callback: PttCallback,
 ) -> c_int {
-    let Some(manager) = manager(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    match unsafe { registration(binding, action) } {
-        Ok((binding, action)) => registered(manager.register_hold(binding, action, callback)),
-        Err(code) => code,
-    }
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(manager) = manager(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        match unsafe { registration(binding, action) } {
+            Ok((binding, action)) => registered(manager.register_hold(binding, action, callback)),
+            Err(code) => code,
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_start(handle: HotkeyManagerHandle) -> c_int {
-    let Some(manager) = manager(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    match manager.start() {
-        Ok(()) => FFIErrorCode::Success as c_int,
-        Err(e) => {
-            set_last_error(format!("Failed to start hotkey listener: {}", e));
-            FFIErrorCode::OperationFailed as c_int
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(manager) = manager(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        match manager.start() {
+            Ok(()) => FFIErrorCode::Success as c_int,
+            Err(e) => {
+                set_last_error(format!("Failed to start hotkey listener: {}", e));
+                FFIErrorCode::OperationFailed as c_int
+            }
         }
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn encre_hotkey_stop(handle: HotkeyManagerHandle) -> c_int {
-    let Some(manager) = manager(handle) else {
-        return FFIErrorCode::NullPointer as c_int;
-    };
-    match manager.stop() {
-        Ok(()) => FFIErrorCode::Success as c_int,
-        Err(e) => {
-            set_last_error(format!("Failed to stop hotkey listener: {}", e));
-            FFIErrorCode::OperationFailed as c_int
+    guard(FFIErrorCode::OperationFailed as c_int, || {
+        let Some(manager) = manager(handle) else {
+            return FFIErrorCode::NullPointer as c_int;
+        };
+        match manager.stop() {
+            Ok(()) => FFIErrorCode::Success as c_int,
+            Err(e) => {
+                set_last_error(format!("Failed to stop hotkey listener: {}", e));
+                FFIErrorCode::OperationFailed as c_int
+            }
         }
-    }
+    })
 }
 
 /// Null when the listener is running. Free with `encre_free_string`.
