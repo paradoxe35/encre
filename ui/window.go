@@ -82,6 +82,10 @@ type MainWindow struct {
 	speechRemoteURL     *widget.Entry
 	speechRemoteKey     *widget.Entry
 	speechKeyUnreadable bool
+	// The key and endpoint typed for each service, so one service's key is never sent to another.
+	speechServiceDrafts map[string]speechServiceDraft
+	speechServiceShown  string
+	speechServiceSaved  string
 	microphoneNotice    *fyne.Container
 
 	baseURLContainer *fyne.Container

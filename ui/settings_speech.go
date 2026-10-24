@@ -227,12 +227,13 @@ func (w *MainWindow) remoteSpeechPane() *fyne.Container {
 	w.speechRemoteKey.SetPlaceHolder(apiKeyPlaceholder(unreadable, "API key"))
 	w.speechRemoteKey.SetText(key)
 
-	w.speechRemote = w.dirtySelect(stt.PresetNames(), w.applyPreset)
-	if preset, ok := stt.FindPreset(speech.RemoteProvider); ok {
-		w.speechRemote.SetSelected(preset.Name)
-	} else {
-		w.speechRemote.SetSelected(stt.RemotePresets[0].Name)
+	saved, ok := stt.FindPreset(speech.RemoteProvider)
+	if !ok {
+		saved = stt.RemotePresets[0]
 	}
+	w.speechServiceSaved = saved.ID
+	w.speechRemote = w.dirtySelect(stt.PresetNames(), w.applyPreset)
+	w.speechRemote.SetSelected(saved.Name)
 
 	note := widget.NewLabel("Audio is sent to this service. Nothing is downloaded.")
 	note.Wrapping = fyne.TextWrapWord
@@ -256,6 +257,7 @@ func (w *MainWindow) applyPreset(name string) {
 		return
 	}
 
+	w.switchSpeechService(preset.ID)
 	w.speechRemoteModel.SetOptions(preset.Models)
 	if preset.ID == "custom" {
 		w.speechRemoteURL.Enable()
@@ -265,6 +267,43 @@ func (w *MainWindow) applyPreset(name string) {
 	}
 	w.adoptPresetModel(preset)
 	w.refreshLanguages(config.SpeechRemote)
+}
+
+type speechServiceDraft struct {
+	key, url   string
+	unreadable bool
+}
+
+// Keeps what was typed for the service left, and shows what belongs to the one picked: its draft,
+// what was saved for it, or nothing.
+func (w *MainWindow) switchSpeechService(id string) {
+	if id == w.speechServiceShown {
+		return
+	}
+	if w.speechServiceDrafts == nil {
+		w.speechServiceDrafts = make(map[string]speechServiceDraft)
+	}
+	if w.speechServiceShown != "" {
+		w.speechServiceDrafts[w.speechServiceShown] = speechServiceDraft{
+			key: w.speechRemoteKey.Text, url: w.speechRemoteURL.Text, unreadable: w.speechKeyUnreadable,
+		}
+	}
+	first := w.speechServiceShown == ""
+	w.speechServiceShown = id
+	if first {
+		return
+	}
+
+	draft, ok := w.speechServiceDrafts[id]
+	if !ok && id == w.speechServiceSaved {
+		speech := w.config.SpeechSettings()
+		draft.key, draft.unreadable = decryptedRemoteAPIKey(speech.RemoteAPIKey)
+		draft.url = speech.RemoteBaseURL
+	}
+	w.speechKeyUnreadable = draft.unreadable
+	w.speechRemoteKey.SetPlaceHolder(apiKeyPlaceholder(draft.unreadable, "API key"))
+	w.speechRemoteKey.SetText(draft.key)
+	w.speechRemoteURL.SetText(draft.url)
 }
 
 // A model of another preset is swapped for the default; one typed by hand is left alone.
@@ -549,6 +588,8 @@ func (w *MainWindow) applySpeechSettings(remoteAPIKey string) {
 
 	if preset, ok := stt.PresetByName(w.speechRemote.Selected); ok {
 		speech.RemoteProvider = preset.ID
+		w.speechServiceSaved = preset.ID
+		clear(w.speechServiceDrafts)
 	}
 	speech.RemoteModel = w.speechRemoteModel.Text
 	speech.RemoteBaseURL = w.speechRemoteURL.Text

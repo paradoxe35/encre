@@ -527,3 +527,33 @@ func TestEnteringAKeyThisComputerCouldNotReadReplacesIt(t *testing.T) {
 		t.Errorf("clearing the new speech key kept %q", got)
 	}
 }
+
+func TestASpeechKeyStaysWithTheServiceItWasEnteredFor(t *testing.T) {
+	cfg := config.Default()
+	w := newSettingsWindow(t, cfg)
+	w.speechRemote.SetSelected("OpenAI")
+	w.speechRemoteKey.SetText("sk-openai-secret")
+	w.saveSettings()
+
+	w.speechRemote.SetSelected("Custom")
+	if w.speechRemoteKey.Text != "" {
+		t.Fatalf("the OpenAI key followed to Custom: %q", w.speechRemoteKey.Text)
+	}
+	w.speechRemoteURL.SetText("https://third-party.example/v1")
+	w.speechRemote.SetSelected("Groq")
+	w.speechRemote.SetSelected("Custom")
+	if w.speechRemoteURL.Text != "https://third-party.example/v1" {
+		t.Fatalf("the custom endpoint became %q after looking at another service", w.speechRemoteURL.Text)
+	}
+	w.speechRemote.SetSelected("OpenAI")
+	if w.speechRemoteKey.Text != "sk-openai-secret" {
+		t.Fatalf("going back to the saved service shows key %q", w.speechRemoteKey.Text)
+	}
+
+	w.speechRemote.SetSelected("Custom")
+	w.saveSettings()
+	speech := cfg.SpeechSettings()
+	if key, _ := config.DecryptAPIKey(speech.RemoteAPIKey); key != "" || speech.RemoteBaseURL != "https://third-party.example/v1" {
+		t.Fatalf("saved custom service holds key %q and endpoint %q", key, speech.RemoteBaseURL)
+	}
+}
