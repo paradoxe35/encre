@@ -7,9 +7,12 @@ package main
 import (
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"fyne.io/fyne/v2/app"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/ducking"
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/platform"
@@ -38,6 +41,10 @@ func main() {
 	}
 	defer instance.Close()
 
+	if err := ducking.RecoverStale(); err != nil {
+		logger.Warn("Failed to restore audio an earlier run left lowered", "error", err)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Error("Failed to load configuration", "error", err)
@@ -58,9 +65,23 @@ func main() {
 	}
 
 	instance.Serve(application.ShowWindow)
+	stopOnSignal(application)
 
 	if err := application.Start(); err != nil {
 		logger.Error("Failed to start application", "error", err)
 		os.Exit(1)
 	}
+}
+
+// A logout or kill must still give back the hotkeys and the audio lowered while dictating.
+func stopOnSignal(application *Application) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		received := <-signals
+		logger.Info("Stopping on signal", "signal", received.String())
+		// A second signal kills outright if stopping hangs.
+		signal.Reset(os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		application.Stop()
+	}()
 }

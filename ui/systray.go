@@ -7,7 +7,7 @@ import (
 )
 
 func SetupSystemTray(desk desktop.App, mainWindow *MainWindow, onQuit func() error) {
-	// Tray callbacks run off Fyne's thread, so UI work goes through fyne.Do.
+	// Fyne runs tray callbacks on the UI thread and waits for them, so none may block on that thread.
 	menu := fyne.NewMenu("Encre",
 		fyne.NewMenuItem("Settings", func() {
 			fyne.Do(mainWindow.ShowWindow)
