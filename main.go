@@ -88,12 +88,12 @@ func stopOnSignal(application *Application) {
 }
 
 // Fyne quits on SIGINT and SIGTERM itself once its loop runs, and Start cleans up once the loop ends.
-// Before that the quit is queued, so the loop ends as it starts and Start's teardown does not race Start.
+// Before that any signal queues the quit, so the loop ends as it starts and Start's teardown does not race Start.
 func onSignal(received os.Signal, loopStarted bool, stop, quit func()) {
 	switch {
-	case received == syscall.SIGHUP:
-		stop()
 	case !loopStarted:
 		quit()
+	case received == syscall.SIGHUP:
+		stop()
 	}
 }

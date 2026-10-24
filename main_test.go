@@ -72,7 +72,7 @@ func TestSignalsStopTheAppWhoeverIsListening(t *testing.T) {
 		stop, quit  bool
 	}{
 		{syscall.SIGHUP, true, true, false},
-		{syscall.SIGHUP, false, true, false},
+		{syscall.SIGHUP, false, false, true},
 		{syscall.SIGTERM, true, false, false},
 		{os.Interrupt, true, false, false},
 		{syscall.SIGTERM, false, false, true},
