@@ -33,7 +33,17 @@ fn main() {
     // as the Go build links statically too: the libstdc++ DLL first on PATH may not be the one built against.
     let target = env::var("TARGET").unwrap_or_default();
     if target.ends_with("-windows-gnu") {
-        println!("cargo:rustc-link-arg=-l:libstdc++.a");
+        // The archive comes last on the line, so what it calls in turn is named again after it.
+        for arg in [
+            "-l:libstdc++.a",
+            "-l:libpthread.a",
+            "-lmingwex",
+            "-lmsvcrt",
+            "-lkernel32",
+            "-lgcc",
+        ] {
+            println!("cargo:rustc-link-arg={arg}");
+        }
     }
 
     println!("cargo:rerun-if-changed=src/");
