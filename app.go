@@ -156,6 +156,11 @@ func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instanc
 		application.loopStarted.Store(true)
 		systray.SetTooltip("Encre")
 		installReopenHandler(application.ShowWindow)
+		// The UI thread is the one asking, so nothing in the teardown may wait on it.
+		installTerminateHandler(func() {
+			application.loopEnded.Store(true)
+			application.teardown()
+		})
 		prepareNotifications()
 	})
 	app.Lifecycle().SetOnStopped(func() { application.loopEnded.Store(true) })

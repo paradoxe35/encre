@@ -3,3 +3,5 @@
 package main
 
 func installReopenHandler(show func()) {}
+
+func installTerminateHandler(stop func()) {}

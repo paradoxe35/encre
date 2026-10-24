@@ -14,6 +14,32 @@ static BOOL shouldHandleReopen(id self, SEL cmd, NSApplication *app, BOOL hasVis
     return YES;
 }
 
+// GLFW answers a quit from logout, restart or the Dock by asking each window to close and then
+// cancelling, and Encre's windows only hide, so logout stopped at "Encre canceled log out". The
+// teardown runs here instead, on this thread, and the quit goes ahead.
+static NSApplicationTerminateReply shouldTerminate(id self, SEL cmd, NSApplication *app) {
+    encreHandleTerminate();
+    return NSTerminateNow;
+}
+
+void EncreInstallTerminateHandler(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        id delegate = [NSApp delegate];
+        if (delegate == nil) {
+            return;
+        }
+
+        char types[16];
+        snprintf(types, sizeof(types), "%s%s%s%s",
+                 @encode(NSApplicationTerminateReply), @encode(id), @encode(SEL), @encode(id));
+
+        class_replaceMethod(object_getClass(delegate),
+                            @selector(applicationShouldTerminate:),
+                            (IMP)shouldTerminate,
+                            types);
+    });
+}
+
 void EncreInstallReopenHandler(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         id delegate = [NSApp delegate];

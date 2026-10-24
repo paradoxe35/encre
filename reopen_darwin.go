@@ -17,6 +17,21 @@ func encreHandleReopen() {
 	}
 }
 
+var onTerminate func()
+
+//export encreHandleTerminate
+func encreHandleTerminate() {
+	if onTerminate != nil {
+		onTerminate()
+	}
+}
+
+// stop runs on the UI thread as macOS quits the app, so it must not wait on that thread.
+func installTerminateHandler(stop func()) {
+	onTerminate = stop
+	C.EncreInstallTerminateHandler()
+}
+
 // Fyne does not forward Dock-icon reopen, so the handler is added to the delegate Fyne owns.
 func installReopenHandler(show func()) {
 	onReopen = show
