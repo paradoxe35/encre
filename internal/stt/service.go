@@ -41,9 +41,8 @@ type Service struct {
 	speech    speechEngine
 	recording bool
 	takes     int
-	// orphan is an engine Close left to the takes still transcribing on it, orphanTakes of them.
-	orphan       speechEngine
-	orphanTakes  int
+	// orphans are engines Close left to the takes still transcribing on them, with how many.
+	orphans      map[speechEngine]int
 	model        string
 	device       string
 	language     string
@@ -313,12 +312,12 @@ func (s *Service) finishTake(speech speechEngine) {
 	// A take that outlived Close belongs to an engine Close left running for it; the last such take
 	// closes it, and the count of a later engine is left alone.
 	if speech != s.speech {
-		last := speech == s.orphan && s.orphanTakes == 1
-		if speech == s.orphan {
-			s.orphanTakes--
-		}
+		left, orphaned := s.orphans[speech]
+		last := orphaned && left <= 1
 		if last {
-			s.orphan = nil
+			delete(s.orphans, speech)
+		} else if orphaned {
+			s.orphans[speech] = left - 1
 		}
 		s.mu.Unlock()
 		if last {
@@ -364,7 +363,10 @@ func (s *Service) Close() {
 	s.recording = false
 	s.takes = 0
 	if speech != nil && pending > 0 {
-		s.orphan, s.orphanTakes = speech, pending
+		if s.orphans == nil {
+			s.orphans = make(map[speechEngine]int)
+		}
+		s.orphans[speech] += pending
 	}
 	s.mu.Unlock()
 

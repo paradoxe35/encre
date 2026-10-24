@@ -437,3 +437,40 @@ func TestClosingWhileRecordingStopsTheMicrophone(t *testing.T) {
 		t.Fatalf("an open recording outlived Close: %v", fake.entries())
 	}
 }
+
+func TestEveryEngineLeftToATakeIsClosedThoughCloseCameTwice(t *testing.T) {
+	service, _, cfg := newTestService(t, false)
+	var engines []*fakeEngine
+	gate := make(chan struct{})
+	service.newEngine = func() (speechEngine, error) {
+		engine := &fakeEngine{}
+		engine.gateStop(gate)
+		engines = append(engines, engine)
+		return engine, nil
+	}
+
+	var stopped sync.WaitGroup
+	for range 2 {
+		if err := service.StartRecording(cfg); err != nil {
+			t.Fatal(err)
+		}
+		engine := engines[len(engines)-1]
+		stopped.Add(1)
+		go func() {
+			defer stopped.Done()
+			service.StopRecording()
+		}()
+		for !slices.Contains(engine.entries(), "stop") {
+			time.Sleep(time.Millisecond)
+		}
+		service.Close()
+	}
+	close(gate)
+	stopped.Wait()
+
+	for i, engine := range engines {
+		if got := commands(engine.entries(), "close"); len(got) != 1 {
+			t.Errorf("engine %d left to its take was closed %d times: %v", i, len(got), engine.entries())
+		}
+	}
+}
