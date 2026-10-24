@@ -410,11 +410,10 @@ func TestARefusalSentWholeSaysSo(t *testing.T) {
 	}
 }
 
-// A stream may run for minutes, but a server that never answers should not hang the app.
-func TestTheClientGivesUpOnAServerThatNeverAnswers(t *testing.T) {
-	transport, ok := httpClient.Transport.(*http.Transport)
-	if !ok || transport.ResponseHeaderTimeout == 0 || transport.Proxy == nil {
-		t.Fatalf("transport %+v, want a response header timeout and the proxy settings", httpClient.Transport)
+// The wait is the user's silence timeout from Settings, so the client adds none that would cut it short.
+func TestTheClientLeavesTheWaitToItsCaller(t *testing.T) {
+	if transport, ok := httpClient.Transport.(*http.Transport); ok && transport.ResponseHeaderTimeout != 0 {
+		t.Fatalf("a header timeout of %v overrides the action timeout", transport.ResponseHeaderTimeout)
 	}
 	if httpClient.Timeout != 0 {
 		t.Fatal("a whole-request timeout would cut long streams off")

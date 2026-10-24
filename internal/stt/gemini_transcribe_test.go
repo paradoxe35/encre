@@ -316,13 +316,15 @@ func TestGeminiRefusesTruncatedText(t *testing.T) {
 	}
 }
 
-// Gemini 3 is meant to run at its default temperature; 2.x transcribes most faithfully at 0.
+// Gemini 3, and an alias that may be one, runs at its default temperature; 2.x transcribes most faithfully at 0.
 func TestGeminiTemperatureMatchesModelGeneration(t *testing.T) {
 	cases := map[string]any{
-		"gemini-3.8-flash": nil,
-		"gemini-3-pro":     nil,
-		"gemini-2.5-flash": 0.0,
-		"my-custom-model":  0.0,
+		"gemini-3.8-flash":    nil,
+		"gemini-3-pro":        nil,
+		"gemini-2.5-flash":    0.0,
+		"gemini-1.5-pro":      0.0,
+		"gemini-flash-latest": nil,
+		"my-custom-model":     nil,
 	}
 
 	for model, want := range cases {

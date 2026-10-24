@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 // protocol is one API's wire format; the provider around it does the HTTP, errors and retries.
@@ -34,19 +33,11 @@ type endpoint struct {
 }
 
 // A redirect would turn the POST into a GET, which an API answers with a puzzling 405.
+// Every caller bounds its own wait, the actions by the silence timeout set in Settings.
 var httpClient = &http.Client{
-	Transport: headerTimeout(),
 	CheckRedirect: func(req *http.Request, _ []*http.Request) error {
 		return &redirectError{origin: req.URL.Scheme + "://" + req.URL.Host}
 	},
-}
-
-// Only the wait for headers is bounded, as a stream may run for minutes; it is generous because
-// a reply sent whole, or by a local server still loading its model, starts only once ready.
-func headerTimeout() *http.Transport {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ResponseHeaderTimeout = 2 * time.Minute
-	return transport
 }
 
 type redirectError struct {

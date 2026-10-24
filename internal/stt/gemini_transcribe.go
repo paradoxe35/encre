@@ -183,9 +183,10 @@ func sendGemini(ctx context.Context, cfg config.SpeechConfig, request geminiRequ
 	return parseGeminiResponse(body)
 }
 
-// Gemini 3 below its default temperature of 1 may loop, repeating a phrase until the output limit.
+// Gemini 3 below its default temperature of 1 may loop, repeating a phrase until the output limit;
+// an alias such as gemini-flash-latest may be a 3 too, so only a known 1 or 2 is pinned.
 func temperatureFor(model string) *float64 {
-	if geminiMajorVersion(model) >= 3 {
+	if major := geminiMajorVersion(model); major < 1 || major > 2 {
 		return nil
 	}
 	zero := 0.0

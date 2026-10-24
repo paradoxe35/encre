@@ -543,6 +543,24 @@ func TestALinkStaysHoveredWhileTheAnswerStreams(t *testing.T) {
 	}
 }
 
+func TestALinkMovedFromUnderTheRestingPointerIsNoLongerHovered(t *testing.T) {
+	card, _ := newCard(t)
+	update, _, _ := card.Open("q", "", func() {})
+	update("See [the docs](https://example.org) now", false)
+	card.render()
+	s := card.selection
+	s.pointer.MouseMoved(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: at(t, s, "docs")}})
+	if s.hovered == nil {
+		t.Fatal("test setup: the link under the pointer is not hovered")
+	}
+
+	s.Resize(s.Size().AddWidthHeight(0, 40))
+	update("See [the docs](https://example.org) now, and then some more.", true)
+	if s.hovered != nil {
+		t.Fatal("the link stayed hovered after the text moved under a pointer that did not")
+	}
+}
+
 // underlined reads the line Fyne draws last under a hovered link.
 func underlined(link *widget.Hyperlink) bool {
 	renderer, _ := cachedRenderer(link)

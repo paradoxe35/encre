@@ -43,6 +43,8 @@ type selectableText struct {
 	pointer       *textPointer
 	hovered       *widget.Hyperlink
 	pointerAt     fyne.Position
+	// pointerFrame is where the text lay when pointerAt was last told, which no move reports again.
+	pointerFrame textFrame
 
 	dragged, dragging, following bool
 	dragAt                       fyne.Position
@@ -715,8 +717,10 @@ func (r *selectableRenderer) Refresh() {
 	_, high := s.span()
 	before := s.textUpTo(high)
 	s.text.Refresh()
-	if s.hovered != nil {
+	if s.hovered != nil && s.frame() == s.pointerFrame {
 		s.hover(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: s.pointerAt}})
+	} else {
+		s.unhover()
 	}
 	if high > 0 {
 		s.collect()
@@ -725,6 +729,16 @@ func (r *selectableRenderer) Refresh() {
 		}
 	}
 	s.paint()
+}
+
+// frame moves when the text scrolls or the card grows, leaving the resting pointer over something else.
+func (s *selectableText) frame() textFrame {
+	return textFrame{fyne.CurrentApp().Driver().AbsolutePositionForObject(s.pointer), s.pointer.Size()}
+}
+
+type textFrame struct {
+	at   fyne.Position
+	size fyne.Size
 }
 
 func (r *selectableRenderer) Objects() []fyne.CanvasObject {
@@ -814,6 +828,7 @@ func (p *textPointer) MouseIn(event *desktop.MouseEvent)      { p.MouseMoved(eve
 
 func (p *textPointer) MouseMoved(event *desktop.MouseEvent) {
 	p.s.pointerAt = event.Position
+	p.s.pointerFrame = p.s.frame()
 	bar := p.s.barAt(event.Position)
 	var over desktop.Hoverable
 	if bar != nil {
