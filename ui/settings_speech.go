@@ -530,6 +530,7 @@ func (w *MainWindow) applySpeechSettings(remoteAPIKey string) {
 	speech.ModelID = w.speechModelDraft
 
 	speech.InputDevice = w.microphone.Device()
+	w.microphone.Saved()
 	speech.Language = w.selectedSpeechLanguage()
 	speech.KeepModelLoaded = w.speechKeepLoaded.Checked
 	speech.CleanUp = w.speechCleanUp.Checked

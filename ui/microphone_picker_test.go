@@ -96,3 +96,29 @@ func TestPickerDoesNotDuplicateSavedDevice(t *testing.T) {
 		t.Errorf("Headset appears %d times, want once", count)
 	}
 }
+
+func TestPickingTheSystemDefaultSurvivesAReopen(t *testing.T) {
+	p := newMicrophonePicker("USB Mic", lister(
+		input.Device{Name: "Built-in", IsDefault: true},
+		input.Device{Name: "USB Mic"},
+	))
+
+	p.selector.SetSelected(systemDefaultDevice)
+	p.Refresh()
+	if p.Device() != "" || p.selector.Selected != systemDefaultDevice {
+		t.Fatalf("after a reopen the picker reads %q and shows %q", p.Device(), p.selector.Selected)
+	}
+}
+
+func TestASavedChoiceIsWhatAnUnpluggedDeviceKeeps(t *testing.T) {
+	devices := []input.Device{{Name: "Built-in", IsDefault: true}, {Name: "Headset"}}
+	p := newMicrophonePicker("", func() []input.Device { return devices })
+
+	p.selector.SetSelected("Headset")
+	p.Saved()
+	devices = devices[:1]
+	p.Refresh()
+	if p.Device() != "Headset" {
+		t.Fatalf("the saved Headset became %q once unplugged", p.Device())
+	}
+}

@@ -140,7 +140,12 @@ func (w *MainWindow) browseProviderModels(report progress) {
 		return
 	}
 
-	w.loadModels(provider, apiKey, baseURL, current, report, func(model string) {
+	// The list may arrive after the user moved on to another provider, whose model it is not.
+	stale := func() bool { now, _ := w.providerBinding.Get(); return now != provider }
+	w.loadModels(provider, apiKey, baseURL, current, report, stale, func(model string) {
+		if stale() {
+			return
+		}
 		w.modelBinding.Set(model)
 		w.markDirty()
 		report.Done("Model set to " + model)
@@ -419,7 +424,7 @@ func (w *MainWindow) fetchModelsForCustomProvider(apiKey, baseURL string, requir
 	}
 
 	// No name yet, so the provider lists as OpenAI-compatible, the only type a custom provider can be.
-	w.loadModels("", apiKey, strings.TrimSpace(baseURL), modelEntry.Text, report, func(model string) {
+	w.loadModels("", apiKey, strings.TrimSpace(baseURL), modelEntry.Text, report, nil, func(model string) {
 		modelEntry.SetText(model)
 		report.Done("Model set to " + model)
 	})

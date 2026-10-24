@@ -42,6 +42,9 @@ func newMicrophonePicker(saved string, list func() []input.Device) *MicrophonePi
 			return
 		}
 		p.chosen = p.selector.Selected
+		if p.chosen == systemDefaultDevice {
+			p.chosen = ""
+		}
 		if p.onChanged != nil {
 			p.onChanged()
 		}
@@ -59,6 +62,9 @@ func (p *MicrophonePicker) Device() string {
 	}
 	return p.chosen
 }
+
+// Saved makes the current choice the one an unplugged device falls back to.
+func (p *MicrophonePicker) Saved() { p.saved = p.Device() }
 
 func (p *MicrophonePicker) Refresh() {
 	p.refreshing = true

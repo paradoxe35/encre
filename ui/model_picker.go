@@ -16,7 +16,8 @@ import (
 
 const modelListTimeout = 15 * time.Second
 
-func (w *MainWindow) loadModels(provider, apiKey, baseURL, current string, report progress, apply func(string)) {
+// stale, when given, reports that the form moved on while the list loaded, so it is dropped.
+func (w *MainWindow) loadModels(provider, apiKey, baseURL, current string, report progress, stale func() bool, apply func(string)) {
 	report.Busy("Loading models…")
 
 	go func() {
@@ -27,6 +28,8 @@ func (w *MainWindow) loadModels(provider, apiKey, baseURL, current string, repor
 
 		fyne.Do(func() {
 			switch {
+			case stale != nil && stale():
+				report.Done("")
 			case err != nil:
 				logger.Error("Could not list models", "provider", provider, "error", err)
 				report.Fail("Could not load models: " + shortMessage(err.Error()))
