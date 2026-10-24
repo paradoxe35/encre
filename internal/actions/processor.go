@@ -30,6 +30,9 @@ var ErrHalted = fmt.Errorf("Encre is stopping: %w", context.Canceled)
 // An action that outlives this is cut short and the clipboard restored under it.
 const haltWait = 3 * time.Second
 
+// insertWait bounds how long a finished dictation waits for a running action to give the clipboard back.
+const insertWait = 2 * time.Minute
+
 type Processor struct {
 	mu               sync.Mutex
 	config           *config.Config
@@ -147,6 +150,32 @@ func (p *Processor) overlay() overlay.Overlay {
 	return p.indicator
 }
 
+// beginWithin waits for a running action to end, since a dictation already spoken should not be refused.
+func (p *Processor) beginWithin(wait time.Duration) (func(), error) {
+	deadline := time.After(wait)
+	for {
+		p.mu.Lock()
+		idle, lifetime := p.idle, p.lifetimeLocked()
+		p.mu.Unlock()
+		if idle == nil {
+			release, err := p.begin()
+			if err == nil || !errors.Is(err, errBusy) {
+				return release, err
+			}
+			continue
+		}
+		select {
+		case <-idle:
+		case <-lifetime.Done():
+			return nil, ErrHalted
+		case <-deadline:
+			return nil, errBusy
+		}
+	}
+}
+
+var errBusy = errors.New("another action is already running")
+
 // Two overlapping runs would fight over the clipboard, which each saves and restores.
 func (p *Processor) begin() (func(), error) {
 	p.mu.Lock()
@@ -157,7 +186,7 @@ func (p *Processor) begin() (func(), error) {
 	if p.processing {
 		p.mu.Unlock()
 		logger.Warn("Already processing an action")
-		return nil, fmt.Errorf("another action is already running")
+		return nil, errBusy
 	}
 	p.processing = true
 	idle := make(chan struct{})
@@ -587,7 +616,7 @@ func (p *Processor) InsertText(text string) error {
 		return nil
 	}
 
-	release, err := p.begin()
+	release, err := p.beginWithin(insertWait)
 	if err != nil {
 		return err
 	}

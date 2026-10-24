@@ -336,6 +336,9 @@ func TestACleanUpFailureIsReportedAndNothingIsTyped(t *testing.T) {
 	if typed := h.typist.typedSoFar(); len(typed) != 0 {
 		t.Fatalf("typed %v after a failed clean-up", typed)
 	}
+	if got := h.typist.remembered(); len(got) != 1 || got[0][0] == "" || got[0][0] != got[0][1] {
+		t.Fatalf("history %v after a failed clean-up, want the raw transcript kept", got)
+	}
 }
 
 func TestAnEmptyTranscriptIsReportedNotSwallowed(t *testing.T) {
@@ -375,15 +378,15 @@ func TestAStartErrorIsReportedAndTheReleaseIsIgnored(t *testing.T) {
 	}
 }
 
-func TestAnInsertFailureIsReportedAndNotRemembered(t *testing.T) {
+func TestAnInsertFailureIsReportedAndTheTranscriptKept(t *testing.T) {
 	h := newHarness(t, false)
 	boom := errors.New("paste refused")
 	h.typist.insErr = boom
 	h.take()
 
 	h.expectReport(t, boom)
-	if got := h.typist.remembered(); len(got) != 0 {
-		t.Fatalf("history %v after a failed paste", got)
+	if got := h.typist.remembered(); len(got) != 1 || got[0][0] == "" {
+		t.Fatalf("history %v after a failed paste, want the transcript kept", got)
 	}
 }
 

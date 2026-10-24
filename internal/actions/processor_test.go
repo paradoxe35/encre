@@ -410,3 +410,39 @@ func TestHaltCancelsTheRunningActionAndWaitsForIt(t *testing.T) {
 	}
 	release()
 }
+
+// A dictation finished during another action is typed after it, not refused.
+func TestBeginWithinWaitsForTheRunningAction(t *testing.T) {
+	p := &Processor{}
+	release, err := p.begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan error, 1)
+	go func() {
+		next, err := p.beginWithin(time.Second)
+		if next != nil {
+			next()
+		}
+		started <- err
+	}()
+	select {
+	case err := <-started:
+		t.Fatalf("started while another action ran: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	if err := <-started; err != nil {
+		t.Fatalf("refused after the running action ended: %v", err)
+	}
+
+	release, _ = p.begin()
+	defer release()
+	if _, err := p.beginWithin(20 * time.Millisecond); err == nil {
+		t.Error("started while another action ran past the wait")
+	}
+	go p.Halt()
+	if _, err := p.beginWithin(time.Second); !errors.Is(err, ErrHalted) {
+		t.Errorf("a halted processor gave %v, want ErrHalted", err)
+	}
+}

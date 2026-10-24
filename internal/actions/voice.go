@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -228,19 +229,21 @@ func (d *Voice) stop(kind config.ActionKind) {
 	}()
 }
 
+// A take that cannot be typed is still kept in History, so what was said is never lost.
 func (d *Voice) write(raw string) error {
 	text := raw
 	if d.config().SpeechSettings().CleanUp {
 		cleaned, err := d.assistant.CleanTranscript(raw)
 		if err != nil {
-			return err
+			d.assistant.RecordDictation(raw, raw)
+			return fmt.Errorf("%w; the transcript is in History", err)
 		}
 		text = cleaned
 	}
-	if err := d.assistant.InsertText(text); err != nil {
-		return err
-	}
 	d.assistant.RecordDictation(raw, text)
+	if err := d.assistant.InsertText(text); err != nil {
+		return fmt.Errorf("%w; the transcript is in History", err)
+	}
 	return nil
 }
 
