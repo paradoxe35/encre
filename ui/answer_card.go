@@ -87,6 +87,7 @@ type AnswerCard struct {
 	later    func(time.Duration, func())
 
 	content   *widget.RichText
+	selection *selectableText
 	scroll    *container.Scroll
 	reading   *container.ThemeOverride
 	textScale float32
@@ -198,6 +199,7 @@ func (c *AnswerCard) clear() {
 	c.question, c.text, c.failure, c.status, c.done, c.stop = "", "", "", "", true, nil
 	c.exchange, c.shown = "", ""
 	c.follow("")
+	c.selection.Unselect()
 }
 
 func (c *AnswerCard) open(id uint64, question, exchange string, stop func()) {
@@ -210,6 +212,7 @@ func (c *AnswerCard) open(id uint64, question, exchange string, stop func()) {
 	c.session = id
 	c.question, c.text, c.failure, c.status, c.done, c.stop = question, "", "", "", false, stop
 	c.exchange, c.shown = exchange, ""
+	c.selection.Unselect()
 	c.scroll.ScrollToTop()
 	c.show()
 }
@@ -339,7 +342,7 @@ func (c *AnswerCard) focusInput() {
 // render never scrolls: text arriving past the card's bottom waits there.
 func (c *AnswerCard) render() {
 	c.content.Segments = c.segments()
-	c.content.Refresh()
+	c.selection.Refresh()
 	if len(c.content.Segments) == 0 {
 		c.reading.Hide()
 	} else {
@@ -369,7 +372,7 @@ func (c *AnswerCard) segments() []widget.RichTextSegment {
 	if c.question != "" {
 		segments = append(segments,
 			&widget.TextSegment{Text: c.shownQuestion(), Style: mutedStyle()},
-			&widget.SeparatorSegment{},
+			&cardRule{holder: c.content},
 		)
 	}
 	switch {
@@ -491,10 +494,12 @@ func (c *AnswerCard) build() {
 
 	c.content = widget.NewRichText()
 	c.content.Wrapping = fyne.TextWrapWord
-	c.scroll = container.NewVScroll(c.content)
+	c.selection = newSelectableText(c.content, c.copySelection, c.Hide, c.typeIntoInput)
+	c.scroll = container.NewVScroll(c.selection)
+	c.selection.scroll = c.scroll
 	c.reading = container.NewThemeOverride(c.scroll, c.readingTheme())
 
-	c.input = newQuestionEntry(c.submit, c.Hide, c.browse)
+	c.input = newQuestionEntry(c.submit, c.Hide, c.browse, func() { c.copySelection(c.selection.SelectedText()) })
 	c.input.TextStyle.Monospace = designFor(c.style).monospace
 	c.input.SetPlaceHolder("Ask anything")
 	c.input.OnChanged = c.inputChanged
@@ -515,7 +520,7 @@ func (c *AnswerCard) build() {
 			c.Hide()
 		}
 	})
-	c.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { c.copyAnswer() })
+	c.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { c.copySelection(c.selection.SelectedText()) })
 }
 
 // browse steps to an older exchange, or a newer one and past the newest to a fresh card, which a new question then continues.
@@ -554,7 +559,7 @@ func (c *AnswerCard) fit() fyne.Size {
 	if c.reading.Visible() {
 		// Re-lay the scroll after measuring, or it ignores the wheel; then restore the reader's place.
 		reading := c.scroll.Offset
-		c.content.Resize(fyne.NewSize(width-2*answerInset, 0))
+		c.selection.Resize(fyne.NewSize(width-2*answerInset, 0))
 		height += max(c.content.MinSize().Height-c.scroll.MinSize().Height, 0)
 		c.scroll.Refresh()
 		c.scroll.ScrollToOffset(reading)
@@ -725,10 +730,31 @@ func (c *AnswerCard) inputChanged(text string) {
 }
 
 func (c *AnswerCard) copyAnswer() {
-	c.app.Clipboard().SetContent(c.text)
+	c.copied(c.text)
+}
+
+// copySelection copies the whole answer when nothing is selected, as the copy key did before text could be selected.
+func (c *AnswerCard) copySelection(selected string) {
+	if selected == "" {
+		selected = c.text
+	}
+	c.copied(selected)
+}
+
+func (c *AnswerCard) copied(text string) {
+	if text == "" {
+		return
+	}
+	c.app.Clipboard().SetContent(text)
 	c.copy.SetIcon(theme.ConfirmIcon())
 
 	c.later(copiedFor, func() { c.copy.SetIcon(theme.ContentCopyIcon()) })
+}
+
+// typeIntoInput starts a follow-up when the reader types after selecting in the answer.
+func (c *AnswerCard) typeIntoInput(r rune) {
+	c.focusInput()
+	c.input.TypedRune(r)
 }
 
 func (c *AnswerCard) native() bool {
@@ -870,14 +896,15 @@ func (w *wheelCatch) Scrolled(event *fyne.ScrollEvent) {
 // questionEntry sends on Enter and breaks the line on Shift+Enter, as chat inputs do.
 type questionEntry struct {
 	widget.Entry
-	shift  bool
-	send   func()
-	cancel func()
-	browse func(older bool)
+	shift      bool
+	send       func()
+	cancel     func()
+	browse     func(older bool)
+	copyAnswer func()
 }
 
-func newQuestionEntry(send, cancel func(), browse func(older bool)) *questionEntry {
-	entry := &questionEntry{send: send, cancel: cancel, browse: browse}
+func newQuestionEntry(send, cancel func(), browse func(older bool), copyAnswer func()) *questionEntry {
+	entry := &questionEntry{send: send, cancel: cancel, browse: browse, copyAnswer: copyAnswer}
 	entry.MultiLine = true
 	entry.Wrapping = fyne.TextWrapWord
 	entry.SetMinRowsVisible(1)
@@ -911,6 +938,15 @@ func (e *questionEntry) TypedKey(key *fyne.KeyEvent) {
 	default:
 		e.Entry.TypedKey(key)
 	}
+}
+
+// TypedShortcut copies the answer when the input has nothing selected of its own, as the input keeps the keyboard.
+func (e *questionEntry) TypedShortcut(shortcut fyne.Shortcut) {
+	if _, ok := shortcut.(*fyne.ShortcutCopy); ok && e.SelectedText() == "" && e.copyAnswer != nil {
+		e.copyAnswer()
+		return
+	}
+	e.Entry.TypedShortcut(shortcut)
 }
 
 // rows is how many lines text wraps to at the entry's width, up to one past the most the input shows.

@@ -1087,3 +1087,68 @@ func TestALengthOnWholePixelsConvertsTheSameWayBackAndForth(t *testing.T) {
 		}
 	}
 }
+
+func TestACodeBlockTakesTheCardsColoursOverADarkApp(t *testing.T) {
+	card, app := newCard(t)
+	variant := theme.VariantDark
+	app.Settings().SetTheme(newAppTheme(&variant))
+	card.SetStyle(config.CardStylePaper)
+	answered(card, "Q", "```\nfmt.Println(1)\n```\n\n> ```\n> quoted()\n> ```")
+
+	var blocks []*cardCode
+	for _, segment := range card.content.Segments {
+		if found, ok := segment.(*cardCode); ok {
+			blocks = append(blocks, found)
+		}
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("found %d code blocks, want 2", len(blocks))
+	}
+
+	want := card.cardTheme().Color(theme.ColorNameInputBackground, theme.VariantLight)
+	panel := blocks[0].Visual().(*fyne.Container).Objects[0].(*canvas.Rectangle)
+	if panel.FillColor != want {
+		t.Errorf("the code panel is %v, want the paper card's %v", panel.FillColor, want)
+	}
+	if _, ok := blocks[1].Visual().(*fyne.Container).Objects[0].(*fyne.Container); !ok {
+		t.Error("quoted code lost its indent")
+	}
+}
+
+func TestTasksAndRulesTakeTheCardsColoursAndCannotBeTicked(t *testing.T) {
+	card, app := newCard(t)
+	variant := theme.VariantDark
+	app.Settings().SetTheme(newAppTheme(&variant))
+	card.SetStyle(config.CardStylePaper)
+	answered(card, "Q", "- [x] done\n- [ ] open\n\n---\n\nAfter.")
+
+	var boxes int
+	test.NewTempWindow(t, card.content)
+	for _, object := range test.LaidOutObjects(card.content) {
+		switch object.(type) {
+		case *widget.Check:
+			t.Fatal("a task is a check that can be ticked off")
+		case *widget.Separator:
+			t.Fatal("a rule took the app's separator colour")
+		case *canvas.Image:
+			boxes++
+		}
+	}
+	if boxes != 2 {
+		t.Errorf("drew %d task boxes, want 2", boxes)
+	}
+
+	done := findText(card.content.Segments, "done")
+	if done == nil {
+		t.Fatal("the task's text is gone")
+	}
+	want := card.cardTheme().Color(theme.ColorNameForeground, theme.VariantLight)
+	if got := theme.CurrentForWidget(card.content).Color(done.Style.ColorName, variant); got != want {
+		t.Errorf("a task reads %v, want the paper card's %v", got, want)
+	}
+
+	card.selection.SelectAll()
+	if got := card.selection.SelectedText(); !strings.Contains(got, "done\n") || !strings.Contains(got, "open\nAfter.") {
+		t.Errorf("copying the tasks gave %q", got)
+	}
+}
