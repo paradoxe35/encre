@@ -143,13 +143,30 @@ impl Modifiers {
     }
 }
 
-#[cfg(any(test, target_os = "macos"))]
 const MODIFIERS: [Modifier; 4] = [
     Modifier::Ctrl,
     Modifier::Alt,
     Modifier::Shift,
     Modifier::Meta,
 ];
+
+/// The hook never sees a release made on the secure desktop or in an elevated window. A failed
+/// query reads as up, which can stop a hotkey but never fire one.
+#[cfg(target_os = "windows")]
+fn modifier_is_down(modifier: Modifier) -> bool {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        safe fn GetAsyncKeyState(key: i32) -> i16;
+    }
+    // VK_LCONTROL, VK_LMENU, VK_LSHIFT and VK_LWIN, each followed by its right-hand twin.
+    let keys = match modifier {
+        Modifier::Ctrl => [0xA2, 0xA3],
+        Modifier::Alt => [0xA4, 0xA5],
+        Modifier::Shift => [0xA0, 0xA1],
+        Modifier::Meta => [0x5B, 0x5C],
+    };
+    keys.into_iter().any(|key| GetAsyncKeyState(key) < 0)
+}
 
 /// One table both ways, so a name the listener cannot match fails at registration.
 const KEYS: &[(Key, &str)] = &[
@@ -320,15 +337,36 @@ struct ListenerState {
     holding: Option<&'static str>,
     delivery_announced: bool,
     unmatched_announced: Vec<&'static str>,
+    /// Asked before each key event, for a listener that can miss a modifier's release.
+    modifier_is_down: Option<fn(Modifier) -> bool>,
 }
 
 impl ListenerState {
     fn process(&mut self, event: EventType, bindings: &Mutex<Vec<HotkeyBinding>>) {
         match event {
-            EventType::KeyPress(key) => self.on_press(key, bindings),
-            EventType::KeyRelease(key) => self.on_release(key, bindings),
+            EventType::KeyPress(key) => {
+                self.drop_released();
+                self.on_press(key, bindings)
+            }
+            EventType::KeyRelease(key) => {
+                self.drop_released();
+                self.on_release(key, bindings)
+            }
             EventType::ButtonPress(_) => self.interrupted = true,
             _ => {}
+        }
+    }
+
+    /// Dropped without firing, as the release happened long ago. The hook runs before the system
+    /// records its own key, so a modifier being pressed reads up and one being released reads down.
+    fn drop_released(&mut self) {
+        let Some(is_down) = self.modifier_is_down else {
+            return;
+        };
+        for modifier in MODIFIERS {
+            if self.held.get(modifier) && !is_down(modifier) {
+                self.held.set(modifier, false);
+            }
         }
     }
 
@@ -544,6 +582,10 @@ impl SimpleHotkeyManager {
 
         let handle = thread::spawn(move || {
             let mut state = ListenerState::default();
+            #[cfg(target_os = "windows")]
+            {
+                state.modifier_is_down = Some(modifier_is_down);
+            }
 
             #[cfg(target_os = "macos")]
             {
@@ -842,13 +884,40 @@ mod tests {
         Down(Key),
         Up(Key),
         Click,
+        /// Released where the listener cannot see, as on the Ctrl+Alt+Del screen.
+        Unheard(Key),
     }
 
-    use Tap::{Click, Down, Up};
+    use Tap::{Click, Down, Unheard, Up};
+
+    /// What the system reports, updated only after the listener has seen the event.
+    static PHYSICAL: Mutex<Modifiers> = Mutex::new(Modifiers {
+        ctrl: false,
+        alt: false,
+        shift: false,
+        meta: false,
+    });
+
+    fn physically_down(modifier: Modifier) -> bool {
+        PHYSICAL.lock().get(modifier)
+    }
 
     fn fired(bindings: &[(&str, &str)], taps: &[Tap]) -> Vec<String> {
+        run(bindings, taps, None)
+    }
+
+    fn fired_on_windows(bindings: &[(&str, &str)], taps: &[Tap]) -> Vec<String> {
+        run(bindings, taps, Some(physically_down))
+    }
+
+    fn run(
+        bindings: &[(&str, &str)],
+        taps: &[Tap],
+        modifier_is_down: Option<fn(Modifier) -> bool>,
+    ) -> Vec<String> {
         let _serial = SERIAL.lock();
         FIRED.lock().clear();
+        *PHYSICAL.lock() = Modifiers::default();
 
         let mut manager = SimpleHotkeyManager::new();
         for (binding, action) in bindings {
@@ -857,16 +926,25 @@ mod tests {
                 .unwrap_or_else(|e| panic!("could not register {}: {}", binding, e));
         }
 
-        let mut state = ListenerState::default();
+        let mut state = ListenerState {
+            modifier_is_down,
+            ..ListenerState::default()
+        };
         for tap in taps {
-            state.process(
-                match tap {
-                    Down(key) => EventType::KeyPress(*key),
-                    Up(key) => EventType::KeyRelease(*key),
-                    Click => EventType::ButtonPress(Button::Left),
-                },
-                &manager.bindings,
-            );
+            let event = match tap {
+                Down(key) => Some(EventType::KeyPress(*key)),
+                Up(key) => Some(EventType::KeyRelease(*key)),
+                Click => Some(EventType::ButtonPress(Button::Left)),
+                Unheard(_) => None,
+            };
+            if let Some(event) = event {
+                state.process(event, &manager.bindings);
+            }
+            if let Down(key) | Up(key) | Unheard(key) = tap
+                && let Some(modifier) = Modifier::from_key(key)
+            {
+                PHYSICAL.lock().set(modifier, matches!(tap, Down(_)));
+            }
         }
         FIRED.lock().clone()
     }
@@ -1184,6 +1262,120 @@ mod tests {
             &[Down(Key::ControlLeft), Down(Key::Alt), Down(Key::Space)],
         );
         assert_eq!(actions, vec!["revise_everything"]);
+    }
+
+    const WINDOWS: &[(&str, &str)] = &[
+        ("ctrl+win", "revise_selection"),
+        ("ctrl+alt+space", "revise_everything"),
+        ("ctrl+alt+g", "translate_selection"),
+    ];
+
+    #[test]
+    fn releases_lost_to_the_secure_desktop_do_not_turn_typing_into_hotkeys() {
+        let taps = [
+            Down(Key::ControlLeft),
+            Down(Key::Alt),
+            Down(Key::Delete),
+            Unheard(Key::Alt),
+            Unheard(Key::ControlLeft),
+            Down(Key::Space),
+            Up(Key::Space),
+            Down(Key::KeyG),
+            Up(Key::KeyG),
+        ];
+
+        assert_eq!(
+            fired(WINDOWS, &taps),
+            ["revise_everything", "translate_selection"]
+        );
+        assert!(fired_on_windows(WINDOWS, &taps).is_empty());
+    }
+
+    #[test]
+    fn a_chord_after_lost_releases_starts_afresh() {
+        let taps = [
+            Down(Key::ControlLeft),
+            Down(Key::Alt),
+            Unheard(Key::Alt),
+            Unheard(Key::ControlLeft),
+            Down(Key::ControlLeft),
+            Down(Key::MetaLeft),
+            Up(Key::MetaLeft),
+            Up(Key::ControlLeft),
+        ];
+
+        assert!(fired(WINDOWS, &taps).is_empty());
+        assert_eq!(fired_on_windows(WINDOWS, &taps), ["revise_selection"]);
+    }
+
+    #[test]
+    fn only_the_modifier_released_unseen_is_dropped() {
+        let taps = [
+            Down(Key::ShiftLeft),
+            Unheard(Key::ShiftLeft),
+            Down(Key::ControlLeft),
+            Down(Key::Alt),
+            Down(Key::Space),
+        ];
+
+        assert!(fired(WINDOWS, &taps).is_empty());
+        assert_eq!(fired_on_windows(WINDOWS, &taps), ["revise_everything"]);
+    }
+
+    /// The system records a key only after the listener has seen it, so its own modifier reads up.
+    #[test]
+    fn asking_the_system_keeps_every_chord_firing() {
+        let scripts: &[(&[Tap], &[&str])] = &[
+            (
+                &[
+                    Down(Key::ControlLeft),
+                    Down(Key::Alt),
+                    Down(Key::Space),
+                    Up(Key::Space),
+                    Up(Key::Alt),
+                    Up(Key::ControlLeft),
+                ],
+                &["revise_everything"],
+            ),
+            (
+                &[Down(Key::ControlRight), Down(Key::AltGr), Down(Key::KeyG)],
+                &["translate_selection"],
+            ),
+            (
+                &[
+                    Down(Key::ControlLeft),
+                    Down(Key::MetaLeft),
+                    Up(Key::MetaLeft),
+                    Down(Key::MetaLeft),
+                    Up(Key::ControlLeft),
+                    Up(Key::MetaLeft),
+                ],
+                &["revise_selection", "revise_selection"],
+            ),
+            (
+                &[
+                    Down(Key::ControlLeft),
+                    Down(Key::ControlLeft),
+                    Down(Key::MetaLeft),
+                    Down(Key::MetaLeft),
+                    Up(Key::MetaLeft),
+                ],
+                &["revise_selection"],
+            ),
+            (
+                &[
+                    Down(Key::ControlLeft),
+                    Down(Key::Alt),
+                    Down(Key::ShiftLeft),
+                    Down(Key::Space),
+                ],
+                &[],
+            ),
+        ];
+        for (taps, expected) in scripts {
+            assert_eq!(fired_on_windows(WINDOWS, taps), *expected);
+            assert_eq!(fired(WINDOWS, taps), *expected);
+        }
     }
 
     #[test]
