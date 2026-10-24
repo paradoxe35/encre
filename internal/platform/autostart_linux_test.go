@@ -67,3 +67,17 @@ func TestAutostartFollowsXDGConfigHome(t *testing.T) {
 		t.Fatal("not enabled after Enable")
 	}
 }
+
+func TestARelativeXDGConfigHomeFallsBackToTheHomeConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", ".config")
+
+	a := &autoStart{}
+	if err := a.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "autostart", "encre.desktop")); err != nil {
+		t.Fatalf("the entry is not under ~/.config: %v", err)
+	}
+}

@@ -46,6 +46,8 @@ type Application struct {
 	loopStarted atomic.Bool
 	// loopEnded is set once the loop stops: the window system is gone and nothing waits on the UI thread.
 	loopEnded atomic.Bool
+	// tearingDown is set once teardown begins, which a quit from macOS must not wait on.
+	tearingDown atomic.Bool
 
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
@@ -159,6 +161,10 @@ func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instanc
 		// The UI thread is the one asking, so nothing in the teardown may wait on it.
 		installTerminateHandler(func() {
 			application.loopEnded.Store(true)
+			// A tray Quit already tearing down may be waiting on this thread; the quit goes ahead.
+			if application.tearingDown.Load() {
+				return
+			}
 			application.teardown()
 		})
 		prepareNotifications()
@@ -503,6 +509,7 @@ func stopOffMain(teardown, quit func()) {
 
 func (a *Application) teardown() {
 	a.teardownOnce.Do(func() {
+		a.tearingDown.Store(true)
 		if a.updateChecks != nil {
 			close(a.updateChecks)
 		}

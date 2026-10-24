@@ -27,7 +27,7 @@ func escapeExecPath(path string) string {
 }
 
 func (a *autoStart) Enable() error {
-	configDir, err := os.UserConfigDir()
+	configDir, err := autostartConfigDir()
 	if err != nil {
 		return fmt.Errorf("failed to get the config directory: %w", err)
 	}
@@ -67,7 +67,7 @@ Categories=Utility;Office;
 }
 
 func (a *autoStart) Disable() error {
-	configDir, err := os.UserConfigDir()
+	configDir, err := autostartConfigDir()
 	if err != nil {
 		return fmt.Errorf("failed to get the config directory: %w", err)
 	}
@@ -83,7 +83,7 @@ func (a *autoStart) Disable() error {
 }
 
 func (a *autoStart) IsEnabled() bool {
-	configDir, err := os.UserConfigDir()
+	configDir, err := autostartConfigDir()
 	if err != nil {
 		return false
 	}
@@ -91,4 +91,17 @@ func (a *autoStart) IsEnabled() bool {
 	desktopFilePath := filepath.Join(configDir, "autostart", "encre.desktop")
 	_, err = os.Stat(desktopFilePath)
 	return err == nil
+}
+
+// The XDG spec has a relative XDG_CONFIG_HOME ignored, falling back to ~/.config, where Go's
+// UserConfigDir fails instead.
+func autostartConfigDir() (string, error) {
+	if dir := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(dir) {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config"), nil
 }
