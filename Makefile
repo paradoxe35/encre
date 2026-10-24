@@ -17,7 +17,10 @@
 .PHONY: build-go package-all lint fmt update-deps dev dev-quick
 .PHONY: clean-rust clean-go ci-setup ci-build ci-test ci-package verify-static
 
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+# fyne takes x.y.z only: the nearest release tag without its v, as the release build does.
+ifndef VERSION
+    VERSION := $(patsubst v%,%,$(shell git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || echo 0.0.0))
+endif
 BUILD_NUMBER := 1
 
 # Detect current OS and architecture
@@ -26,15 +29,21 @@ UNAME_M := $(shell uname -m)
 
 ifeq ($(UNAME_S),Linux)
     CURRENT_OS := linux
-    CURRENT_ARCH := amd64
+    ifeq ($(UNAME_M),aarch64)
+        CURRENT_ARCH := arm64
+        RUST_CPU := aarch64
+    else
+        CURRENT_ARCH := amd64
+        RUST_CPU := x86_64
+    endif
     # Use gnu target for development (faster, no cross-compile issues)
     # Use musl target for release builds (static linking)
     ifdef STATIC
-        RUST_TARGET := x86_64-unknown-linux-musl
+        RUST_TARGET := $(RUST_CPU)-unknown-linux-musl
         CC := musl-gcc
         EXTRA_LDFLAGS := -linkmode external -extldflags '-static'
     else
-        RUST_TARGET := x86_64-unknown-linux-gnu
+        RUST_TARGET := $(RUST_CPU)-unknown-linux-gnu
         CC := gcc
         EXTRA_LDFLAGS :=
     endif
