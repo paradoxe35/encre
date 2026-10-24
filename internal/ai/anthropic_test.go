@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -181,5 +182,37 @@ func TestAReplyThatFillsTheContextWindowIsCutOff(t *testing.T) {
 	defer whole.Close()
 	if text, err := complete(t, claude(t, whole.URL, "claude-test", 0)); !errors.Is(err, errLengthLimit) || text != "" {
 		t.Fatalf("whole reply kept %q with %v", text, err)
+	}
+}
+
+// An endpoint refusing one setting and then another is learned from twice, not given up on.
+func TestAnEndpointRefusingTwoSettingsIsLearnedBoth(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if _, sent := body["temperature"]; sent {
+			status(http.StatusBadRequest, `{"type":"error","error":{"type":"invalid_request_error","message":"temperature is deprecated for this model."}}`)(w, r)
+			return
+		}
+		if limit, _ := body["max_tokens"].(float64); limit > 32000 {
+			status(http.StatusBadRequest, fmt.Sprintf(`{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: %d > 32000, which is the maximum allowed"}}`, int(limit)))(w, r)
+			return
+		}
+		claudeOK(w, r)
+	}))
+	defer server.Close()
+
+	p, err := FromSettings(config.BuiltInClaude, config.ProviderSettings{BaseURL: server.URL, Model: "claude-two-refusals", Temperature: 0.3}, "key", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text, err := complete(t, p); err != nil || text != "ok" {
+		t.Fatalf("got %q, %v after %d requests", text, err, requests)
+	}
+	before := requests
+	if text, err := complete(t, p); err != nil || text != "ok" || requests != before+1 {
+		t.Fatalf("the second call took %d requests, want one with both lessons kept: %q, %v", requests-before, text, err)
 	}
 }

@@ -162,13 +162,18 @@ func (p *provider) send(ctx context.Context, prompt Prompt, stream, lowReasoning
 	}
 	target := known.apply(p.endpoint)
 	resp, err := p.post(ctx, target, prompt, stream, lowReasoning)
-	learned, ok := relaxed(target, known, err)
-	if !ok {
-		return resp, err
-	}
-	resp, err = p.post(ctx, learned.apply(p.endpoint), prompt, stream, lowReasoning)
-	if err == nil {
-		relaxedEndpoints.Store(key, learned)
+	// An endpoint may refuse one setting and then another; each refusal teaches one, a few at most.
+	for range 3 {
+		learned, ok := relaxed(target, known, err)
+		if !ok {
+			return resp, err
+		}
+		known, target = learned, learned.apply(p.endpoint)
+		resp, err = p.post(ctx, target, prompt, stream, lowReasoning)
+		if err == nil {
+			relaxedEndpoints.Store(key, known)
+			return resp, nil
+		}
 	}
 	return resp, err
 }
