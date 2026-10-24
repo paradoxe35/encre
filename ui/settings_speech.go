@@ -220,6 +220,10 @@ func (w *MainWindow) remoteSpeechPane() *fyne.Container {
 	w.speechRemoteURL = w.dirtyEntry()
 	w.speechRemoteURL.SetPlaceHolder("https://api.example.com/v1")
 	w.speechRemoteURL.SetText(speech.RemoteBaseURL)
+	w.speechPresetURL = widget.NewLabel("")
+	w.speechPresetURL.Truncation = fyne.TextTruncateEllipsis
+	w.speechPresetURL.Selectable = true
+	w.speechPresetURL.Hide()
 
 	w.speechRemoteKey = w.dirtyPasswordEntry()
 	key, unreadable := decryptedRemoteAPIKey(speech.RemoteAPIKey)
@@ -242,7 +246,7 @@ func (w *MainWindow) remoteSpeechPane() *fyne.Container {
 	w.speechRemoteForm = widget.NewForm(
 		widget.NewFormItem("Service", w.speechRemote),
 		widget.NewFormItem("Model", w.speechRemoteModel),
-		widget.NewFormItem("Endpoint", w.speechRemoteURL),
+		widget.NewFormItem("Endpoint", container.NewStack(w.speechRemoteURL, w.speechPresetURL)),
 		widget.NewFormItem("API key", w.speechRemoteKey),
 	)
 	return container.NewPadded(container.NewVBox(w.speechRemoteForm, note))
@@ -259,9 +263,14 @@ func (w *MainWindow) applyPreset(name string) {
 	w.speechRemoteModel.SetOptions(preset.Models)
 	if preset.ID == "custom" {
 		w.speechRemoteURL.Enable()
+		w.speechRemoteURL.Show()
+		w.speechPresetURL.Hide()
 	} else {
 		w.speechRemoteURL.SetText(preset.BaseURL)
 		w.speechRemoteURL.Disable()
+		w.speechRemoteURL.Hide()
+		w.speechPresetURL.SetText(preset.BaseURL)
+		w.speechPresetURL.Show()
 	}
 	// A form greys its labels only when refreshed, not when a field is turned off.
 	if w.speechRemoteForm != nil {

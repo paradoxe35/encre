@@ -448,11 +448,13 @@ func (h *HotkeyCapture) clearHotkey() {
 	h.UpdateFromBinding()
 }
 
+// Kept in place when there is nothing to clear, so every row's Capture button lines up.
 func (h *HotkeyCapture) syncClearButton() {
+	h.clearBtn.Show()
 	if value, _ := h.binding.Get(); value != "" {
-		h.clearBtn.Show()
+		h.clearBtn.Enable()
 	} else {
-		h.clearBtn.Hide()
+		h.clearBtn.Disable()
 	}
 }
 

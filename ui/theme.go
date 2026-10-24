@@ -30,6 +30,12 @@ func (t *appTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) co
 		return color.Transparent
 	case colorNameWindow:
 		name = theme.ColorNameBackground
+	case theme.ColorNameInputBorder:
+		// Fyne's is about 1.2:1 on the background, so an unticked box all but vanishes; these reach 3:1.
+		if variant == theme.VariantLight {
+			return hex(0x8f8f8f)
+		}
+		return hex(0x6b6b6b)
 	}
 	return theme.DefaultTheme().Color(name, variant)
 }

@@ -352,7 +352,7 @@ func (c *AnswerCard) render() {
 	} else {
 		c.reading.Show()
 	}
-	setVisible(c.copy, c.text != "")
+	setVisible(c.copy, strings.TrimSpace(c.text) != "")
 
 	if size := c.fit(); size != c.target {
 		c.resizeTo(size)

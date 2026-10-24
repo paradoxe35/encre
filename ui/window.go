@@ -80,8 +80,10 @@ type MainWindow struct {
 	speechRemote        *widget.Select
 	speechRemoteModel   *widget.SelectEntry
 	speechRemoteURL     *widget.Entry
-	speechRemoteKey     *widget.Entry
-	speechRemoteForm    *widget.Form
+	// speechPresetURL shows a known service's endpoint, which a disabled entry draws too faintly to read.
+	speechPresetURL  *widget.Label
+	speechRemoteKey  *widget.Entry
+	speechRemoteForm *widget.Form
 	// Tabs not on screen at a theme change, which Fyne leaves in the old theme until re-applied.
 	themeStale          map[*container.TabItem]bool
 	reapplyingTheme     bool

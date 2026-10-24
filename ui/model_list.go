@@ -219,35 +219,31 @@ func (m *ModelList) update(i widget.ListItemID, item fyne.CanvasObject) {
 	row.remove.Hide()
 	row.info.Show()
 	row.action.Show()
+	row.action.Enable()
+	row.action.SetIcon(nil)
+	row.action.Importance = widget.MediumImportance
 
 	switch {
 	case downloading && progress.Stage == stt.StageVerifying:
-		row.action.SetText("Verifying")
-		row.action.OnTapped = nil
-		row.action.Disable()
+		showState(row.action, "Verifying", theme.HistoryIcon())
 
 	case downloading:
 		row.action.SetText(fmt.Sprintf("Cancel (%.0f%%)", progress.Fraction()*100))
 		row.action.OnTapped = func() { m.store.CancelDownload(model) }
-		row.action.Enable()
 
 	case m.store.Downloaded(model):
 		row.remove.Show()
 		row.remove.OnTapped = func() { m.confirmDelete(model) }
 		if model.ID == m.selected {
-			row.action.SetText("In use")
-			row.action.OnTapped = nil
-			row.action.Disable()
+			showState(row.action, "In use", theme.ConfirmIcon())
 		} else {
 			row.action.SetText("Use")
 			row.action.OnTapped = func() { m.choose(model) }
-			row.action.Enable()
 		}
 
 	default:
 		row.action.SetText(fmt.Sprintf("Get %.0f MB", model.SizeMB()))
 		row.action.OnTapped = func() { m.download(model) }
-		row.action.Enable()
 	}
 
 	row.info.OnTapped = func() {
@@ -255,6 +251,14 @@ func (m *ModelList) update(i widget.ListItemID, item fyne.CanvasObject) {
 	}
 
 	row.action.Refresh()
+}
+
+// showState names a state on the button that does nothing in it: a disabled button is too faint to read.
+func showState(button *widget.Button, text string, icon fyne.Resource) {
+	button.SetText(text)
+	button.SetIcon(icon)
+	button.Importance = widget.LowImportance
+	button.OnTapped = nil
 }
 
 func summarise(model stt.Model, host stt.Machine) string {

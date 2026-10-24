@@ -422,7 +422,8 @@ func TestAModelChosenWhileTheHostedPaneShowsLeavesItsLanguageAlone(t *testing.T)
 	}
 }
 
-func TestTheEndpointLabelFollowsWhetherItCanBeEdited(t *testing.T) {
+// A known service's endpoint is shown as text, which a disabled entry would draw too faintly to read.
+func TestTheEndpointStaysReadableWhetherOrNotItCanBeEdited(t *testing.T) {
 	w := &MainWindow{config: config.Default(), initializing: true}
 	w.Window = test.NewWindow(nil)
 	defer w.Window.Close()
@@ -457,8 +458,14 @@ func TestTheEndpointLabelFollowsWhetherItCanBeEdited(t *testing.T) {
 	if got := label(); got != theme.ColorNameForeground {
 		t.Fatalf("the editable endpoint's label is %q", got)
 	}
+	if !w.speechRemoteURL.Visible() || w.speechPresetURL.Visible() {
+		t.Fatal("a custom endpoint is not shown as an entry")
+	}
 	w.speechRemote.SetSelected("OpenAI")
-	if got := label(); got != theme.ColorNameDisabled {
+	if got := label(); got != theme.ColorNameForeground {
 		t.Fatalf("the locked endpoint's label is %q", got)
+	}
+	if w.speechRemoteURL.Visible() || !w.speechPresetURL.Visible() || w.speechPresetURL.Text != w.speechRemoteURL.Text || w.speechPresetURL.Text == "" {
+		t.Fatalf("the preset's endpoint shows as %q (entry visible %v)", w.speechPresetURL.Text, w.speechRemoteURL.Visible())
 	}
 }

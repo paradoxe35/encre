@@ -9,6 +9,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/ai"
 	"github.com/paradoxe35/encre/internal/logger"
@@ -49,10 +50,13 @@ func (w *MainWindow) showModelPicker(models []ai.ModelInfo, current string, appl
 	list := widget.NewList(
 		func() int { return len(visible) },
 		func() fyne.CanvasObject {
+			// Two lines, so a long ID and a long name each get the full width before they are cut.
 			id := widget.NewLabel("")
+			id.Truncation = fyne.TextTruncateEllipsis
 			name := widget.NewLabel("")
 			name.TextStyle.Italic = true
-			return container.NewHBox(id, name)
+			name.Truncation = fyne.TextTruncateEllipsis
+			return container.New(layout.NewCustomPaddedVBoxLayout(0), id, name)
 		},
 		func(item widget.ListItemID, obj fyne.CanvasObject) {
 			if item >= len(visible) {
