@@ -257,6 +257,22 @@ ensure-fyne:
 		exit 1; \
 	}
 
+# fyne packs the binary under encre/usr/local/bin inside Encre.tar.xz.
+define extract-linux-binary
+	set -e; test -f Encre.tar.xz || { echo "Error: fyne produced no Encre.tar.xz"; exit 1; }; \
+	tmp=$$(mktemp -d); tar -xf Encre.tar.xz -C "$$tmp"; \
+	binary=$$(find "$$tmp" -path '*/usr/local/bin/*' -type f -perm -u+x | head -n 1); \
+	if [ -z "$$binary" ]; then rm -rf "$$tmp"; echo "Error: no binary inside Encre.tar.xz"; exit 1; fi; \
+	mkdir -p $(dir $(1)); cp "$$binary" $(1); rm -rf "$$tmp" Encre.tar.xz
+endef
+
+# macOS kills an app that opens the microphone without a usage description; the release build adds the same keys.
+define finish-app-bundle
+	/usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Encre" $(1)/Contents/Info.plist 2>/dev/null || true; \
+	/usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Encre listens to the microphone while you hold the dictate shortcut." $(1)/Contents/Info.plist 2>/dev/null || true; \
+	/usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string Encre uses System Events to add itself to your login items." $(1)/Contents/Info.plist 2>/dev/null || true
+endef
+
 # ============================================================================
 # Build Go Application
 # ============================================================================
@@ -274,21 +290,13 @@ build-go: bundle-assets ensure-fyne
 		--app-build "$(BUILD_NUMBER)"
 	@# Extract the built binary from the package
 ifeq ($(CURRENT_OS),linux)
-	@if [ -f Encre.tar.xz ]; then \
-		tar -xf Encre.tar.xz; \
-		BINARY=$$(find usr/local/bin -type f -executable | head -n 1); \
-		if [ -n "$$BINARY" ]; then \
-			mkdir -p $(BIN_DIR); \
-			cp "$$BINARY" $(BIN_DIR)/encre$(BIN_EXT); \
-			rm -rf usr Encre.tar.xz; \
-		fi; \
-	fi
+	@$(call extract-linux-binary,$(BIN_DIR)/encre$(BIN_EXT))
 endif
 ifeq ($(CURRENT_OS),darwin)
-	@if [ -d Encre.app ]; then \
-		mkdir -p $(BIN_DIR); \
-		mv Encre.app $(BIN_DIR)/Encre.app; \
-	fi
+	@$(call finish-app-bundle,Encre.app)
+	@mkdir -p $(BIN_DIR)
+	@rm -rf $(BIN_DIR)/Encre.app
+	@mv Encre.app $(BIN_DIR)/Encre.app
 endif
 ifeq ($(CURRENT_OS),windows)
 	@if [ -f Encre.exe ]; then \
@@ -313,7 +321,11 @@ build: build-rust build-go
 # ============================================================================
 run: build
 	@echo "Running Encre..."
+ifeq ($(CURRENT_OS),darwin)
+	open -W $(BIN_DIR)/Encre.app
+else
 	./$(BIN_DIR)/encre$(BIN_EXT)
+endif
 
 # ============================================================================
 # Testing
@@ -324,9 +336,14 @@ test-rust:
 	@echo "Running Rust tests..."
 	cd $(RUST_FFI_DIR) && cargo test --release
 
-test-go:
+# The Go packages link the Rust library, and the clipboard and window tests need a display.
+test-go: build-rust
 	@echo "Running Go tests..."
-	CGO_ENABLED=1 go test -v ./...
+	@if [ -z "$$DISPLAY" ] && [ "$(CURRENT_OS)" = linux ] && command -v xvfb-run >/dev/null 2>&1; then \
+		CGO_ENABLED=1 xvfb-run -a go test ./...; \
+	else \
+		CGO_ENABLED=1 go test ./...; \
+	fi
 
 # ============================================================================
 # Packaging for All Platforms
@@ -346,16 +363,7 @@ package-all: clean
 		fyne package --release \
 			--app-version "$(VERSION)" \
 			--app-build "$(BUILD_NUMBER)"
-	@# Extract binary from package
-	@if [ -f Encre.tar.xz ]; then \
-		tar -xf Encre.tar.xz; \
-		BINARY=$$(find usr/local/bin -type f -executable | head -n 1); \
-		if [ -n "$$BINARY" ]; then \
-			mkdir -p $(BIN_DIR); \
-			cp "$$BINARY" $(BIN_DIR)/encre-linux-amd64; \
-			rm -rf usr Encre.tar.xz; \
-		fi; \
-	fi
+	@$(call extract-linux-binary,$(BIN_DIR)/encre-linux-amd64)
 
 	@echo ""
 	@echo "=== Building for macOS (Intel) ==="
@@ -366,6 +374,8 @@ package-all: clean
 		fyne package --icon assets/icon_1024.png --name Encre --app-id me.pngwasi.encre --release \
 			--app-version "$(VERSION)" \
 			--app-build "$(BUILD_NUMBER)"
+	@$(call finish-app-bundle,Encre.app)
+	rm -rf $(BIN_DIR)/Encre-darwin-amd64.app
 	mv Encre.app $(BIN_DIR)/Encre-darwin-amd64.app
 
 	@echo ""
@@ -377,6 +387,8 @@ package-all: clean
 		fyne package --icon assets/icon_1024.png --name Encre --app-id me.pngwasi.encre --release \
 			--app-version "$(VERSION)" \
 			--app-build "$(BUILD_NUMBER)"
+	@$(call finish-app-bundle,Encre.app)
+	rm -rf $(BIN_DIR)/Encre-darwin-arm64.app
 	mv Encre.app $(BIN_DIR)/Encre-darwin-arm64.app
 
 	@echo ""
@@ -488,8 +500,14 @@ update-deps:
 # Install locally (after building)
 install: build
 	@echo "Installing Encre locally..."
+ifeq ($(CURRENT_OS),darwin)
+	rm -rf /Applications/Encre.app
+	cp -R $(BIN_DIR)/Encre.app /Applications/Encre.app
+	@echo "Installed to /Applications/Encre.app"
+else
 	install -m 755 $(BIN_DIR)/encre$(BIN_EXT) /usr/local/bin/encre
 	@echo "Installed to /usr/local/bin/encre"
+endif
 
 # ============================================================================
 # CI/CD Helpers
