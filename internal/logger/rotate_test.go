@@ -2,8 +2,10 @@ package logger
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -271,5 +273,49 @@ func TestTheLatestLogIsTheNewestDaysHighestNumber(t *testing.T) {
 	}
 	if filepath.Base(got) != "encre-2026-09-22.10.log" {
 		t.Fatalf("latest is %s", got)
+	}
+}
+
+func TestLogFilesArePrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX modes on Windows")
+	}
+	r, c, dir := newTestFile(t)
+	touch(t, dir, fileName(c.read().Format(dayLayout), 0), 1)
+	write(t, r, "secret")
+	c.advance(time.Hour)
+	write(t, r, "next day")
+
+	for _, name := range names(t, dir) {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("%s mode = %o, want 600", name, got)
+		}
+	}
+}
+
+func TestInitCreatesAPrivateLogDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX modes on Windows")
+	}
+	t.Setenv("HOME", t.TempDir())
+	previous, previousDefault := defaultLogger, slog.Default()
+	t.Cleanup(func() {
+		defaultLogger = previous
+		slog.SetDefault(previousDefault)
+	})
+
+	if err := Init(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(GetLogDirectory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("mode = %o, want 700", got)
 	}
 }

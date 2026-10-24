@@ -2,7 +2,9 @@ package history
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -41,13 +43,20 @@ type Entry struct {
 
 func NewID() string { return time.Now().Format("20060102150405.000000000") }
 
-// Reads load the whole file, which the MaxEntries cap keeps small.
+// Reads load the whole file, which trimming keeps under 2*MaxEntries lines.
 type Store struct {
 	mu   sync.Mutex
 	path string
 
+	// lines is counted on the first Add, then kept up to date, so trimming needs no reread.
+	lines   int
+	counted bool
+
 	onChange func()
 }
+
+// maxLine bounds a single entry; a longer line is skipped rather than read into memory.
+const maxLine = 1 << 20
 
 func NewStore() *Store { return &Store{path: utils.AppHomeDir("history.jsonl")} }
 
@@ -77,19 +86,51 @@ func (s *Store) Add(entry Entry) {
 		entry.ID = NewID()
 	}
 
-	file, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if !s.counted {
+		s.lines = countLines(s.path)
+		s.counted = true
+		// Older versions wrote it world-readable.
+		if err := utils.MakePrivate(s.path); err != nil {
+			logger.Warn("Failed to restrict history file permissions", "path", s.path, "error", err)
+		}
+	}
+
+	file, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		logger.Error("Failed to open history file", "path", s.path, "error", err)
 		return
 	}
-	defer file.Close()
-
-	if err := json.NewEncoder(file).Encode(entry); err != nil {
+	err = json.NewEncoder(file).Encode(entry)
+	// Closed before trimming: Windows cannot rename over an open file.
+	file.Close()
+	if err != nil {
 		logger.Error("Failed to write history entry", "path", s.path, "error", err)
 		return
 	}
-	s.trimLocked()
+
+	s.lines++
+	if s.lines > 2*MaxEntries {
+		s.trimLocked()
+	}
 	notify = s.onChange
+}
+
+func countLines(path string) int {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	count := 0
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := file.Read(buf)
+		count += bytes.Count(buf[:n], []byte{'\n'})
+		if err != nil {
+			return count
+		}
+	}
 }
 
 func (s *Store) Recent(kind Kind) []Entry {
@@ -102,26 +143,50 @@ func (s *Store) Recent(kind Kind) []Entry {
 	}
 	defer file.Close()
 
-	var entries []Entry
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		var entry Entry
-		if json.Unmarshal(scanner.Bytes(), &entry) != nil {
-			continue
-		}
-		if kind == "" || entry.Kind == kind {
-			entries = append(entries, entry)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil
+	all := readEntries(file)
+	if len(all) > MaxEntries {
+		all = all[len(all)-MaxEntries:]
 	}
 
-	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
-		entries[i], entries[j] = entries[j], entries[i]
+	var entries []Entry
+	for i := len(all) - 1; i >= 0; i-- {
+		if kind == "" || all[i].Kind == kind {
+			entries = append(entries, all[i])
+		}
 	}
 	return entries
+}
+
+// readEntries skips lines that are too long or will not parse, so one bad line costs only itself.
+func readEntries(r io.Reader) []Entry {
+	var entries []Entry
+	reader := bufio.NewReaderSize(r, 64*1024)
+	var line []byte
+	tooLong := false
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if !tooLong {
+			line = append(line, chunk...)
+			if len(line) > maxLine {
+				tooLong = true
+				line = line[:0]
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+
+		var entry Entry
+		if !tooLong && len(bytes.TrimSpace(line)) > 0 && json.Unmarshal(line, &entry) == nil {
+			entries = append(entries, entry)
+		}
+		line = line[:0]
+		tooLong = false
+
+		if err != nil {
+			return entries
+		}
+	}
 }
 
 func (s *Store) Clear() error {
@@ -131,16 +196,13 @@ func (s *Store) Clear() error {
 		logger.Error("Failed to clear history file", "path", s.path, "error", err)
 		return err
 	}
+	s.lines = 0
+	s.counted = true
 	return nil
 }
 
-// The rewrite amortises to one every MaxEntries appends.
+// Cutting back to MaxEntries once past twice that amortises to one rewrite every MaxEntries appends.
 func (s *Store) trimLocked() {
-	info, err := os.Stat(s.path)
-	if err != nil || info.Size() < 64*MaxEntries {
-		return
-	}
-
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		logger.Error("Failed to read history file for trimming", "path", s.path, "error", err)
@@ -148,11 +210,14 @@ func (s *Store) trimLocked() {
 	}
 
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	s.lines = len(lines)
 	if len(lines) <= MaxEntries {
 		return
 	}
 	keep := strings.Join(lines[len(lines)-MaxEntries:], "\n") + "\n"
-	if err := os.WriteFile(s.path, []byte(keep), 0o644); err != nil {
+	if err := utils.WriteFileAtomic(s.path, []byte(keep), 0o600); err != nil {
 		logger.Error("Failed to trim history file", "path", s.path, "error", err)
+		return
 	}
+	s.lines = MaxEntries
 }

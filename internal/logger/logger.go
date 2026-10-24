@@ -14,7 +14,7 @@ var defaultLogger *slog.Logger
 
 func Init() error {
 	logDir := utils.AppHomeDir("logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/paradoxe35/encre/internal/utils"
 )
 
 const (
@@ -83,10 +85,12 @@ func (r *rotatingFile) open(day string) error {
 	prune(r.dir, r.now(), r.keepDays, r.maxFiles)
 
 	for {
-		file, err := os.OpenFile(r.path(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		file, err := os.OpenFile(r.path(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return fmt.Errorf("failed to open log file: %w", err)
 		}
+		// A file from an older version may still be world-readable.
+		_ = utils.MakePrivate(r.path())
 		info, err := file.Stat()
 		if err != nil {
 			file.Close()

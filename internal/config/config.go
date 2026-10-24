@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	locale "github.com/jeandeaual/go-locale"
@@ -166,7 +167,7 @@ func defaultAppearance() AppearanceConfig {
 
 func Load() (*Config, error) {
 	configDir := filepath.Dir(ConfigPath())
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -178,6 +179,9 @@ func Load() (*Config, error) {
 		return cfg, nil
 	}
 
+	// Older installs wrote it world-readable. Failing to tighten it must not stop the app.
+	_ = utils.MakePrivate(ConfigPath())
+
 	data, err := os.ReadFile(ConfigPath())
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -185,7 +189,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{}
 	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
+		return nil, fmt.Errorf("failed to parse config: %w", setAside(err))
 	}
 
 	cfg.applyDefaults()
@@ -202,8 +206,23 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// setAside keeps a config that will not parse, so the next save cannot overwrite the user's keys.
+func setAside(parseErr error) error {
+	backup := fmt.Sprintf("%s.corrupt-%d", ConfigPath(), time.Now().Unix())
+	if err := os.Rename(ConfigPath(), backup); err != nil {
+		return fmt.Errorf("%w (could not move it aside: %v)", parseErr, err)
+	}
+	return fmt.Errorf("%w (moved to %s)", parseErr, backup)
+}
+
+// Saves come from several goroutines; one at a time, so the last snapshot taken is the one kept.
+var writeMu sync.Mutex
+
 // write persists without notifying, so a default config can be written during Load.
 func (c *Config) write() error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+
 	c.mu.RLock()
 	data, err := json.MarshalIndent(c, "", "  ")
 	c.mu.RUnlock()
@@ -213,7 +232,7 @@ func (c *Config) write() error {
 	}
 
 	// Owner only: the file carries API keys.
-	if err := os.WriteFile(ConfigPath(), data, 0o600); err != nil {
+	if err := utils.WriteFileAtomic(ConfigPath(), data, 0o600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 	return nil

@@ -3,6 +3,8 @@ package history
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -109,4 +111,116 @@ func TestOnChangeCanReadTheStore(t *testing.T) {
 	}
 
 	<-done
+}
+
+func lineCount(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(string(data), "\n")
+}
+
+func filePerm(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Mode().Perm()
+}
+
+func TestHistoryFileIsPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX modes on Windows")
+	}
+	store := testStore(t)
+	store.Add(Entry{Kind: KindRevise, Result: "r"})
+	if got := filePerm(t, store.path); got != 0o600 {
+		t.Errorf("mode = %o, want 600", got)
+	}
+}
+
+func TestAnExistingWorldReadableHistoryIsTightened(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX modes on Windows")
+	}
+	store := testStore(t)
+	if err := os.WriteFile(store.path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store.Add(Entry{Kind: KindRevise, Result: "r"})
+	if got := filePerm(t, store.path); got != 0o600 {
+		t.Errorf("mode = %o, want 600", got)
+	}
+}
+
+func TestTrimmedHistoryStaysPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX modes on Windows")
+	}
+	store := testStore(t)
+	for i := 0; i < 2*MaxEntries+1; i++ {
+		store.Add(Entry{Kind: KindRevise, Result: "x"})
+	}
+	if got := filePerm(t, store.path); got != 0o600 {
+		t.Errorf("mode = %o, want 600", got)
+	}
+}
+
+func TestOneOverlongLineDoesNotHideTheRest(t *testing.T) {
+	store := testStore(t)
+	store.Add(Entry{Kind: KindRevise, Result: "before"})
+
+	file, err := os.OpenFile(store.path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.WriteString(`{"kind":"revise","result":"` + strings.Repeat("x", 2<<20) + "\"}\n")
+	file.WriteString("not json\n")
+	file.Close()
+
+	store.Add(Entry{Kind: KindRevise, Result: "after"})
+
+	recent := store.Recent("")
+	if len(recent) != 2 {
+		t.Fatalf("got %d entries, want 2", len(recent))
+	}
+	if recent[0].Result != "after" || recent[1].Result != "before" {
+		t.Errorf("unexpected entries: %+v", recent)
+	}
+}
+
+func TestTrimIsRare(t *testing.T) {
+	store := testStore(t)
+	for i := 0; i < MaxEntries+10; i++ {
+		store.Add(Entry{Kind: KindRevise, Result: "x"})
+	}
+	if got := lineCount(t, store.path); got != MaxEntries+10 {
+		t.Fatalf("file has %d lines; it should not be rewritten just past the cap", got)
+	}
+
+	for i := 0; i < MaxEntries; i++ {
+		store.Add(Entry{Kind: KindRevise, Result: "x"})
+	}
+	if got := lineCount(t, store.path); got > 2*MaxEntries {
+		t.Fatalf("file has %d lines, should be trimmed once past %d", got, 2*MaxEntries)
+	}
+	if got := len(store.Recent("")); got != MaxEntries {
+		t.Errorf("Recent returned %d, want %d", got, MaxEntries)
+	}
+}
+
+func TestTrimCountsLinesWrittenBeforeTheStoreOpened(t *testing.T) {
+	store := testStore(t)
+	for i := 0; i < 2*MaxEntries; i++ {
+		store.Add(Entry{Kind: KindRevise, Result: "x"})
+	}
+
+	reopened := &Store{path: store.path}
+	reopened.Add(Entry{Kind: KindRevise, Result: "y"})
+	if got := lineCount(t, store.path); got != MaxEntries {
+		t.Errorf("file has %d lines after trimming, want %d", got, MaxEntries)
+	}
 }
