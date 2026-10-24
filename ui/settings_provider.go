@@ -191,6 +191,11 @@ func (w *MainWindow) testAPIConnection(report progress) {
 		err := answers(testProvider, 10*time.Second)
 
 		fyne.Do(func() {
+			// The answer is about the provider tested, not one the user moved on to meanwhile.
+			if now, _ := w.providerBinding.Get(); now != provider {
+				report.Done("")
+				return
+			}
 			if err != nil {
 				logger.Error("API connection test failed", "error", err)
 				report.Fail("Connection failed: " + shortMessage(err.Error()))
