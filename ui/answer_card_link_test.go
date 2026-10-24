@@ -195,10 +195,15 @@ func TestLinksKeepTheCardsLookAfterTheTextSizeChangesWithTheCardOpen(t *testing.
 }
 
 func TestABareAddressInATableCellIsALink(t *testing.T) {
-	card, _ := newCard(t)
-	answered(card, "q", "| site | note |\n|---|---|\n| see https://go.dev today | x |")
-	links := hyperlinksIn(card.content)
-	if len(links) != 1 || links[0].URL == nil || links[0].URL.String() != "https://go.dev" {
-		t.Fatalf("links in the table: %v", links)
+	for _, style := range []config.CardStyle{config.CardStyleGlass, config.CardStyleTerminal} {
+		t.Run(string(style), func(t *testing.T) {
+			card, _ := newCard(t)
+			card.SetStyle(style)
+			answered(card, "q", "| site | note |\n|---|---|\n| see https://go.dev today | x |")
+			links := hyperlinksIn(card.content)
+			if len(links) != 1 || links[0].URL == nil || links[0].URL.String() != "https://go.dev" {
+				t.Fatalf("links in the table: %v", links)
+			}
+		})
 	}
 }

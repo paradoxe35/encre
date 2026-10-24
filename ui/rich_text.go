@@ -43,6 +43,12 @@ func adoptWithin(holder, within *widget.RichText, outer fyne.Scrollable, segment
 			segment.Texts = adoptWithin(holder, within, outer, segment.Texts)
 			adopted = append(adopted, segment)
 		case *widget.TableSegment:
+			// Linked here, as paragraphs are, before a monospace design marks every text as code.
+			for _, row := range append([][][]widget.RichTextSegment{segment.Headers}, segment.Rows...) {
+				for c, cell := range row {
+					row[c] = linkedCell(cell)
+				}
+			}
 			adopted = append(adopted, &cardTable{TableSegment: segment, holder: holder, outer: outer})
 		case *widget.CodeBlockSegment:
 			adopted = append(adopted, &cardCode{CodeBlockSegment: segment, holder: holder, outer: outer})
@@ -437,6 +443,19 @@ type cardTable struct {
 	outer  fyne.Scrollable
 }
 
+// linkedCell makes a bare address in a cell a link, as it is in a paragraph.
+func linkedCell(segments []widget.RichTextSegment) []widget.RichTextSegment {
+	var parts []widget.RichTextSegment
+	for _, segment := range segments {
+		if text, ok := segment.(*widget.TextSegment); ok {
+			parts = append(parts, linked(text)...)
+		} else {
+			parts = append(parts, segment)
+		}
+	}
+	return parts
+}
+
 func (t *cardTable) rows() [][][]widget.RichTextSegment {
 	if t.Headers == nil {
 		return t.Rows
@@ -500,17 +519,8 @@ func tableCell(th fyne.Theme, variant fyne.ThemeVariant, segments []widget.RichT
 	if len(segments) == 0 {
 		segments = []widget.RichTextSegment{&widget.TextSegment{Text: " ", Style: widget.RichTextStyleInline}}
 	}
-	// A bare address in a cell is a link, as it is in a paragraph.
-	var parts []widget.RichTextSegment
-	for _, segment := range segments {
-		if text, ok := segment.(*widget.TextSegment); ok {
-			parts = append(parts, linked(text)...)
-		} else {
-			parts = append(parts, segment)
-		}
-	}
 	var texts []fyne.CanvasObject
-	for _, segment := range parts {
+	for _, segment := range segments {
 		if link, ok := segment.(*widget.HyperlinkSegment); ok {
 			segment = safeLink(link)
 		}
