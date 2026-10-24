@@ -180,6 +180,9 @@ func newCardList(holder, within *widget.RichText, outer fyne.Scrollable, list *w
 		}
 		text := widget.NewRichText()
 		text.Wrapping = fyne.TextWrapWord
+		// An item measures its text, links too, in its own theme; given the holder's while it is still
+		// empty, Fyne keeps only the item for it, and lets that go with its renderer.
+		themeLikeParent(text, holder)
 		text.Segments = adoptWithin(holder, text, outer, texts)
 		l.items = append(l.items, listItem{marker: marker, text: text})
 	}

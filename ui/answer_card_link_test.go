@@ -134,3 +134,33 @@ func TestStreamingAnAnswerWithLinksDoesNotGrowMemory(t *testing.T) {
 		t.Errorf("rendering grew the heap by %d MB", grown>>20)
 	}
 }
+
+// A list item measures its links in its own theme; in the app's, a link at a larger size runs past the card.
+func TestAListItemMeasuresItsTextAtTheCardsSize(t *testing.T) {
+	for _, size := range config.TextSizes {
+		t.Run(string(size), func(t *testing.T) {
+			card, _ := newCard(t)
+			card.SetTextSize(size)
+			answered(card, "q", "- see [a link whose words are many and long enough to wrap the line twice over](https://a.example) tail words after it")
+
+			var item *widget.RichText
+			for _, segment := range card.content.Segments {
+				if list, ok := segment.(*cardList); ok {
+					item = list.items[0].text
+				}
+			}
+			if item == nil {
+				t.Fatal("no list drawn")
+			}
+			want := theme.SizeForWidget(theme.SizeNameText, card.content)
+			if got := theme.SizeForWidget(theme.SizeNameText, item); got != want {
+				t.Fatalf("the item measures at %v, the card draws at %v", got, want)
+			}
+			for _, link := range hyperlinksIn(item) {
+				if end := link.Position().X + link.Size().Width; end > item.Size().Width+0.5 {
+					t.Errorf("%q ends at %v, past the item's %v", link.Text, end, item.Size().Width)
+				}
+			}
+		})
+	}
+}
