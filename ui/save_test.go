@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -623,5 +624,39 @@ func TestRePickingOrDeletingProvidersKeepsWhatIsTyped(t *testing.T) {
 	}
 	if key, _ := w.apiKeyBinding.Get(); key != "sk-typed" {
 		t.Fatalf("after deleting another provider, %s shows key %q", current, key)
+	}
+}
+
+func TestADeleteThatCannotBeSavedStillLeavesTheTabConsistent(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory the test cannot write to")
+	}
+	cfg := config.Default()
+	if err := cfg.AddCustomProvider("local", config.ProviderSettings{BaseURL: "http://localhost:11434/v1", Model: "llama", NoAPIKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	w := newSettingsWindow(t, cfg)
+	w.providerSelect.SetSelected("local")
+
+	dir := filepath.Dir(config.ConfigPath())
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+	w.deleteProvider("local")
+	if shown, _ := w.providerBinding.Get(); shown == "local" || slices.Contains(w.providerSelect.Options, "local") {
+		t.Fatalf("the tab still offers the deleted provider: shown %q, options %v", shown, w.providerSelect.Options)
+	}
+	if !strings.Contains(status(w), "could not save") {
+		t.Fatalf("status %q does not say the delete was not saved", status(w))
+	}
+	os.Chmod(dir, 0o700)
+	w.saveSettings()
+	if _, ok := cfg.FindProvider("local"); ok {
+		t.Fatal("the next Save brought the deleted provider back")
 	}
 }

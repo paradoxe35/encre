@@ -462,10 +462,8 @@ func (w *MainWindow) deleteProvider(name string) {
 		}
 	}
 
-	if err := w.config.Save(); err != nil {
-		w.statusBinding.Set("Could not save: " + shortMessage(err.Error()))
-		return
-	}
+	// The provider is gone from the live config either way, so the tab must stop showing it.
+	saveErr := w.config.Save()
 
 	w.refreshProviderList()
 	w.refreshOperationProviderOptions()
@@ -477,6 +475,10 @@ func (w *MainWindow) deleteProvider(name string) {
 	w.providerSelect.SetSelected(newProvider)
 	w.providerBinding.Set(newProvider)
 	w.loadProviderSettings(newProvider)
+	if saveErr != nil {
+		w.statusBinding.Set(fmt.Sprintf("Provider '%s' deleted, but could not save: %s", name, shortMessage(saveErr.Error())))
+		return
+	}
 	w.statusBinding.Set(fmt.Sprintf("Provider '%s' deleted", name))
 }
 
