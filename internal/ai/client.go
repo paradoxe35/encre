@@ -18,7 +18,7 @@ import (
 type protocol interface {
 	request(ctx context.Context, target endpoint, prompt Prompt, stream, lowReasoning bool) (*http.Request, error)
 	// decode reads a reply sent whole, by a server asked not to stream or that ignores the request to.
-	decode(body []byte) (string, error)
+	decode(body []byte, reply *turn) error
 	// event reads one streamed event into the reply, and reports whether the stream has ended.
 	event(data []byte, reply *turn) (done bool, err error)
 }
@@ -93,11 +93,9 @@ func (p *provider) stream(ctx context.Context, prompt Prompt, onText func(string
 			err = errCutOff
 		}
 		if err == nil && events == 0 {
-			text, err := p.protocol.decode(head.Bytes())
-			if err != nil {
+			if err := p.protocol.decode(head.Bytes(), streamed); err != nil {
 				return "", p.unreadable(err, head.Bytes())
 			}
-			streamed.write(text)
 		}
 		reply = streamed.reply()
 		if err != nil {

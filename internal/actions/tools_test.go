@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"slices"
 	"strings"
@@ -127,6 +130,53 @@ func TestAskWithToolsIsToldWhenToLookThingsUp(t *testing.T) {
 	sent := model.prompts[0]
 	if sent.ToolUse != prompt.AskTools || sent.System != "My own Ask prompt." {
 		t.Fatalf("sent tool use %q with system %q", sent.ToolUse, sent.System)
+	}
+}
+
+// OpenAI refuses to stream for an unverified organisation; the whole replies must still run the tools.
+func TestAskRunsToolsFromRepliesSentWhole(t *testing.T) {
+	cases := []struct {
+		provider, call, answer, replayed string
+	}{
+		{config.BuiltInOpenAI,
+			`{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"place\":\"Paris\"}"}}]},"finish_reason":"tool_calls"}]}`,
+			`{"choices":[{"message":{"content":"Sunny in Paris."},"finish_reason":"stop"}]}`,
+			`{"role":"tool","content":"Sunny, 21°C","tool_call_id":"call_1"}`},
+		{config.BuiltInClaude,
+			`{"content":[{"type":"thinking","thinking":"A lookup.","signature":"sig"},{"type":"tool_use","id":"call_1","name":"get_weather","input":{"place":"Paris"}}],"stop_reason":"tool_use"}`,
+			`{"content":[{"type":"text","text":"Sunny in Paris."}],"stop_reason":"end_turn"}`,
+			`[{"type":"thinking","thinking":"A lookup.","signature":"sig"},{"type":"tool_use","id":"call_1","name":"get_weather","input":{"place":"Paris"}}]`},
+		{config.BuiltInGemini,
+			`{"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_1","name":"get_weather","args":{"place":"Paris"}},"thoughtSignature":"sig"}]},"finishReason":"STOP"}]}`,
+			`{"candidates":[{"content":{"parts":[{"text":"Sunny in Paris."}]},"finishReason":"STOP"}]}`,
+			`{"functionCall":{"id":"call_1","name":"get_weather","args":{"place":"Paris"}},"thoughtSignature":"sig"}`},
+	}
+	for _, c := range cases {
+		var replayed bool
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			switch {
+			case strings.Contains(string(body), `"stream":true`) || strings.Contains(r.URL.Path, "streamGenerateContent"):
+				http.Error(w, `{"error":{"message":"Your organization must be verified to stream this model."}}`, http.StatusBadRequest)
+			case strings.Contains(string(body), "Sunny, 21°C"):
+				replayed = strings.Contains(string(body), c.replayed)
+				io.WriteString(w, c.answer)
+			default:
+				io.WriteString(w, c.call)
+			}
+		}))
+		p, _ := ai.FromSettings(c.provider, config.ProviderSettings{BaseURL: server.URL}, "k", false)
+		weather := fakeTool("get_weather", func(json.RawMessage) (string, error) { return "Sunny, 21°C", nil })
+
+		answer, err := converse(context.Background(), p.(ai.ToolUser), ai.Prompt{Text: "Weather?"}, []tools.Tool{weather},
+			func(string) {}, func(string) {}, func() {})
+		server.Close()
+		if err != nil || answer != "Sunny in Paris." {
+			t.Errorf("%s: answered %q, %v", c.provider, answer, err)
+		}
+		if !replayed {
+			t.Errorf("%s: the call was not sent back as %s", c.provider, c.replayed)
+		}
 	}
 }
 

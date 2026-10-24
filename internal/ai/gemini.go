@@ -69,11 +69,13 @@ type geminiThinking struct {
 	ThinkingLevel  string `json:"thinkingLevel,omitempty"`
 }
 
+type geminiCandidate struct {
+	Content      geminiContent `json:"content"`
+	FinishReason string        `json:"finishReason"`
+}
+
 type geminiReply struct {
-	Candidates []struct {
-		Content      geminiContent `json:"content"`
-		FinishReason string        `json:"finishReason"`
-	} `json:"candidates"`
+	Candidates     []geminiCandidate `json:"candidates"`
 	PromptFeedback struct {
 		BlockReason string `json:"blockReason"`
 	} `json:"promptFeedback"`
@@ -143,33 +145,52 @@ func lowThinking(model string) *geminiThinking {
 	return &geminiThinking{ThinkingLevel: "low"}
 }
 
-func (generateContent) decode(body []byte) (string, error) {
-	text, err := geminiText(body)
+func (generateContent) decode(body []byte, reply *turn) error {
+	candidate, err := geminiFirst(body)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if text == "" {
-		return "", errNoReply
+	if candidate != nil {
+		if err := geminiStop(candidate.FinishReason); err != nil {
+			return err
+		}
+		geminiParts(candidate.Content.Parts, reply)
 	}
-	return text, nil
+	if reply.empty() {
+		return errNoReply
+	}
+	return nil
 }
 
 func (generateContent) event(data []byte, reply *turn) (bool, error) {
-	var chunk geminiReply
-	if err := json.Unmarshal(data, &chunk); err != nil {
+	candidate, err := geminiFirst(data)
+	if err != nil || candidate == nil {
 		return false, err
 	}
-	if err := chunk.Error.err(); err != nil {
-		return false, err
+	geminiParts(candidate.Content.Parts, reply)
+	reply.ended = reply.ended || candidate.FinishReason != ""
+	return false, geminiStop(candidate.FinishReason)
+}
+
+func geminiFirst(data []byte) (*geminiCandidate, error) {
+	var reply geminiReply
+	if err := json.Unmarshal(data, &reply); err != nil {
+		return nil, err
 	}
-	if chunk.PromptFeedback.BlockReason != "" {
-		return false, errFiltered
+	if err := reply.Error.err(); err != nil {
+		return nil, err
 	}
-	if len(chunk.Candidates) == 0 {
-		return false, nil
+	if reply.PromptFeedback.BlockReason != "" {
+		return nil, errFiltered
 	}
-	candidate := chunk.Candidates[0]
-	for _, part := range candidate.Content.Parts {
+	if len(reply.Candidates) == 0 {
+		return nil, nil
+	}
+	return &reply.Candidates[0], nil
+}
+
+func geminiParts(parts []geminiPart, reply *turn) {
+	for _, part := range parts {
 		switch {
 		case part.FunctionCall != nil:
 			reply.add(ToolCall{
@@ -180,8 +201,6 @@ func (generateContent) event(data []byte, reply *turn) (bool, error) {
 			reply.write(part.Text)
 		}
 	}
-	reply.ended = reply.ended || candidate.FinishReason != ""
-	return false, geminiStop(candidate.FinishReason)
 }
 
 func geminiStop(reason string) error {
@@ -192,29 +211,4 @@ func geminiStop(reason string) error {
 		return errFiltered
 	}
 	return nil
-}
-
-func geminiText(data []byte) (string, error) {
-	var reply geminiReply
-	if err := json.Unmarshal(data, &reply); err != nil {
-		return "", err
-	}
-	if err := reply.Error.err(); err != nil {
-		return "", err
-	}
-	if reply.PromptFeedback.BlockReason != "" {
-		return "", errFiltered
-	}
-	if len(reply.Candidates) == 0 {
-		return "", nil
-	}
-
-	candidate := reply.Candidates[0]
-	var text strings.Builder
-	for _, part := range candidate.Content.Parts {
-		if !part.Thought {
-			text.WriteString(part.Text)
-		}
-	}
-	return text.String(), geminiStop(candidate.FinishReason)
 }

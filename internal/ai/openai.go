@@ -107,21 +107,29 @@ func (chatCompletions) request(ctx context.Context, target endpoint, prompt Prom
 	return newJSONRequest(ctx, target.baseURL+"/chat/completions", body, headers)
 }
 
-func (chatCompletions) decode(body []byte) (string, error) {
-	var reply chatReply
-	if err := json.Unmarshal(body, &reply); err != nil {
-		return "", err
+func (chatCompletions) decode(body []byte, reply *turn) error {
+	var whole chatReply
+	if err := json.Unmarshal(body, &whole); err != nil {
+		return err
 	}
-	if err := reply.Error.err(); err != nil {
-		return "", err
+	if err := whole.Error.err(); err != nil {
+		return err
 	}
-	if len(reply.Choices) == 0 {
-		return "", errNoReply
+	if len(whole.Choices) == 0 {
+		return errNoReply
 	}
-	if err := chatStop(reply.Choices[0].FinishReason); err != nil {
-		return "", err
+	choice := whole.Choices[0]
+	if err := chatStop(choice.FinishReason); err != nil {
+		return err
 	}
-	return reply.Choices[0].Message.Content, nil
+	reply.write(choice.Message.Content)
+	for i, piece := range choice.Message.ToolCalls {
+		chatPiece(reply.call(i), piece)
+	}
+	if reply.empty() {
+		return errNoReply
+	}
+	return nil
 }
 
 func (chatCompletions) event(data []byte, reply *turn) (bool, error) {
@@ -141,18 +149,21 @@ func (chatCompletions) event(data []byte, reply *turn) (bool, error) {
 	choice := chunk.Choices[0]
 	reply.write(choice.Delta.Content)
 	for _, piece := range choice.Delta.ToolCalls {
-		call := reply.call(chatCallIndex(piece, reply))
-		if piece.ID != "" {
-			call.ID = piece.ID
-		}
-		if piece.Function.Name != "" {
-			call.Name = piece.Function.Name
-		}
-		call.Arguments = append(call.Arguments, piece.Function.Arguments...)
+		chatPiece(reply.call(chatCallIndex(piece, reply)), piece)
 	}
 	// Some servers close the stream after the finish reason, without [DONE].
 	reply.ended = reply.ended || choice.FinishReason != ""
 	return false, chatStop(choice.FinishReason)
+}
+
+func chatPiece(call *ToolCall, piece chatToolCall) {
+	if piece.ID != "" {
+		call.ID = piece.ID
+	}
+	if piece.Function.Name != "" {
+		call.Name = piece.Function.Name
+	}
+	call.Arguments = append(call.Arguments, piece.Function.Arguments...)
 }
 
 func chatStop(reason string) error {

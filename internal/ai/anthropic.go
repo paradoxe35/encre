@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 )
 
 // messages is Anthropic's Messages API.
@@ -43,6 +42,7 @@ type anthropicMessage struct {
 
 type anthropicBlock struct {
 	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
@@ -99,13 +99,13 @@ type messagesDelta struct {
 }
 
 type messagesReply struct {
-	Type         string         `json:"type"`
-	Index        int            `json:"index"`
-	ContentBlock anthropicBlock `json:"content_block"`
-	Content      []textBlock    `json:"content"`
-	Delta        messagesDelta  `json:"delta"`
-	StopReason   string         `json:"stop_reason"`
-	Error        *replyError    `json:"error"`
+	Type         string           `json:"type"`
+	Index        int              `json:"index"`
+	ContentBlock anthropicBlock   `json:"content_block"`
+	Content      []anthropicBlock `json:"content"`
+	Delta        messagesDelta    `json:"delta"`
+	StopReason   string           `json:"stop_reason"`
+	Error        *replyError      `json:"error"`
 }
 
 func anthropicStop(reason string) error {
@@ -171,28 +171,26 @@ func anthropicHeaders(apiKey string) map[string]string {
 	}
 }
 
-func (messages) decode(body []byte) (string, error) {
-	var reply messagesReply
-	if err := json.Unmarshal(body, &reply); err != nil {
-		return "", err
+func (messages) decode(body []byte, reply *turn) error {
+	var whole messagesReply
+	if err := json.Unmarshal(body, &whole); err != nil {
+		return err
 	}
-	if err := reply.Error.err(); err != nil {
-		return "", err
+	if err := whole.Error.err(); err != nil {
+		return err
 	}
-	if err := anthropicStop(reply.StopReason); err != nil {
-		return "", err
+	if err := anthropicStop(whole.StopReason); err != nil {
+		return err
 	}
-
-	var text strings.Builder
-	for _, block := range reply.Content {
-		if block.Type == "text" {
-			text.WriteString(block.Text)
+	for i, block := range whole.Content {
+		if call := anthropicStart(i, block, reply); call != nil {
+			call.Arguments = block.Input
 		}
 	}
-	if text.Len() == 0 {
-		return "", errNoReply
+	if reply.empty() {
+		return errNoReply
 	}
-	return text.String(), nil
+	return nil
 }
 
 func (messages) event(data []byte, reply *turn) (bool, error) {
@@ -203,15 +201,7 @@ func (messages) event(data []byte, reply *turn) (bool, error) {
 
 	switch event.Type {
 	case "content_block_start":
-		block := event.ContentBlock
-		switch block.Type {
-		case "tool_use":
-			call := reply.call(event.Index)
-			call.ID, call.Name = block.ID, block.Name
-			call.thinking = reply.claimThinking()
-		case "thinking", "redacted_thinking":
-			reply.think(event.Index, anthropicThinking{Type: block.Type, Thinking: block.Thinking, Signature: block.Signature, Data: block.Data})
-		}
+		anthropicStart(event.Index, event.ContentBlock, reply)
 	case "content_block_delta":
 		switch event.Delta.Type {
 		case "text_delta":
@@ -238,6 +228,22 @@ func (messages) event(data []byte, reply *turn) (bool, error) {
 		return false, event.Error.err()
 	}
 	return false, nil
+}
+
+// anthropicStart reads a content block as it opens, and returns the call it starts, if any.
+func anthropicStart(index int, block anthropicBlock, reply *turn) *ToolCall {
+	switch block.Type {
+	case "text":
+		reply.write(block.Text)
+	case "tool_use":
+		call := reply.call(index)
+		call.ID, call.Name = block.ID, block.Name
+		call.thinking = reply.claimThinking()
+		return call
+	case "thinking", "redacted_thinking":
+		reply.think(index, anthropicThinking{Type: block.Type, Thinking: block.Thinking, Signature: block.Signature, Data: block.Data})
+	}
+	return nil
 }
 
 func (t *turn) think(index int, thought anthropicThinking) {

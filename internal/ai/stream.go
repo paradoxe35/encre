@@ -115,6 +115,10 @@ func (t *turn) add(call ToolCall) {
 	t.calls = append(t.calls, call)
 }
 
+func (t *turn) empty() bool {
+	return t.text.Len() == 0 && len(t.calls) == 0
+}
+
 func (t *turn) reply() Reply {
 	for i := range t.calls {
 		if t.calls[i].ID == "" {
