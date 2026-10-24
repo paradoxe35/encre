@@ -10,10 +10,10 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same PR or branch replaces the run still going.
+# A newer push to the same PR replaces the run still going; every merge to main keeps its own result.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   RUST_VERSION: "stable"
