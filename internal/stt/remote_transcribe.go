@@ -10,7 +10,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -36,8 +35,8 @@ var errUndecryptableKey = errors.New("the saved API key could not be decrypted; 
 var remoteClient = &http.Client{Timeout: remoteRequestTimeout}
 
 // audio is headerless 16-bit signed little-endian mono at remoteSampleRate. A take over what one
-// request may carry is sent in pieces cut at pauses; one failing does not cost the others, whose
-// text comes back with the error.
+// request may carry is sent in pieces cut at pauses; one failing on the service's side does not cost
+// the others, whose text comes back with the error.
 func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, audio []byte) (string, error) {
 	// Nothing was heard: a header-only file costs a request, and some services reject it as too short.
 	if len(audio) == 0 {
@@ -45,25 +44,22 @@ func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, audio []byte
 	}
 
 	pieces := pcm.Split(audio, remotePieceBytes(cfg), remoteSampleRate)
-	var parts, failed []string
-	var firstErr error
+	failures := pcm.NewFailures(len(pieces))
+	var parts []string
 	for i, piece := range pieces {
 		pieceCtx, cancel := context.WithTimeout(ctx, remoteRequestTimeout)
 		text, err := transcribeWAV(pieceCtx, cfg, wavFile(piece))
 		cancel()
 		if err != nil {
-			failed = append(failed, strconv.Itoa(i+1))
-			if firstErr == nil {
-				firstErr = err
+			if !failures.Failed(i, err) {
+				break
 			}
 			continue
 		}
+		failures.Succeeded()
 		parts = append(parts, text)
 	}
-	if firstErr != nil && len(pieces) > 1 {
-		firstErr = fmt.Errorf("part %s of %d: %w", strings.Join(failed, ", "), len(pieces), firstErr)
-	}
-	return pcm.Join(parts), firstErr
+	return pcm.Join(parts), failures.Err()
 }
 
 // remoteUploadSafeBytes keeps a piece under both OpenAI's 25 MiB, which counts the whole form, and
@@ -123,7 +119,10 @@ func transcribeWAV(ctx context.Context, cfg config.SpeechConfig, wav []byte) (st
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("hosted service returned %s: %s", resp.Status, remoteErrorMessage(respBody, resp.Status))
+		return "", &remoteStatusError{
+			status:  resp.StatusCode,
+			message: fmt.Sprintf("hosted service returned %s: %s", resp.Status, remoteErrorMessage(respBody, resp.Status)),
+		}
 	}
 
 	return parseRemoteResponse(respBody)

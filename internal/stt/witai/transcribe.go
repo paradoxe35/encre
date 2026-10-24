@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -52,27 +51,30 @@ func Transcribe(ctx context.Context, audio []byte, lang string) (string, error) 
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(chunks)*chunkBudget+chunkTimeout)
 	defer cancel()
 
-	// A failed chunk does not cost the ones after it: their text comes back with its error.
-	var parts, failed []string
-	var firstErr error
+	// A chunk failing on Wit.ai's side does not cost the ones after it: their text comes back with its error.
+	failures := pcm.NewFailures(chunks)
+	var parts []string
 	for i, piece := range pieces {
 		text, err := transcribeChunk(ctx, token, piece)
 		if err != nil {
-			failed = append(failed, strconv.Itoa(i+1))
-			if firstErr == nil {
-				firstErr = err
+			if !failures.Failed(i, err) {
+				break
 			}
 			continue
 		}
-		if text != "" {
-			parts = append(parts, text)
-		}
+		failures.Succeeded()
+		parts = append(parts, text)
 	}
-	if firstErr != nil {
-		return pcm.Join(parts), fmt.Errorf("wit.ai chunk %s of %d: %w", strings.Join(failed, ", "), chunks, firstErr)
-	}
-	return pcm.Join(parts), nil
+	return pcm.Join(parts), failures.Err()
 }
+
+type statusError struct {
+	status  int
+	message string
+}
+
+func (e *statusError) Error() string   { return e.message }
+func (e *statusError) HTTPStatus() int { return e.status }
 
 func transcribeChunk(ctx context.Context, token string, chunk []byte) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, chunkTimeout)
@@ -98,7 +100,7 @@ func transcribeChunk(ctx context.Context, token string, chunk []byte) (string, e
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
-		return "", fmt.Errorf("wit.ai returned %s: %s", resp.Status, truncate(strings.TrimSpace(string(body)), maxErrorChars))
+		return "", &statusError{resp.StatusCode, fmt.Sprintf("wit.ai returned %s: %s", resp.Status, truncate(strings.TrimSpace(string(body)), maxErrorChars))}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {

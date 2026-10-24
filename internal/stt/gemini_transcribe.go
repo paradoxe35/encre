@@ -272,6 +272,8 @@ type remoteStatusError struct {
 
 func (e *remoteStatusError) Error() string { return e.message }
 
+func (e *remoteStatusError) HTTPStatus() int { return e.status }
+
 func isBadRequest(err error) bool {
 	var statusErr *remoteStatusError
 	if !errors.As(err, &statusErr) {

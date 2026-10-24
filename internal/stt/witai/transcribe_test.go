@@ -125,8 +125,9 @@ func TestTranscribeGivesUpOnAHungChunk(t *testing.T) {
 	})
 
 	text, err := Transcribe(context.Background(), chunksOfAudio(2), "en")
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.HasPrefix(text, "part 1 part 3") {
-		t.Fatalf("got %q, %v; want the hung chunk given up and the others kept", text, err)
+	// A timeout means the line, not the chunk: the rest would only time out in turn.
+	if !errors.Is(err, context.DeadlineExceeded) || text != "part 1" || !strings.Contains(err.Error(), "not sent") {
+		t.Fatalf("got %q, %v; want the text before the hung chunk and the rest not sent", text, err)
 	}
 }
 
