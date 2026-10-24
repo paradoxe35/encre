@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/widget"
 )
 
 // at is the place just before the first rune of text, in the answer's own coordinates.
@@ -522,6 +523,31 @@ func TestTheCursorFollowsNewContent(t *testing.T) {
 	if s.pointer.Cursor() != desktop.TextCursor {
 		t.Fatal("the pointer over plain text is a hand")
 	}
+}
+
+func TestALinkStaysHoveredWhileTheAnswerStreams(t *testing.T) {
+	card, _ := newCard(t)
+	update, _, _ := card.Open("q", "", func() {})
+	update("See [the docs](https://example.org) now", false)
+	card.render()
+	s := card.selection
+	s.pointer.MouseMoved(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: at(t, s, "docs")}})
+	if s.hovered == nil || !underlined(s.hovered) {
+		t.Fatal("test setup: the link under the pointer is not hovered")
+	}
+
+	update("See [the docs](https://example.org) now, and then some more.", true)
+	link, _ := s.linkAt(s.pointerAt)
+	if link == nil || s.hovered != link || !underlined(link) {
+		t.Fatal("a render dropped the hover of the link still under the pointer")
+	}
+}
+
+// underlined reads the line Fyne draws last under a hovered link.
+func underlined(link *widget.Hyperlink) bool {
+	renderer, _ := cachedRenderer(link)
+	objects := renderer.Objects()
+	return objects[len(objects)-1].Visible()
 }
 
 func TestCopiedTasksKeepTheirState(t *testing.T) {

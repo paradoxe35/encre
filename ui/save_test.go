@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
@@ -295,17 +296,77 @@ func TestACustomProviderWithoutABaseURLChangesNothing(t *testing.T) {
 	}
 }
 
-func TestStartOnLoginTheSystemRefusesIsShownAndNotSaved(t *testing.T) {
-	cfg := config.Default()
-	w := newSettingsWindow(t, cfg)
+// refuseStartOnLogin puts a file where the autostart directory belongs, which makes enabling fail.
+func refuseStartOnLogin(t *testing.T) {
+	t.Helper()
 	home, _ := os.UserHomeDir()
-	// A file where the autostart directory belongs makes enabling fail.
 	if err := os.MkdirAll(filepath.Join(home, ".config"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, ".config", "autostart"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// queuedDriver runs fyne.Do later, as the running app does on its own thread; the test driver runs it at once.
+type queuedDriver struct {
+	fyne.Driver
+	queue []func()
+}
+
+func (d *queuedDriver) DoFromGoroutine(run func(), _ bool) { d.queue = append(d.queue, run) }
+
+func (d *queuedDriver) drain() {
+	for len(d.queue) > 0 {
+		run := d.queue[0]
+		d.queue = d.queue[1:]
+		run()
+	}
+}
+
+type queuedApp struct {
+	fyne.App
+	driver *queuedDriver
+}
+
+func (a queuedApp) Driver() fyne.Driver { return a.driver }
+
+func queueFyneDo(t *testing.T, a fyne.App) *queuedDriver {
+	t.Helper()
+	driver := &queuedDriver{Driver: a.Driver()}
+	fyne.SetCurrentApp(queuedApp{App: a, driver: driver})
+	t.Cleanup(func() { fyne.SetCurrentApp(a) })
+	return driver
+}
+
+func TestASaveLeavesNothingUnsavedOnceTheQueueRuns(t *testing.T) {
+	for name, refuse := range map[string]bool{"start on login refused": true, "ordinary": false} {
+		t.Run(name, func(t *testing.T) {
+			w := newSettingsWindow(t, config.Default())
+			if refuse {
+				refuseStartOnLogin(t)
+				w.startOnLoginBinding.Set(true)
+			}
+			w.markDirty()
+			queue := queueFyneDo(t, w.app)
+
+			w.saveSettings()
+			queue.drain()
+
+			if refuse && !strings.Contains(status(w), "Start on login") {
+				t.Fatalf("status = %q", status(w))
+			}
+			if w.dirty {
+				t.Fatal("the saved settings still show as unsaved")
+			}
+		})
+	}
+}
+
+func TestStartOnLoginTheSystemRefusesIsShownAndNotSaved(t *testing.T) {
+	cfg := config.Default()
+	w := newSettingsWindow(t, cfg)
+	refuseStartOnLogin(t)
 	w.startOnLoginBinding.Set(true)
 
 	w.saveSettings()

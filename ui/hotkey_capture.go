@@ -96,6 +96,7 @@ func shortcutCombo(shortcut fyne.Shortcut) (fyne.KeyModifier, fyne.KeyName, bool
 type captureSaveButton struct {
 	widget.Button
 	parent *HotkeyCapture
+	held   bool
 }
 
 func newCaptureSaveButton(parent *HotkeyCapture) *captureSaveButton {
@@ -108,19 +109,40 @@ func newCaptureSaveButton(parent *HotkeyCapture) *captureSaveButton {
 }
 
 // The press unfocuses the entry before the tap, which would otherwise end the capture unsaved.
-func (b *captureSaveButton) MouseDown(*desktop.MouseEvent) {
-	b.parent.mu.Lock()
-	b.parent.savePressed = true
-	b.parent.mu.Unlock()
+func (b *captureSaveButton) MouseDown(e *desktop.MouseEvent) {
+	if e.Button != desktop.MouseButtonPrimary {
+		return
+	}
+	b.held = true
+	b.parent.setSavePressed(true)
 }
 
-func (b *captureSaveButton) MouseUp(*desktop.MouseEvent) {}
+// Letting go on Save after leaving it while held unfocuses the entry again before the tap.
+func (b *captureSaveButton) MouseUp(e *desktop.MouseEvent) {
+	if b.held && e.Button == desktop.MouseButtonPrimary {
+		b.parent.setSavePressed(true)
+	}
+	b.held = false
+}
+
+func (b *captureSaveButton) MouseIn(e *desktop.MouseEvent) {
+	b.Button.MouseIn(e)
+	b.held = b.held && e.Button&desktop.MouseButtonPrimary != 0
+}
+
+// A press that leaves Save ends in no tap, so the capture takes back the focus it lost.
+func (b *captureSaveButton) MouseOut() {
+	b.Button.MouseOut()
+	if b.held {
+		b.parent.setSavePressed(false)
+		b.parent.refocus()
+	}
+}
 
 func (b *captureSaveButton) Tapped(e *fyne.PointEvent) {
+	b.held = false
 	b.Button.Tapped(e)
-	b.parent.mu.Lock()
-	b.parent.savePressed = false
-	b.parent.mu.Unlock()
+	b.parent.setSavePressed(false)
 }
 
 func (e *captureEntry) CreateRenderer() fyne.WidgetRenderer {
@@ -205,6 +227,7 @@ func (h *HotkeyCapture) startCapture() {
 		return
 	}
 	h.isCapturing = true
+	h.savePressed = false
 	h.mu.Unlock()
 
 	for _, sibling := range h.siblings {
@@ -266,6 +289,21 @@ func (h *HotkeyCapture) stopCapture() {
 	h.captureBtn.Show()
 	h.UpdateFromBinding()
 	h.displayLabel.Show()
+}
+
+func (h *HotkeyCapture) setSavePressed(pressed bool) {
+	h.mu.Lock()
+	h.savePressed = pressed
+	h.mu.Unlock()
+}
+
+func (h *HotkeyCapture) refocus() {
+	h.mu.Lock()
+	capturing := h.isCapturing
+	h.mu.Unlock()
+	if capturing && h.window != nil {
+		h.window.Canvas().Focus(h.entry)
+	}
 }
 
 func (h *HotkeyCapture) focusLost() {

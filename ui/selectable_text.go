@@ -544,6 +544,7 @@ func (s *selectableText) collect() {
 			case *widget.Hyperlink:
 				link, linkAt = object, at
 				defer func() { link = nil }()
+				drawn(object)
 			case *widget.RichText:
 				if link == nil {
 					owner = object
@@ -579,6 +580,17 @@ func (s *selectableText) collect() {
 	walk(s.text, s.text.Position(), unbounded, s.text)
 	s.hooked = hooked
 	s.order()
+}
+
+// drawn builds the renderer of a link a render made anew, which Fyne would leave to the next paint.
+func drawn(link *widget.Hyperlink) {
+	if _, ok := cachedRenderer(link); ok {
+		return
+	}
+	link.MinSize()
+	if renderer, ok := cachedRenderer(link); ok {
+		renderer.Layout(link.Size())
+	}
 }
 
 // hook repaints the marks as a scroll within the text scrolls; each render brings new scrolls, so only those drawn now are kept.
@@ -697,12 +709,15 @@ func (r *selectableRenderer) Layout(size fyne.Size) {
 func (r *selectableRenderer) MinSize() fyne.Size { return r.s.text.MinSize() }
 
 // Refresh keeps the selection only while the text up to it reads the same, as a streamed answer can reshape what came before.
+// A link still under a resting pointer stays hovered, though each render may draw it anew.
 func (r *selectableRenderer) Refresh() {
 	s := r.s
 	_, high := s.span()
 	before := s.textUpTo(high)
 	s.text.Refresh()
-	s.unhover()
+	if s.hovered != nil {
+		s.hover(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: s.pointerAt}})
+	}
 	if high > 0 {
 		s.collect()
 		if s.textUpTo(high) != before {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"fyne.io/fyne/v2"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/platform"
@@ -78,6 +79,8 @@ func (w *MainWindow) saveSettings() {
 	if actualStartOnLogin != startOnLogin {
 		w.startOnLoginBinding.Set(actualStartOnLogin)
 		w.statusBinding.Set(startOnLoginFailure(startOnLogin))
+		// The binding tells markDirty through Fyne's queue, after this returns.
+		fyne.Do(w.markClean)
 	} else {
 		w.statusBinding.Set("Settings saved")
 	}

@@ -112,7 +112,7 @@ func TestSaveStillSavesAfterThePressTakesTheFocus(t *testing.T) {
 	h, gate, w := capturing(t)
 	h.entry.TypedShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierAlt})
 
-	h.stopBtn.MouseDown(&desktop.MouseEvent{})
+	h.stopBtn.MouseDown(primaryPress)
 	w.Canvas().Unfocus()
 	test.Tap(h.stopBtn)
 
@@ -127,7 +127,7 @@ func TestSaveStillSavesAfterThePressTakesTheFocus(t *testing.T) {
 func TestARefusedSaveKeepsCapturing(t *testing.T) {
 	h, gate, w := capturing(t)
 
-	h.stopBtn.MouseDown(&desktop.MouseEvent{})
+	h.stopBtn.MouseDown(primaryPress)
 	w.Canvas().Unfocus()
 	test.Tap(h.stopBtn)
 
@@ -139,6 +139,71 @@ func TestARefusedSaveKeepsCapturing(t *testing.T) {
 		t.Fatal("the press on Save kept suppressing focus loss")
 	}
 }
+
+func TestARightClickOnSaveEndsTheCapture(t *testing.T) {
+	h, gate, w := capturing(t)
+
+	h.stopBtn.MouseDown(&desktop.MouseEvent{Button: desktop.MouseButtonSecondary})
+	w.Canvas().Unfocus()
+
+	if h.isCapturing || gate.disabled {
+		t.Fatal("a right click on Save left the capture running and the global hotkeys off")
+	}
+}
+
+// Letting go away from Save brings no tap.
+func TestAPressThatLeavesSaveGivesTheFocusBack(t *testing.T) {
+	h, gate, w := capturing(t)
+
+	h.stopBtn.MouseDown(primaryPress)
+	w.Canvas().Unfocus()
+	h.stopBtn.MouseOut()
+
+	if !h.isCapturing || w.Canvas().Focused() != h.entry {
+		t.Fatal("the capture was left running without the focus")
+	}
+	w.Canvas().Unfocus()
+	if h.isCapturing || gate.disabled {
+		t.Fatal("losing the focus after the press left the global hotkeys off")
+	}
+}
+
+func TestAPressThatLeavesAndComesBackToSaveSaves(t *testing.T) {
+	h, gate, w := capturing(t)
+	h.entry.TypedShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierAlt})
+
+	h.stopBtn.MouseDown(primaryPress)
+	w.Canvas().Unfocus()
+	h.stopBtn.MouseOut()
+	h.stopBtn.MouseIn(primaryPress)
+	h.stopBtn.MouseUp(primaryPress)
+	w.Canvas().Unfocus()
+	test.Tap(h.stopBtn)
+
+	if got, _ := h.binding.Get(); got != getAltName()+"+k" {
+		t.Fatalf("saved %q", got)
+	}
+	if h.isCapturing || gate.disabled {
+		t.Fatal("saving should end the capture")
+	}
+}
+
+func TestAStaleHoldOnSaveDoesNotSwallowTheNextFocusLoss(t *testing.T) {
+	h, gate, w := capturing(t)
+
+	h.stopBtn.MouseDown(primaryPress)
+	w.Canvas().Unfocus()
+	h.stopBtn.MouseOut()
+	h.stopBtn.MouseIn(&desktop.MouseEvent{})
+	h.stopBtn.MouseUp(primaryPress)
+	w.Canvas().Unfocus()
+
+	if h.isCapturing || gate.disabled {
+		t.Fatal("a release on Save with no press on it kept the capture running")
+	}
+}
+
+var primaryPress = &desktop.MouseEvent{Button: desktop.MouseButtonPrimary}
 
 func newHotkeysWindow(t *testing.T) (*MainWindow, *hotkeyGate) {
 	t.Helper()
