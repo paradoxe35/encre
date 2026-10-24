@@ -401,3 +401,21 @@ func TestBuildingTheSpeechSectionKeepsTheSavedLanguage(t *testing.T) {
 		t.Errorf("deleting the picked model left the draft at %q", w.speechModelDraft)
 	}
 }
+
+func TestAModelChosenWhileTheHostedPaneShowsLeavesItsLanguageAlone(t *testing.T) {
+	w := &MainWindow{config: config.Default(), initializing: true}
+	w.Window = test.NewWindow(nil)
+	defer w.Window.Close()
+	w.statusBinding = binding.NewString()
+	w.createSpeechSection()
+	w.initializing = false
+
+	w.speechEngine.SetSelected(remoteEngineLabel)
+	key, language := w.languageSetKey, w.selectedSpeechLanguage()
+
+	w.speechModels.onSelect(englishOnlyModel(t))
+	if w.languageSetKey != key || w.selectedSpeechLanguage() != language {
+		t.Fatalf("a finished download moved the hosted pane from %q/%q to %q/%q",
+			key, language, w.languageSetKey, w.selectedSpeechLanguage())
+	}
+}

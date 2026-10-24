@@ -288,6 +288,22 @@ func TestEnterSendsAndShiftEnterBreaksTheLine(t *testing.T) {
 	}
 }
 
+func TestShiftLetGoElsewhereDoesNotStickInTheInput(t *testing.T) {
+	card, _ := newCard(t)
+	var asked []string
+	card.SetOnAsk(func(question string) { asked = append(asked, question) })
+	card.Prompt()
+
+	card.input.KeyDown(&fyne.KeyEvent{Name: desktop.KeyShiftLeft})
+	card.input.FocusLost()
+	card.input.FocusGained()
+	test.Type(card.input, "hello")
+	card.input.TypedKey(&fyne.KeyEvent{Name: fyne.KeyReturn})
+	if len(asked) != 1 || asked[0] != "hello" {
+		t.Fatalf("enter after shift was let go elsewhere sent %v and left %q", asked, card.input.Text)
+	}
+}
+
 func TestEscapeInTheInputClosesTheCard(t *testing.T) {
 	card, _ := newCard(t)
 	card.Prompt()

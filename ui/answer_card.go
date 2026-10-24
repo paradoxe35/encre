@@ -921,6 +921,12 @@ func (e *questionEntry) KeyDown(key *fyne.KeyEvent) {
 	e.Entry.KeyDown(key)
 }
 
+// Shift let go after focus moved on never reaches KeyUp here.
+func (e *questionEntry) FocusLost() {
+	e.shift = false
+	e.Entry.FocusLost()
+}
+
 func (e *questionEntry) KeyUp(key *fyne.KeyEvent) {
 	if isShift(key) {
 		e.shift = false

@@ -99,6 +99,14 @@ func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
 	)
 }
 
+// shownEngine is the engine whose pane is on screen; a model list callback may fire while the other is.
+func (w *MainWindow) shownEngine() config.SpeechEngine {
+	if w.speechEngine == nil {
+		return config.SpeechLocal
+	}
+	return engineFromLabel(w.speechEngine.Selected)
+}
+
 func engineFromLabel(label string) config.SpeechEngine {
 	switch label {
 	case remoteEngineLabel:
@@ -145,7 +153,7 @@ func (w *MainWindow) localSpeechPane() *fyne.Container {
 	w.speechModels = NewModelList(store, w.Window, w.speechModelDraft,
 		func(model stt.Model) {
 			w.speechModelDraft = model.ID
-			w.refreshLanguages(config.SpeechLocal)
+			w.refreshLanguages(w.shownEngine())
 			w.markDirty()
 			w.statusBinding.Set("Speech model set to " + model.Name)
 		})
@@ -155,7 +163,7 @@ func (w *MainWindow) localSpeechPane() *fyne.Container {
 			return
 		}
 		w.speechModelDraft = ""
-		w.refreshLanguages(config.SpeechLocal)
+		w.refreshLanguages(w.shownEngine())
 		w.markDirty()
 	})
 
