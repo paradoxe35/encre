@@ -395,3 +395,16 @@ func TestOneAnswerSearchesAtMostThreeTimes(t *testing.T) {
 		t.Fatalf("searched %d times; the extra search answered %q", *calls, last)
 	}
 }
+
+func TestUTF8WithoutADeclaredCharsetIsReadAsItIs(t *testing.T) {
+	body := []byte(`{"pad":"` + strings.Repeat("a", 1100) + `","name":"Kinshasa — café"}`)
+	for _, contentType := range []string{"application/json", "text/plain", "text/html"} {
+		if got := string(decoded(body, contentType)); !strings.Contains(got, "Kinshasa — café") {
+			t.Errorf("%s came out as %q", contentType, got[len(got)-30:])
+		}
+	}
+	latin1 := []byte("caf\xe9")
+	if got := string(decoded(latin1, "text/plain; charset=iso-8859-1")); got != "café" {
+		t.Errorf("a declared Latin-1 body read as %q", got)
+	}
+}

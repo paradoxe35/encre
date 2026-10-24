@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
@@ -180,7 +181,14 @@ func readRendered(ctx context.Context, httpClient *http.Client, renderer string,
 }
 
 // decoded is the body in UTF-8, whatever character set the page declares.
+// Without a declared charset the sniffer reads only the first 1 KB and calls ASCII windows-1252, so
+// UTF-8 further down would be garbled; a body that is valid UTF-8 is taken as it is.
 func decoded(body []byte, contentType string) []byte {
+	if _, params, err := mime.ParseMediaType(contentType); err != nil || params["charset"] == "" {
+		if utf8.Valid(body) {
+			return body
+		}
+	}
 	reader, err := charset.NewReader(bytes.NewReader(body), contentType)
 	if err != nil {
 		return body
