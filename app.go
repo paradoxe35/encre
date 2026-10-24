@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,8 @@ type Application struct {
 
 	instance     *platform.Instance
 	teardownOnce sync.Once
+	// loopEnded is set once Run returns: the window system is gone and nothing waits on the UI thread.
+	loopEnded atomic.Bool
 
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
@@ -103,6 +106,9 @@ func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instanc
 	application.voice = actions.NewVoice(processor,
 		application.currentConfig,
 		func(kind config.ActionKind, err error) {
+			if errors.Is(err, actions.ErrHalted) {
+				return
+			}
 			fyne.Do(func() {
 				application.notifications.ShowError(kind.Label()+" failed", err.Error())
 				// A refused microphone is the one permission that can go missing after launch.
@@ -153,6 +159,8 @@ func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instanc
 	mainWindow.SetCloseIntercept(func() {
 		mainWindow.HideWindow() // HideWindow, not a raw close, so the hide callbacks still fire
 	})
+
+	instance.SetHandover(application.handOver, application.resume)
 
 	application.updateChecks = make(chan struct{})
 	application.checkForUpdates(application.updateChecks)
@@ -208,7 +216,9 @@ func (a *Application) actionHandler(kind config.ActionKind) func() {
 			return
 		}
 
-		if err := a.processor.Run(kind); err != nil {
+		if err := a.processor.Run(kind); errors.Is(err, actions.ErrHalted) {
+			logger.Info("Action stopped", "action", kind)
+		} else if err != nil {
 			logger.Error("Action failed", "action", kind, "error", err)
 			fyne.Do(func() {
 				a.notifications.ShowError(kind.Label()+" failed", err.Error())
@@ -317,6 +327,9 @@ func (a *Application) owner(on bool) overlay.Overlay {
 func (a *Application) closeOverlay() {
 	a.overlayMu.Lock()
 	defer a.overlayMu.Unlock()
+	if a.loopEnded.Load() {
+		return
+	}
 	if a.indicator != nil {
 		a.indicator.Close()
 		a.indicator = nil
@@ -451,6 +464,9 @@ func (a *Application) Start() error {
 	}
 
 	a.app.Run()
+	// Fyne also quits on SIGINT, SIGTERM and Cmd+Q, none of which pass through Stop.
+	a.loopEnded.Store(true)
+	a.teardown()
 	return nil
 }
 
@@ -482,12 +498,16 @@ func (a *Application) teardown() {
 		a.hotkeyManager.Close()
 		a.voice.Close()
 		a.processor.Close()
+		logger.Info("Application stopped")
 	})
 }
 
-// The updated copy relaunched in our place claims the lock and listens for the shortcuts; we exit right after.
+// The copy started in our place claims the lock and the shortcuts. The updater exits without teardown,
+// so the clipboard and lowered audio are given back here.
 func (a *Application) handOver() {
 	a.hotkeyManager.Stop()
+	a.processor.Halt()
+	a.voice.Close()
 	a.instance.Release()
 }
 
@@ -495,6 +515,8 @@ func (a *Application) resume() {
 	if err := a.instance.Reclaim(); err != nil {
 		logger.Error("Could not take back the instance lock", "error", err)
 	}
+	a.processor.Resume()
+	a.voice.Prepare()
 	if err := a.hotkeyManager.Start(); err != nil {
 		logger.Error("Shortcuts did not come back after the failed restart", "error", err)
 		fyne.Do(func() {

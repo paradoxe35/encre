@@ -356,3 +356,50 @@ func TestASilentReplyTimesOutWithAHint(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// Quitting mid-request must end the request, so the action can give the clipboard back before it is freed.
+func TestHaltCancelsTheRunningActionAndWaitsForIt(t *testing.T) {
+	cfg := mentionConfig(false)
+	cfg.AIProvider.Provider = "OpenAI"
+	cfg.SetOperation(config.OpRevise, config.OperationConfig{TimeoutSeconds: 60, CharacterLimit: 100})
+	p := &Processor{config: cfg, providerFactory: ai.NewProviderFactory()}
+	p.providerFactory.Register("OpenAI", silentProvider{})
+
+	release, err := p.begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	asked := make(chan struct{})
+	ended := make(chan error, 1)
+	go func() {
+		close(asked)
+		_, err := p.complete(context.Background(), cfg, request{op: config.OpRevise, text: "q"})
+		release()
+		ended <- err
+	}()
+	<-asked
+
+	halted := make(chan struct{})
+	go func() {
+		p.Halt()
+		close(halted)
+	}()
+	select {
+	case <-halted:
+	case <-time.After(haltWait / 2):
+		t.Fatal("halting did not cut the request short")
+	}
+	if err := <-ended; !errors.Is(err, ErrHalted) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("the request ended with %v, want ErrHalted", err)
+	}
+
+	if _, err := p.begin(); !errors.Is(err, ErrHalted) {
+		t.Fatalf("a halted processor started an action: %v", err)
+	}
+	p.Resume()
+	release, err = p.begin()
+	if err != nil {
+		t.Fatalf("a resumed processor refused an action: %v", err)
+	}
+	release()
+}

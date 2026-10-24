@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +155,66 @@ func TestReclaimAfterAFailedHandover(t *testing.T) {
 	case <-shown:
 	case <-time.After(2 * time.Second):
 		t.Fatal("show was never delivered")
+	}
+}
+
+// A crashed run leaves its port behind, and whatever listens there now is not Encre.
+func TestClaimForgetsACrashedRunsPort(t *testing.T) {
+	lockPath, portPath := instancePaths(t)
+	stranger, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stranger.Close()
+	port := strconv.Itoa(stranger.Addr().(*net.TCPAddr).Port)
+	if err := os.WriteFile(portPath, []byte(port), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	inst, err := Claim(lockPath, portPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Close()
+
+	if _, err := os.Stat(portPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the stale port file survived the claim: %v", err)
+	}
+}
+
+// A restart must stop the shortcuts before the new copy starts, and bring them back if it never does.
+func TestStartInOurPlaceRunsTheHandover(t *testing.T) {
+	lockPath, portPath := instancePaths(t)
+	inst, err := Claim(lockPath, portPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Close()
+
+	var steps []string
+	inst.SetHandover(func() {
+		steps = append(steps, "hand over")
+		inst.Release()
+	}, func() {
+		steps = append(steps, "resume")
+		inst.Reclaim()
+	})
+
+	inst.startInOurPlace(func() error {
+		steps = append(steps, "start")
+		return errors.New("no such file")
+	})
+	if got := strings.Join(steps, ", "); got != "hand over, start, resume" {
+		t.Fatalf("ran %s", got)
+	}
+
+	steps = nil
+	inst.startInOurPlace(func() error {
+		steps = append(steps, "start")
+		return nil
+	})
+	if got := strings.Join(steps, ", "); got != "hand over, start" {
+		t.Fatalf("ran %s", got)
 	}
 }
 

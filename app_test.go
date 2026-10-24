@@ -4,6 +4,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/paradoxe35/encre/internal/overlay"
 )
 
 // fakeMain is one UI thread that runs queued work in order, as Fyne's does.
@@ -34,6 +36,25 @@ func (m *fakeMain) doAndWait(f func()) {
 	done := make(chan struct{})
 	m.queue <- func() { f(); close(done) }
 	<-done
+}
+
+// After a signal or Cmd+Q the loop is gone, and closing a showing indicator would wait on it forever.
+func TestClosingTheOverlayAfterTheLoopDoesNotWait(t *testing.T) {
+	deadLoop := func(func()) { select {} }
+	app := &Application{indicator: overlay.New(deadLoop)}
+	app.indicator.Owner().Show(overlay.Thinking)
+	app.loopEnded.Store(true)
+
+	closed := make(chan struct{})
+	go func() {
+		app.closeOverlay()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("closing the overlay waited on a loop that had ended")
+	}
 }
 
 // The tray runs Quit on the UI thread, and closing the indicator needs that thread.

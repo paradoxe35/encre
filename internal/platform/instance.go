@@ -80,6 +80,9 @@ type Instance struct {
 	lock     *os.File
 	handover *Handover
 	onShow   func()
+	// handOver and resume replace Release and Reclaim around a restart.
+	handOver func()
+	resume   func()
 }
 
 var claimed atomic.Pointer[Instance]
@@ -89,9 +92,17 @@ func Claim(lockPath, portPath string) (*Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A crashed run's port may belong to a stranger by now; until Serve, launches should find none.
+	os.Remove(portPath)
 	i := &Instance{lockPath: lockPath, lock: lock, handover: NewHandover(portPath)}
 	claimed.Store(i)
 	return i, nil
+}
+
+func (i *Instance) SetHandover(handOver, resume func()) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.handOver, i.resume = handOver, resume
 }
 
 func (i *Instance) Serve(onShow func()) {
@@ -141,12 +152,24 @@ func (i *Instance) startInOurPlace(start func() error) error {
 	if i == nil {
 		return start()
 	}
-	i.Release()
+	i.mu.Lock()
+	handOver, resume := i.handOver, i.resume
+	i.mu.Unlock()
+	if handOver == nil {
+		handOver = i.Release
+	}
+	if resume == nil {
+		resume = func() {
+			if err := i.Reclaim(); err != nil {
+				logger.Error("Could not take back the instance lock", "error", err)
+			}
+		}
+	}
+
+	handOver()
 	err := start()
 	if err != nil {
-		if reclaimErr := i.Reclaim(); reclaimErr != nil {
-			logger.Error("Could not take back the instance lock", "error", reclaimErr)
-		}
+		resume()
 	}
 	return err
 }

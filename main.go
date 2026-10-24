@@ -82,6 +82,9 @@ func stopOnSignal(application *Application) {
 		logger.Info("Stopping on signal", "signal", received.String())
 		// A second signal kills outright if stopping hangs.
 		signal.Reset(os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-		application.Stop()
+		// Fyne quits on the others itself, and Start cleans up once its loop ends.
+		if received == syscall.SIGHUP {
+			application.Stop()
+		}
 	}()
 }

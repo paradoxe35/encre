@@ -24,6 +24,12 @@ import (
 
 var errTimedOut = errors.New("timed out")
 
+// ErrHalted is a Canceled, so callers treat it as the user stopping rather than a failure.
+var ErrHalted = fmt.Errorf("Encre is stopping: %w", context.Canceled)
+
+// An action that outlives this is cut short and the clipboard restored under it.
+const haltWait = 3 * time.Second
+
 type Processor struct {
 	mu               sync.Mutex
 	config           *config.Config
@@ -31,7 +37,12 @@ type Processor struct {
 	clipboardManager *input.FFIClipboardManager
 	history          *history.Store
 	processing       bool
-	indicator        overlay.Overlay
+	// idle is closed when the running action ends.
+	idle      chan struct{}
+	halted    bool
+	lifetime  context.Context
+	end       context.CancelCauseFunc
+	indicator overlay.Overlay
 }
 
 func NewProcessor(cfg *config.Config) (*Processor, error) {
@@ -139,19 +150,76 @@ func (p *Processor) overlay() overlay.Overlay {
 // Two overlapping runs would fight over the clipboard, which each saves and restores.
 func (p *Processor) begin() (func(), error) {
 	p.mu.Lock()
+	if p.halted {
+		p.mu.Unlock()
+		return nil, ErrHalted
+	}
 	if p.processing {
 		p.mu.Unlock()
 		logger.Warn("Already processing an action")
 		return nil, fmt.Errorf("another action is already running")
 	}
 	p.processing = true
+	idle := make(chan struct{})
+	p.idle = idle
 	p.mu.Unlock()
 
 	return func() {
 		p.mu.Lock()
 		p.processing = false
+		p.idle = nil
 		p.mu.Unlock()
+		close(idle)
 	}, nil
+}
+
+func (p *Processor) lifetimeLocked() context.Context {
+	if p.lifetime == nil {
+		p.lifetime, p.end = context.WithCancelCause(context.Background())
+	}
+	return p.lifetime
+}
+
+// bound ends ctx when the processor halts, as well as when ctx itself ends.
+func (p *Processor) bound(ctx context.Context) (context.Context, func()) {
+	p.mu.Lock()
+	lifetime := p.lifetimeLocked()
+	p.mu.Unlock()
+
+	ctx, cancel := context.WithCancelCause(ctx)
+	stop := context.AfterFunc(lifetime, func() { cancel(ErrHalted) })
+	return ctx, func() {
+		stop()
+		cancel(nil)
+	}
+}
+
+// Halt refuses new actions, cancels the running one and waits for it to give the clipboard back.
+func (p *Processor) Halt() {
+	p.mu.Lock()
+	p.halted = true
+	p.lifetimeLocked()
+	p.end(ErrHalted)
+	idle := p.idle
+	p.mu.Unlock()
+
+	if idle == nil {
+		return
+	}
+	select {
+	case <-idle:
+	case <-time.After(haltWait):
+		logger.Warn("An action did not end in time; restoring the clipboard under it")
+		p.clipboardManager.Abandon()
+	}
+}
+
+// Resume undoes Halt, for when the copy meant to replace this one never started.
+func (p *Processor) Resume() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.halted = false
+	p.lifetime, p.end = context.WithCancelCause(context.Background())
 }
 
 func outcomeError(outcome input.CaptureOutcome) error {
@@ -353,6 +421,8 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, req reques
 		return reply{}, err
 	}
 
+	ctx, unbind := p.bound(ctx)
+	defer unbind()
 	ctx, keepAlive, stop := untilSilent(ctx, time.Duration(operation.TimeoutSeconds)*time.Second)
 	defer stop()
 
@@ -371,6 +441,9 @@ func (p *Processor) complete(ctx context.Context, cfg *config.Config, req reques
 		prompt.Context = askContext(time.Now())
 	}
 	answer, err := generate(ctx, provider, prompt, req, keepAlive)
+	if errors.Is(context.Cause(ctx), ErrHalted) {
+		return reply{}, ErrHalted
+	}
 	if errors.Is(context.Cause(ctx), errTimedOut) {
 		return reply{}, fmt.Errorf("no reply within %ds - raise the timeout in Settings > Actions > %s",
 			operation.TimeoutSeconds, op.Label())
@@ -440,7 +513,9 @@ func (p *Processor) IsProcessing() bool {
 	return p.processing
 }
 
+// Close restores the clipboard an action was holding before freeing it.
 func (p *Processor) Close() {
+	p.Halt()
 	p.clipboardManager.Close()
 }
 
@@ -532,7 +607,9 @@ func (p *Processor) CleanTranscript(text string) (string, error) {
 		return "", fmt.Errorf("transcript cleanup unavailable: %w", err)
 	}
 
-	ctx, _, stop := untilSilent(context.Background(), time.Duration(config.DefaultTimeoutSeconds)*time.Second)
+	ctx, unbind := p.bound(context.Background())
+	defer unbind()
+	ctx, _, stop := untilSilent(ctx, time.Duration(config.DefaultTimeoutSeconds)*time.Second)
 	defer stop()
 
 	logger.Info("Cleaning dictated transcript",
@@ -542,6 +619,9 @@ func (p *Processor) CleanTranscript(text string) (string, error) {
 	)
 
 	cleaned, err := provider.Stream(ctx, ai.Prompt{System: prompt.Dictate, Text: trimmed}, nil)
+	if errors.Is(context.Cause(ctx), ErrHalted) {
+		return "", ErrHalted
+	}
 	if errors.Is(context.Cause(ctx), errTimedOut) {
 		return "", fmt.Errorf("transcript cleanup got no reply within %ds", config.DefaultTimeoutSeconds)
 	}
