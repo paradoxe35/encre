@@ -226,12 +226,36 @@ func TestShippedDefaultsAreUnchanged(t *testing.T) {
 func TestDefaultHotkeysMatchWhatShipped(t *testing.T) {
 	actions := DefaultActions()
 
-	want := map[ActionKind]string{
-		ActionReviseEverything:   "ctrl+alt+space",
-		ActionTranslateSelection: "ctrl+alt+g",
+	// What each platform shipped: a changed default would move a hotkey users already learned.
+	shipped := map[string]map[ActionKind]string{
+		"darwin": {
+			ActionReviseSelection:    "ctrl+cmd",
+			ActionReviseEverything:   "ctrl+option+r",
+			ActionTranslateSelection: "ctrl+option+g",
+			ActionDictate:            "ctrl+shift+space",
+			ActionAskByVoice:         "ctrl+option+a",
+			ActionAskByTyping:        "ctrl+option+k",
+		},
+		"windows": {
+			ActionReviseSelection:    "ctrl+win",
+			ActionReviseEverything:   "ctrl+alt+space",
+			ActionTranslateSelection: "ctrl+alt+g",
+			ActionDictate:            "ctrl+shift+space",
+			ActionAskByVoice:         "ctrl+alt+a",
+			ActionAskByTyping:        "ctrl+alt+k",
+		},
+		"linux": {
+			ActionReviseSelection:    "ctrl+super",
+			ActionReviseEverything:   "ctrl+alt+space",
+			ActionTranslateSelection: "ctrl+alt+g",
+			ActionDictate:            "ctrl+shift+space",
+			ActionAskByVoice:         "ctrl+alt+a",
+			ActionAskByTyping:        "ctrl+alt+k",
+		},
 	}
-	if runtime.GOOS == "linux" {
-		want[ActionReviseSelection] = "ctrl+super"
+	want, ok := shipped[runtime.GOOS]
+	if !ok {
+		want = shipped["linux"]
 	}
 
 	for kind, binding := range want {
