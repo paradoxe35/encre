@@ -542,38 +542,63 @@ func (l *tableLayout) Layout(objects []fyne.CanvasObject, _ fyne.Size) {
 
 // literalTags writes '<' outside code as an entity, so a tag the model wrote as text shows instead of
 // vanishing: Fyne's Markdown renders no HTML, drops it with the rest of its block, and shows a
-// backslash escape as typed, but decodes entities.
+// backslash escape as typed, but decodes entities. Code spans may cross lines, so prose is handled
+// a paragraph at a time; an indented line is escaped too, as inside a list it is not code.
 func literalTags(markdown string) string {
-	var out strings.Builder
-	fence := ""
+	var out, paragraph strings.Builder
+	flush := func() {
+		out.WriteString(escapeTagsInLine(paragraph.String()))
+		paragraph.Reset()
+	}
+	var fence string
 	for _, line := range strings.SplitAfter(markdown, "\n") {
 		trimmed := strings.TrimLeft(line, " ")
-		if marker := fenceMarker(trimmed); marker != "" {
-			switch {
-			case fence == "":
-				fence = marker
-			case strings.HasPrefix(trimmed, fence):
+		switch {
+		case fence != "":
+			out.WriteString(line)
+			if closesFence(trimmed, fence) {
 				fence = ""
 			}
+		case opensFence(trimmed) != "":
+			flush()
+			fence = opensFence(trimmed)
 			out.WriteString(line)
-			continue
+		default:
+			paragraph.WriteString(line)
+			if strings.TrimSpace(line) == "" {
+				flush()
+			}
 		}
-		if fence != "" || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
-			out.WriteString(line)
-			continue
-		}
-		out.WriteString(escapeTagsInLine(line))
 	}
+	flush()
 	return out.String()
 }
 
-func fenceMarker(line string) string {
-	for _, mark := range []string{"```", "~~~"} {
-		if strings.HasPrefix(line, mark) {
-			return mark
+// opensFence returns the run of three or more backticks or tildes a line opens a code block with.
+func opensFence(line string) string {
+	for _, mark := range []byte{'`', '~'} {
+		run := 0
+		for run < len(line) && line[run] == mark {
+			run++
+		}
+		if run >= 3 {
+			// A backtick fence's info string cannot hold a backtick.
+			if mark == '`' && strings.ContainsRune(line[run:], '`') {
+				return ""
+			}
+			return line[:run]
 		}
 	}
 	return ""
+}
+
+// closesFence is a run of the opening character at least as long, with nothing after it.
+func closesFence(line, fence string) bool {
+	run := 0
+	for run < len(line) && line[run] == fence[0] {
+		run++
+	}
+	return run >= len(fence) && strings.TrimSpace(line[run:]) == ""
 }
 
 // escapeTagsInLine leaves code spans and autolinks such as <https://example.org> as they are.

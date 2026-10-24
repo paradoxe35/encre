@@ -117,6 +117,7 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
-      # The clipboard and window tests need an X server.
+      # The clipboard and window tests need an X server; -noreset keeps it up between one test's last
+      # connection and the next test's first, which a reset would refuse.
       - name: Go tests with the race detector
-        run: xvfb-run -a go test -race -count=1 ./...
+        run: xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" go test -race -count=1 ./...

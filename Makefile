@@ -340,7 +340,7 @@ test-rust:
 test-go: build-rust
 	@echo "Running Go tests..."
 	@if [ -z "$$DISPLAY" ] && [ "$(CURRENT_OS)" = linux ] && command -v xvfb-run >/dev/null 2>&1; then \
-		CGO_ENABLED=1 xvfb-run -a go test ./...; \
+		CGO_ENABLED=1 xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" go test ./...; \
 	else \
 		CGO_ENABLED=1 go test ./...; \
 	fi

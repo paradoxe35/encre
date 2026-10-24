@@ -22,6 +22,12 @@ func Supported() bool {
 	return glfw.GetPlatform() != glfw.PlatformWayland
 }
 
+// NativeWayland reports that windows are Wayland's own, not XWayland's, where GLFW gives a key's
+// evdev code as its scancode rather than the X11 keycode, eight more.
+func NativeWayland() bool {
+	return glfw.GetPlatform() == glfw.PlatformWayland
+}
+
 // The GL function table is process-wide and shared with Fyne's painter.
 var initGL sync.Once
 

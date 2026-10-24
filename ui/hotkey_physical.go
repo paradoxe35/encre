@@ -4,6 +4,7 @@ import (
 	"runtime"
 
 	"fyne.io/fyne/v2"
+	"github.com/paradoxe35/encre/internal/overlay"
 )
 
 // The hotkey listener matches letters and digits by where they sit on a US keyboard on Linux and
@@ -42,6 +43,9 @@ func positionalTable(goos string) map[int]string {
 // bindingKey names a captured key as the listener will read it: by position for letters and digits
 // where the listener does, by Fyne's name otherwise.
 func bindingKey(key fyne.KeyName, scancode int) string {
+	if scancode > 0 && runtime.GOOS != "darwin" && positionalTable(runtime.GOOS) != nil && overlay.NativeWayland() {
+		scancode += 8
+	}
 	return bindingKeyOn(runtime.GOOS, key, scancode)
 }
 

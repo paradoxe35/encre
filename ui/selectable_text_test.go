@@ -636,3 +636,21 @@ func TestTagsWrittenAsTextShowInTheAnswer(t *testing.T) {
 		t.Errorf("the escape shows: %q", got)
 	}
 }
+
+func TestTagsShowInListsAndStayRawInCode(t *testing.T) {
+	cases := []struct{ answer, want, unwanted string }{
+		{"1. Step one\n\n    Wrap it in <div> tags here.\n", "Wrap it in <div> tags here.", ""},
+		{"- item\n    - use <span> inline\n", "use <span> inline", ""},
+		{"````markdown\n```go\nif a<b {}\n```\n````\n", "if a<b {}", "&lt;"},
+		{"Use `x\n<b>` here.", "<b>", "&lt;"},
+	}
+	for _, c := range cases {
+		card, _ := newCard(t)
+		answered(card, "q", c.answer)
+		card.selection.SelectAll()
+		got := card.selection.SelectedText()
+		if !strings.Contains(got, c.want) || (c.unwanted != "" && strings.Contains(got, c.unwanted)) {
+			t.Errorf("%q reads %q, want it to hold %q", c.answer, got, c.want)
+		}
+	}
+}
