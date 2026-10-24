@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/paradoxe35/encre/internal/stt"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/paradoxe35/encre/internal/stt"
 
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/overlay"

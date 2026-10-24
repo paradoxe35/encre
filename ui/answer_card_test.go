@@ -156,6 +156,7 @@ func TestLongAnswersStopGrowingTheCard(t *testing.T) {
 
 // No pointer move first: a two-finger scroll moves none.
 func TestTheWheelScrollsAnAnswerThatOutgrewTheCard(t *testing.T) {
+	settleScrolls(t)
 	card, _ := newCard(t)
 	var batch func()
 	card.later = func(_ time.Duration, run func()) { batch = run }
@@ -193,6 +194,7 @@ func streamInto(t *testing.T) (*AnswerCard, func(paragraphs int, done bool)) {
 }
 
 func TestAReaderKeepsTheirPlaceWhileTheAnswerGrows(t *testing.T) {
+	settleScrolls(t)
 	card, stream := streamInto(t)
 	stream(100, false)
 	stream(200, false)
@@ -207,6 +209,7 @@ func TestAReaderKeepsTheirPlaceWhileTheAnswerGrows(t *testing.T) {
 }
 
 func TestScrollingWhileTheAnswerStreamsIsNeverUndone(t *testing.T) {
+	settleScrolls(t)
 	card, stream := streamInto(t)
 	for paragraphs := 1; paragraphs <= 60; paragraphs++ {
 		if paragraphs%5 == 0 {

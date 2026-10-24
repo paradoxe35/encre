@@ -456,6 +456,7 @@ func TestTheScrollbarOfWideCodeDragsAndExpands(t *testing.T) {
 }
 
 func TestTheMarksFollowScrolledCode(t *testing.T) {
+	settleScrolls(t)
 	card, _ := newCard(t)
 	answered(card, "q", "```\n"+strings.Repeat("wide_code_", 30)+"\n```")
 	s := card.selection

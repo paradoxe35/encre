@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
@@ -86,6 +87,7 @@ func sideScrollsIn(o fyne.CanvasObject) []*sideScroll {
 }
 
 func TestTheWheelOverWideCodeScrollsTheAnswer(t *testing.T) {
+	settleScrolls(t)
 	card, _ := newCard(t)
 	wide := strings.Repeat("x", 400)
 	answered(card, "q", strings.Repeat("A long answer line.\n\n", 60)+"```\n"+wide+"\n```\n\n| "+wide+" | b |\n|---|---|\n| c | d |\n\n"+strings.Repeat("More.\n\n", 30))
@@ -205,5 +207,14 @@ func TestABareAddressInATableCellIsALink(t *testing.T) {
 				t.Fatalf("links in the table: %v", links)
 			}
 		})
+	}
+}
+
+// settleScrolls waits out the timer a scroll on macOS starts to fade its bars: Fyne's test driver
+// runs what it then does at once, on the timer's goroutine, against the next test.
+func settleScrolls(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "darwin" {
+		t.Cleanup(func() { time.Sleep(time.Second) })
 	}
 }
