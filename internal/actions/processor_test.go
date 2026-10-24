@@ -77,6 +77,13 @@ func TestParseProviderMention(t *testing.T) {
 			wantProvider:  "claude",
 			wantRemainder: "translate this",
 		},
+		{
+			name:          "a mention on its own line above the text",
+			mentionsOn:    true,
+			text:          "@claude\nfix this paragraph",
+			wantProvider:  "claude",
+			wantRemainder: "fix this paragraph",
+		},
 	}
 
 	p := &Processor{}

@@ -588,10 +588,10 @@ func (c *Config) applyDefaults() {
 	if c.Actions == nil {
 		c.Actions = DefaultActions()
 	} else {
+		// A saved empty hotkey is one the user cleared, so only a missing action gets the defaults.
 		defaults := DefaultActions()
 		for _, kind := range ActionOrder {
-			action, ok := c.Actions[kind]
-			if !ok || action.Hotkey == "" {
+			if _, ok := c.Actions[kind]; !ok {
 				c.Actions[kind] = defaults[kind]
 			}
 		}

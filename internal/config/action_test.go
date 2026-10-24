@@ -263,3 +263,21 @@ func TestMemoryCountsTheQuestionAndStaysInRange(t *testing.T) {
 		}
 	}
 }
+
+func TestAClearedHotkeyAndADisabledActionStayThatWay(t *testing.T) {
+	cfg := &Config{Actions: map[ActionKind]ActionConfig{
+		ActionReviseSelection:    {Enabled: false, Hotkey: ""},
+		ActionTranslateSelection: {Enabled: true, Hotkey: ""},
+	}}
+	cfg.applyDefaults()
+
+	if got := cfg.Actions[ActionReviseSelection]; got.Enabled || got.Hotkey != "" {
+		t.Errorf("the cleared, disabled revise came back as %+v", got)
+	}
+	if got := cfg.Actions[ActionTranslateSelection]; !got.Enabled || got.Hotkey != "" {
+		t.Errorf("the enabled translate without a hotkey came back as %+v", got)
+	}
+	if got := cfg.Actions[ActionDictate]; got.Hotkey == "" {
+		t.Error("a missing action did not get its default hotkey")
+	}
+}

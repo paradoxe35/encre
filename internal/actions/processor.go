@@ -535,7 +535,11 @@ func (p *Processor) parseProviderMention(cfg *config.Config, text string) (provi
 		return "", text
 	}
 
-	mention, rest, _ := strings.Cut(trimmed, " ")
+	// The mention may end the line, as "@claude" written above the text it is about.
+	mention, rest := trimmed, ""
+	if end := strings.IndexFunc(trimmed, unicode.IsSpace); end >= 0 {
+		mention, rest = trimmed[:end], trimmed[end:]
+	}
 	name, found := cfg.FindProvider(strings.TrimPrefix(mention, "@"))
 	if !found {
 		return "", text

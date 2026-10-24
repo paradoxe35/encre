@@ -60,9 +60,15 @@ func openSurface() (surface, error) {
 	noFocus(window)
 
 	focus, known := focusPoint()
+	area := workareaFor(screens, focus, known)
 	ww, wh := window.GetSize()
-	origin := pillOrigin(workareaFor(screens, focus, known), ww, wh)
+	origin := pillOrigin(area, ww, wh)
 	window.SetPos(origin.X, origin.Y)
+	// Scaled to the monitor it lands on, the window may have grown or shrunk; centre it again at that size.
+	if w, h := window.GetSize(); w != ww || h != wh {
+		origin = pillOrigin(area, w, h)
+		window.SetPos(origin.X, origin.Y)
+	}
 
 	window.MakeContextCurrent()
 	var glErr error
