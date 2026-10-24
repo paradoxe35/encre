@@ -37,7 +37,8 @@ pub unsafe extern "C" fn encre_clipboard_get_text(handle: ClipboardHandle) -> *m
 
         // No text is the normal state while awaiting a copy, so it must not touch the error slot.
         match clipboard.get_text() {
-            Ok(text) => string_to_c_str(text.unwrap_or_default()),
+            // A C string ends at a NUL, which would read as nothing selected; none belongs in text anyway.
+            Ok(text) => string_to_c_str(text.unwrap_or_default().replace('\0', "")),
             Err(e) => {
                 set_last_error(format!("{:#}", e));
                 std::ptr::null_mut()

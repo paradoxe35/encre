@@ -1,7 +1,9 @@
 package pcm
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -26,7 +28,7 @@ func TestATransientFailureLetsTheRestBeSent(t *testing.T) {
 }
 
 func TestAFailureEveryPieceWouldShareStopsTheTake(t *testing.T) {
-	for name, err := range map[string]error{"refused key": statusError(401), "timeout": errors.New("context deadline exceeded")} {
+	for name, err := range map[string]error{"refused key": statusError(401), "timeout": fmt.Errorf("piece: %w", context.DeadlineExceeded)} {
 		f := NewFailures(90)
 		if f.Failed(0, err) {
 			t.Errorf("%s: went on sending", name)
@@ -56,5 +58,14 @@ func TestAOnePieceTakeKeepsItsError(t *testing.T) {
 	f.Failed(0, err)
 	if got := f.Err(); got != error(err) {
 		t.Fatalf("got %v", got)
+	}
+}
+
+// A piece cut off at the model's output limit, or answered with nothing usable, is that piece's own.
+func TestAPieceOfItsOwnLetsTheRestBeSent(t *testing.T) {
+	for _, err := range []error{errors.New("Gemini cut the transcript off at its output limit (MAX_TOKENS)"), errors.New("connection reset by peer"), statusError(408)} {
+		if !NewFailures(3).Failed(0, err) {
+			t.Errorf("gave up after %v", err)
+		}
 	}
 }

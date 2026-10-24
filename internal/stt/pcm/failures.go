@@ -1,6 +1,7 @@
 package pcm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -11,7 +12,7 @@ import (
 const maxStreak = 3
 
 // Failures collects the pieces of a take that failed, and says when the rest are not worth sending:
-// a timeout, a refused key or a bad request would fail them all, at the cost of a full upload each.
+// a timeout or a refused request would fail them all, at the cost of a full upload each.
 type Failures struct {
 	total, streak int
 	failed        []int
@@ -49,14 +50,23 @@ func (f *Failures) Err() error {
 	return fmt.Errorf("%w (part %s of %d failed%s)", f.first, spans(f.failed), f.total, rest)
 }
 
-// transient is a service's 429 or 5xx, which the next piece may well not get.
+// transient is anything but what every piece would meet in turn: a deadline or a timed-out line,
+// or a service's refusal of the request itself (a 4xx other than 408 and 429). One piece cut off at
+// the model's output limit, refused, or answered with garbage says nothing about the next.
 func transient(err error) bool {
-	var status interface{ HTTPStatus() int }
-	if !errors.As(err, &status) {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return false
 	}
-	code := status.HTTPStatus()
-	return code == 429 || code >= 500
+	var timeout interface{ Timeout() bool }
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return false
+	}
+	var status interface{ HTTPStatus() int }
+	if errors.As(err, &status) {
+		code := status.HTTPStatus()
+		return code < 400 || code >= 500 || code == 408 || code == 429
+	}
+	return true
 }
 
 // spans writes ascending numbers as ranges: 1–3, 7.
