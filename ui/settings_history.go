@@ -186,10 +186,11 @@ func showHistoryDetail(window fyne.Window, entry history.Entry) {
 	switch {
 	case entry.Kind == history.KindAsk:
 		lines = append(lines, "Question:", entry.Original, "", "Answer:", entry.Result)
+	// Translate goes either way between the pair, so the entry names the pair, not a direction.
 	case entry.FromLang != "":
 		lines = append(lines,
-			fmt.Sprintf("From (%s):", entry.FromLang), entry.Original, "",
-			fmt.Sprintf("To (%s):", entry.ToLang), entry.Result)
+			fmt.Sprintf("Translated between %s and %s", entry.FromLang, entry.ToLang), "",
+			"Original:", entry.Original, "", "Translation:", entry.Result)
 	default:
 		lines = append(lines, "Result:", entry.Result)
 		if entry.Original != "" && entry.Original != entry.Result {

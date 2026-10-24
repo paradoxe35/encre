@@ -310,8 +310,6 @@ func (p *Processor) RecordDictation(raw, final string) {
 
 // Never blocks the caller: history is a convenience, not a dependency.
 func (p *Processor) recordHistory(kind config.ActionKind, original string, result reply) {
-	cfg := p.currentConfig()
-
 	entry := history.Entry{
 		Kind:       history.Kind(kind.Operation()),
 		Original:   original,
@@ -321,9 +319,7 @@ func (p *Processor) recordHistory(kind config.ActionKind, original string, resul
 		Characters: utf8.RuneCountInString(result.text),
 	}
 	if kind.Operation() == config.OpTranslate {
-		translate := cfg.Translation()
-		entry.FromLang = language.Find(translate.PrimaryLanguage).Name
-		entry.ToLang = language.Find(translate.SecondaryLanguage).Name
+		entry.FromLang, entry.ToLang = result.pair[0], result.pair[1]
 	}
 	p.history.Add(entry)
 }
@@ -332,6 +328,8 @@ type reply struct {
 	text     string
 	provider string
 	model    string
+	// pair is the translate languages the prompt was built with; either may be the source.
+	pair [2]string
 }
 
 func (p *Processor) transform(text string, kind config.ActionKind) (reply, error) {
@@ -347,6 +345,10 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 	}
 
 	result.text = ai.CleanResponse(result.text, source)
+	if kind.Operation() == config.OpTranslate {
+		translate := cfg.Translation()
+		result.pair = [2]string{language.Find(translate.PrimaryLanguage).Name, language.Find(translate.SecondaryLanguage).Name}
+	}
 	if result.text == "" {
 		return reply{}, fmt.Errorf("the model returned an empty result")
 	}
