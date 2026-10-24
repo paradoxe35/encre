@@ -349,7 +349,8 @@ struct ListenerState {
     /// Tracked by key, not name, so auto-repeat is not read as a second press and numpad 1 and the
     /// top-row 1, which share a name, do not end each other's hold.
     held_key: Option<Key>,
-    holding: Option<(Key, &'static str)>,
+    /// Every hold still down, by the key that started it and its action, so each gets its own release.
+    holding: Vec<(Key, String)>,
     /// Windows types AltGr as a made-up left Ctrl then right Alt, which must not read as Ctrl+Alt.
     /// The made-up Ctrl is kept out of `held`; a right Alt while it is down is typing, not Alt.
     fake_ctrl: bool,
@@ -481,7 +482,7 @@ impl ListenerState {
                 fire(binding, true);
                 fired = true;
                 if binding.is_hold() {
-                    self.holding = Some((key, name));
+                    self.holding.push((key, binding.action.clone()));
                 }
             }
         }
@@ -500,12 +501,15 @@ impl ListenerState {
                 self.held_key = None;
             }
             // A modifier released first is a slipped finger, not the end of the hold.
-            if let Some((held, name)) = self.holding
-                && held == key
-            {
-                self.holding = None;
+            let (ended, still): (Vec<_>, Vec<_>) = std::mem::take(&mut self.holding)
+                .into_iter()
+                .partition(|(held, _)| *held == key);
+            self.holding = still;
+            if !ended.is_empty() {
                 for binding in bindings.lock().iter() {
-                    if binding.is_hold() && binding.key == Some(name) {
+                    if binding.is_hold()
+                        && ended.iter().any(|(_, action)| *action == binding.action)
+                    {
                         fire(binding, false);
                     }
                 }
@@ -1546,6 +1550,38 @@ mod tests {
             *FIRED.lock(),
             vec!["dictate:1"],
             "the hold restarted or ended early"
+        );
+    }
+
+    #[test]
+    fn two_holds_down_at_once_each_get_their_release() {
+        let _serial = SERIAL.lock();
+        FIRED.lock().clear();
+        let mut manager = SimpleHotkeyManager::new();
+        for (binding, action) in [("ctrl+alt+d", "dictate"), ("ctrl+alt+a", "ask")] {
+            manager
+                .register_hold(binding.to_string(), action.to_string(), record_edge)
+                .unwrap();
+        }
+        let mut state = ListenerState::default();
+        for event in [
+            EventType::KeyPress(Key::Alt),
+            EventType::KeyPress(Key::ControlLeft),
+            EventType::KeyPress(Key::KeyD),
+            EventType::KeyPress(Key::KeyA),
+            EventType::KeyRelease(Key::KeyA),
+            EventType::KeyRelease(Key::KeyD),
+        ] {
+            state.process(event, &manager.bindings);
+        }
+        let fired = FIRED.lock().clone();
+        assert!(
+            fired.contains(&"dictate:0".to_string()),
+            "dictate never got its release: {fired:?}"
+        );
+        assert!(
+            fired.contains(&"ask:0".to_string()),
+            "ask never got its release: {fired:?}"
         );
     }
 

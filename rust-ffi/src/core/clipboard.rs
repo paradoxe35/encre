@@ -103,6 +103,8 @@ struct Borrow {
     copying: bool,
     /// Files the capture copied along with their names, as a Finder copy does.
     copied_files: Option<Vec<PathBuf>>,
+    /// A picture the capture's copy put up with its text, which on Windows is read before the text.
+    copied_image: Option<ImageData<'static>>,
 }
 
 impl Borrow {
@@ -112,14 +114,17 @@ impl Borrow {
             ours: Vec::new(),
             copying: false,
             copied_files: None,
+            copied_image: None,
         }
     }
 
     fn captured(&mut self, text: String, current: Content) {
         self.ours.push(text);
         self.copying = false;
-        if let Content::Files(files) = current {
-            self.copied_files = Some(files);
+        match current {
+            Content::Files(files) => self.copied_files = Some(files),
+            Content::Image(image) => self.copied_image = Some(image),
+            _ => {}
         }
     }
 
@@ -133,7 +138,12 @@ impl Borrow {
                     alt: Some(text), ..
                 } => self.ours.contains(text),
                 Content::Files(files) => self.copied_files.as_ref() == Some(files),
-                Content::Html { alt: None, .. } | Content::Image(_) => false,
+                Content::Image(image) => self.copied_image.as_ref().is_some_and(|copied| {
+                    copied.width == image.width
+                        && copied.height == image.height
+                        && copied.bytes == image.bytes
+                }),
+                Content::Html { alt: None, .. } => false,
             }
     }
 
@@ -150,6 +160,7 @@ impl Borrow {
         self.ours.clear();
         self.copying = false;
         self.copied_files = None;
+        self.copied_image = None;
         restore
     }
 }
@@ -426,6 +437,21 @@ mod tests {
             matches!(&content, Content::Files(paths) if *paths == files(&["/home/me/report.pdf", "/home/me/notes.txt"])),
             "{content:?}"
         );
+    }
+
+    #[test]
+    fn a_picture_the_capture_copied_is_ours_and_another_is_not() {
+        let mut borrow = Borrow::new(Content::Text("original".to_string()));
+        borrow.copying = true;
+        borrow.captured("selection".to_string(), Content::Image(picture()));
+        assert!(borrow.holds_ours(&Content::Image(picture())));
+
+        let other = ImageData {
+            width: 2,
+            height: 1,
+            bytes: vec![0; 8].into(),
+        };
+        assert!(!borrow.holds_ours(&Content::Image(other)));
     }
 
     #[test]
