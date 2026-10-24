@@ -516,8 +516,9 @@ func stopOffMain(teardown, quit func()) {
 }
 
 func (a *Application) teardown() {
+	// Set before the Once is taken, so a quit from macOS never blocks behind it unseen.
+	a.tearingDown.Store(true)
 	a.teardownOnce.Do(func() {
-		a.tearingDown.Store(true)
 		if a.updateChecks != nil {
 			close(a.updateChecks)
 		}
