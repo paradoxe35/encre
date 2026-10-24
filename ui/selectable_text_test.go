@@ -667,3 +667,20 @@ func TestTagsShowInListsAndStayRawInCode(t *testing.T) {
 		}
 	}
 }
+
+func TestCodeInsideHTMLAndQuotedHeadingsShowAsWritten(t *testing.T) {
+	cases := []struct{ answer, want, unwanted string }{
+		{"<p>Use `x < y` here</p>", "x < y", "&lt;"},
+		{"<div>\n```\na < b\n```\n</div>", "a < b", "&lt;"},
+		{"> # Heading &amp;lt;b&gt;", "Heading &lt;b>", ""},
+	}
+	for _, c := range cases {
+		card, _ := newCard(t)
+		answered(card, "q", c.answer)
+		card.selection.SelectAll()
+		got := card.selection.SelectedText()
+		if !strings.Contains(got, c.want) || (c.unwanted != "" && strings.Contains(got, c.unwanted)) {
+			t.Errorf("%q reads %q, want it to hold %q", c.answer, got, c.want)
+		}
+	}
+}

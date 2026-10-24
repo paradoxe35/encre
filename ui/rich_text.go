@@ -55,8 +55,8 @@ func adoptWithin(holder, within *widget.RichText, segments []widget.RichTextSegm
 		case *widget.HyperlinkSegment:
 			adopted = append(adopted, safeLink(segment))
 		case *widget.TextSegment:
-			// Fyne decodes entities everywhere but in block quotes, where literalTags' entities would show.
-			if segment.Style.QuotingDepth > 0 && !segment.Style.TextStyle.Monospace {
+			// Fyne decodes entities everywhere but in quoted body text, where literalTags' entities would show.
+			if quotedBody(segment.Style) {
 				segment.Text = html.UnescapeString(segment.Text)
 			}
 			for _, part := range linked(segment) {
@@ -70,6 +70,16 @@ func adoptWithin(holder, within *widget.RichText, segments []widget.RichTextSegm
 		}
 	}
 	return adopted
+}
+
+// quotedBody is the style Fyne gives text in a block quote, which it leaves undecoded; quoted
+// headings it decodes itself.
+func quotedBody(style widget.RichTextStyle) bool {
+	if style.QuotingDepth == 0 {
+		return false
+	}
+	style.QuotingDepth = 0
+	return style == widget.RichTextStyleBlockquote
 }
 
 var bareAddress = regexp.MustCompile(`https?://[^\s<>"'` + "`" + `]+`)
@@ -554,48 +564,110 @@ func (l *tableLayout) Layout(objects []fyne.CanvasObject, _ fyne.Size) {
 // shows instead of vanishing: Fyne's Markdown renders no HTML and drops it, but decodes entities.
 // The HTML is found by parsing as Fyne does, so code, autolinks and everything else are left alone.
 func literalTags(markdown string) string {
-	source := []byte(markdown)
-	document := goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.TaskList, extension.Table)).
-		Parser().Parse(gtext.NewReader(source))
+	escaped, inserted := escapeRanges(markdown, htmlRanges(markdown))
+	if len(inserted) == 0 {
+		return markdown
+	}
+	// Code inside an HTML block was escaped with it; once the block is text, that code is code again
+	// and is shown as written, so its '<' come back.
+	code := codeRanges(escaped)
+	var out strings.Builder
+	at := 0
+	for _, offset := range inserted {
+		if !inSpans(code, offset) {
+			continue
+		}
+		out.WriteString(escaped[at:offset])
+		out.WriteByte('<')
+		at = offset + len("&lt;")
+	}
+	out.WriteString(escaped[at:])
+	return out.String()
+}
 
+var markdownParser = goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.TaskList, extension.Table)).Parser()
+
+func parseRanges(markdown string, keep func(ast.Node) *gtext.Segments) [][2]int {
+	source := []byte(markdown)
 	var spans [][2]int
-	ast.Walk(document, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+	ast.Walk(markdownParser.Parse(gtext.NewReader(source)), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
-		switch node := node.(type) {
-		case *ast.RawHTML:
-			for i := 0; i < node.Segments.Len(); i++ {
-				segment := node.Segments.At(i)
+		if segments := keep(node); segments != nil {
+			for i := 0; i < segments.Len(); i++ {
+				segment := segments.At(i)
 				spans = append(spans, [2]int{segment.Start, segment.Stop})
 			}
-		case *ast.HTMLBlock:
-			lines := node.Lines()
-			for i := 0; i < lines.Len(); i++ {
-				segment := lines.At(i)
-				spans = append(spans, [2]int{segment.Start, segment.Stop})
-			}
-			if node.HasClosure() {
-				spans = append(spans, [2]int{node.ClosureLine.Start, node.ClosureLine.Stop})
-			}
+		}
+		if closure, ok := node.(*ast.HTMLBlock); ok && closure.HasClosure() && keep(node) != nil {
+			spans = append(spans, [2]int{closure.ClosureLine.Start, closure.ClosureLine.Stop})
 		}
 		return ast.WalkContinue, nil
 	})
-	if len(spans) == 0 {
-		return markdown
-	}
 	slices.SortFunc(spans, func(a, b [2]int) int { return a[0] - b[0] })
+	return spans
+}
 
+func htmlRanges(markdown string) [][2]int {
+	return parseRanges(markdown, func(node ast.Node) *gtext.Segments {
+		switch node := node.(type) {
+		case *ast.RawHTML:
+			return node.Segments
+		case *ast.HTMLBlock:
+			return node.Lines()
+		}
+		return nil
+	})
+}
+
+func codeRanges(markdown string) [][2]int {
+	return parseRanges(markdown, func(node ast.Node) *gtext.Segments {
+		switch node := node.(type) {
+		case *ast.CodeBlock, *ast.FencedCodeBlock:
+			return node.Lines()
+		case *ast.CodeSpan:
+			segments := gtext.NewSegments()
+			for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+				if text, ok := child.(*ast.Text); ok {
+					segments.Append(text.Segment)
+				}
+			}
+			return segments
+		}
+		return nil
+	})
+}
+
+// escapeRanges writes '<' inside spans as "&lt;", reporting where each entity starts in the result.
+func escapeRanges(markdown string, spans [][2]int) (string, []int) {
 	var out strings.Builder
+	var inserted []int
 	at := 0
 	for _, span := range spans {
 		if span[0] < at {
 			continue
 		}
 		out.WriteString(markdown[at:span[0]])
-		out.WriteString(strings.ReplaceAll(markdown[span[0]:span[1]], "<", "&lt;"))
+		for _, c := range []byte(markdown[span[0]:span[1]]) {
+			if c == '<' {
+				inserted = append(inserted, out.Len())
+				out.WriteString("&lt;")
+			} else {
+				out.WriteByte(c)
+			}
+		}
 		at = span[1]
 	}
 	out.WriteString(markdown[at:])
-	return out.String()
+	return out.String(), inserted
+}
+
+func inSpans(spans [][2]int, offset int) bool {
+	for _, span := range spans {
+		if span[0] <= offset && offset < span[1] {
+			return true
+		}
+	}
+	return false
 }
