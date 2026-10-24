@@ -4,6 +4,7 @@ package main
 
 /*
 #cgo LDFLAGS: -framework Cocoa
+#include <stdbool.h>
 #include "reopen_darwin.h"
 */
 import "C"
@@ -17,17 +18,19 @@ func encreHandleReopen() {
 	}
 }
 
-var onTerminate func()
+var onTerminate func(asked bool) bool
 
 //export encreHandleTerminate
-func encreHandleTerminate() {
-	if onTerminate != nil {
-		onTerminate()
+func encreHandleTerminate(asked C.bool) C.bool {
+	if onTerminate == nil {
+		return C.bool(asked)
 	}
+	return C.bool(onTerminate(bool(asked)))
 }
 
-// stop runs on the UI thread as macOS quits the app, so it must not wait on that thread.
-func installTerminateHandler(stop func()) {
+// stop runs on the UI thread as macOS quits the app, so it must not wait on that thread. asked is
+// whether macOS itself asked; stop reports whether the quit goes ahead.
+func installTerminateHandler(stop func(asked bool) bool) {
 	onTerminate = stop
 	C.EncreInstallTerminateHandler()
 }

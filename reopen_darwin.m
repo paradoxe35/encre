@@ -14,12 +14,22 @@ static BOOL shouldHandleReopen(id self, SEL cmd, NSApplication *app, BOOL hasVis
     return YES;
 }
 
-// GLFW answers a quit from logout, restart or the Dock by asking each window to close and then
-// cancelling, and Encre's windows only hide, so logout stopped at "Encre canceled log out". The
-// teardown runs here instead, on this thread, and the quit goes ahead.
+static IMP glfwShouldTerminate;
+
+// GLFW answers a quit by asking each window to close and then cancelling, and Encre's windows only
+// hide, so logout stopped at "Encre canceled log out". A quit macOS asks for (logout, restart,
+// shutdown, the Dock's Quit) comes as a quit Apple Event and is torn down here, on this thread, and
+// let go ahead; Cmd+Q in Encre's own window sends none and still only hides it, as GLFW does.
 static NSApplicationTerminateReply shouldTerminate(id self, SEL cmd, NSApplication *app) {
-    encreHandleTerminate();
-    return NSTerminateNow;
+    NSAppleEventDescriptor *event = [[NSAppleEventManager sharedAppleEventManager] currentAppleEvent];
+    bool asked = event != nil && [event eventClass] == kCoreEventClass && [event eventID] == kAEQuitApplication;
+    if (encreHandleTerminate(asked)) {
+        return NSTerminateNow;
+    }
+    if (glfwShouldTerminate != NULL) {
+        return ((NSApplicationTerminateReply (*)(id, SEL, NSApplication *))glfwShouldTerminate)(self, cmd, app);
+    }
+    return NSTerminateCancel;
 }
 
 void EncreInstallTerminateHandler(void) {
@@ -33,10 +43,10 @@ void EncreInstallTerminateHandler(void) {
         snprintf(types, sizeof(types), "%s%s%s%s",
                  @encode(NSApplicationTerminateReply), @encode(id), @encode(SEL), @encode(id));
 
-        class_replaceMethod(object_getClass(delegate),
-                            @selector(applicationShouldTerminate:),
-                            (IMP)shouldTerminate,
-                            types);
+        glfwShouldTerminate = class_replaceMethod(object_getClass(delegate),
+                                                  @selector(applicationShouldTerminate:),
+                                                  (IMP)shouldTerminate,
+                                                  types);
     });
 }
 

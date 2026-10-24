@@ -162,18 +162,24 @@ func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instanc
 		systray.SetTooltip("Encre")
 		installReopenHandler(application.ShowWindow)
 		// The UI thread is the one asking, so nothing in the teardown may wait on it.
-		installTerminateHandler(func() {
-			application.loopEnded.Store(true)
+		installTerminateHandler(func(asked bool) bool {
 			// A tray Quit already tearing down may be waiting on this thread; it gets a moment to
 			// give the audio and clipboard back, and the quit goes ahead either way.
 			if application.tearingDown.Load() {
+				application.loopEnded.Store(true)
 				select {
 				case <-application.tornDown:
 				case <-time.After(1500 * time.Millisecond):
 				}
-				return
+				return true
 			}
+			// Cmd+Q in Encre's own window only hides it, so the hotkeys keep working from the tray.
+			if !asked {
+				return false
+			}
+			application.loopEnded.Store(true)
 			application.teardown()
+			return true
 		})
 		prepareNotifications()
 	})
