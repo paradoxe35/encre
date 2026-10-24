@@ -351,8 +351,8 @@ struct ListenerState {
     held_key: Option<Key>,
     holding: Option<(Key, &'static str)>,
     /// Windows types AltGr as a made-up left Ctrl then right Alt, which must not read as Ctrl+Alt.
-    altgr_is_ctrl_alt: bool,
-    left_ctrl: bool,
+    /// The made-up Ctrl is kept out of `held`; a right Alt while it is down is typing, not Alt.
+    fake_ctrl: bool,
     /// Set while an AltGr press is being read as typing, so its release is ignored too.
     typing_altgr: bool,
     delivery_announced: bool,
@@ -383,6 +383,10 @@ impl ListenerState {
         let Some(is_down) = self.modifier_is_down else {
             return;
         };
+        // The made-up Ctrl's release may be lost like any other, and would make every right Alt typing.
+        if self.fake_ctrl && !is_down(Modifier::Ctrl) {
+            self.fake_ctrl = false;
+        }
         for modifier in MODIFIERS {
             if self.held.get(modifier) && !is_down(modifier) {
                 self.held.set(modifier, false);
@@ -443,11 +447,7 @@ impl ListenerState {
     }
 
     fn on_press(&mut self, key: Key, bindings: &Mutex<Vec<HotkeyBinding>>) {
-        if key == Key::ControlLeft {
-            self.left_ctrl = true;
-        }
-        if key == Key::AltGr && self.altgr_is_ctrl_alt && self.left_ctrl {
-            self.held.set(Modifier::Ctrl, false);
+        if key == Key::AltGr && self.fake_ctrl {
             self.typing_altgr = true;
             self.interrupted = true;
             return;
@@ -491,9 +491,6 @@ impl ListenerState {
     }
 
     fn on_release(&mut self, key: Key, bindings: &Mutex<Vec<HotkeyBinding>>) {
-        if key == Key::ControlLeft {
-            self.left_ctrl = false;
-        }
         if key == Key::AltGr && self.typing_altgr {
             self.typing_altgr = false;
             return;
@@ -621,7 +618,6 @@ impl SimpleHotkeyManager {
             #[cfg(target_os = "windows")]
             {
                 state.modifier_is_down = Some(modifier_is_down);
-                state.altgr_is_ctrl_alt = true;
             }
 
             #[cfg(target_os = "macos")]
@@ -655,6 +651,15 @@ impl SimpleHotkeyManager {
                 let mut dispatch = move |event: &Event| {
                     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         if !*active_flag.lock() {
+                            return;
+                        }
+                        // AltGr's made-up left Ctrl carries scan code 0x21D, a real one 0x1D.
+                        #[cfg(target_os = "windows")]
+                        if let EventType::KeyPress(Key::ControlLeft)
+                        | EventType::KeyRelease(Key::ControlLeft) = event.event_type
+                            && event.position_code & 0x200 != 0
+                        {
+                            state.fake_ctrl = matches!(event.event_type, EventType::KeyPress(_));
                             return;
                         }
                         state.process(event.event_type, &bindings);
@@ -923,9 +928,11 @@ mod tests {
         Click,
         /// Released where the listener cannot see, as on the Ctrl+Alt+Del screen.
         Unheard(Key),
+        /// The left Ctrl Windows makes up for AltGr, told apart by its scan code.
+        FakeCtrl(bool),
     }
 
-    use Tap::{Click, Down, Unheard, Up};
+    use Tap::{Click, Down, FakeCtrl, Unheard, Up};
 
     /// What the system reports, updated only after the listener has seen the event.
     static PHYSICAL: Mutex<Modifiers> = Mutex::new(Modifiers {
@@ -940,18 +947,17 @@ mod tests {
     }
 
     fn fired(bindings: &[(&str, &str)], taps: &[Tap]) -> Vec<String> {
-        run(bindings, taps, None, false)
+        run(bindings, taps, None)
     }
 
     fn fired_on_windows(bindings: &[(&str, &str)], taps: &[Tap]) -> Vec<String> {
-        run(bindings, taps, Some(physically_down), true)
+        run(bindings, taps, Some(physically_down))
     }
 
     fn run(
         bindings: &[(&str, &str)],
         taps: &[Tap],
         modifier_is_down: Option<fn(Modifier) -> bool>,
-        altgr_is_ctrl_alt: bool,
     ) -> Vec<String> {
         let _serial = SERIAL.lock();
         FIRED.lock().clear();
@@ -966,7 +972,6 @@ mod tests {
 
         let mut state = ListenerState {
             modifier_is_down,
-            altgr_is_ctrl_alt,
             ..ListenerState::default()
         };
         for tap in taps {
@@ -975,6 +980,11 @@ mod tests {
                 Up(key) => Some(EventType::KeyRelease(*key)),
                 Click => Some(EventType::ButtonPress(Button::Left)),
                 Unheard(_) => None,
+                FakeCtrl(down) => {
+                    state.fake_ctrl = *down;
+                    PHYSICAL.lock().set(Modifier::Ctrl, *down);
+                    None
+                }
             };
             if let Some(event) = event {
                 state.process(event, &manager.bindings);
@@ -1478,20 +1488,40 @@ mod tests {
     fn typing_an_altgr_character_on_windows_is_not_ctrl_alt() {
         let bindings = [("ctrl+alt+a", "ask")];
         let altgr_a = [
-            Down(Key::ControlLeft),
+            FakeCtrl(true),
             Down(Key::AltGr),
             Down(Key::KeyA),
             Up(Key::KeyA),
             Up(Key::AltGr),
-            Up(Key::ControlLeft),
+            FakeCtrl(false),
         ];
         assert!(
             fired_on_windows(&bindings, &altgr_a).is_empty(),
             "AltGr+A ran the action"
         );
 
-        let ctrl_alt_a = [Down(Key::ControlLeft), Down(Key::Alt), Down(Key::KeyA)];
-        assert_eq!(fired_on_windows(&bindings, &ctrl_alt_a), vec!["ask"]);
+        for real in [Key::Alt, Key::AltGr] {
+            let taps = [Down(Key::ControlLeft), Down(real), Down(Key::KeyA)];
+            assert_eq!(
+                fired_on_windows(&bindings, &taps),
+                vec!["ask"],
+                "left Ctrl with {real:?}"
+            );
+        }
+
+        let lost = [
+            FakeCtrl(true),
+            Unheard(Key::ControlLeft),
+            Down(Key::KeyB),
+            Up(Key::KeyB),
+            Down(Key::AltGr),
+            Down(Key::Space),
+        ];
+        assert_eq!(
+            fired_on_windows(&[("alt+space", "revise")], &lost),
+            vec!["revise"],
+            "a lost made-up Ctrl kept right Alt from being Alt"
+        );
     }
 
     #[test]
