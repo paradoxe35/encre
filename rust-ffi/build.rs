@@ -29,10 +29,11 @@ fn main() {
         .write_to_file(output_file);
 
     // ggml is C++, and on MinGW nothing links its runtime into what cargo links itself, the tests;
-    // the static library leaves that to the Go build, which adds -lstdc++.
+    // the static library leaves that to the Go build, which adds -lstdc++. Linked from the archive,
+    // as the Go build links statically too: the libstdc++ DLL first on PATH may not be the one built against.
     let target = env::var("TARGET").unwrap_or_default();
     if target.ends_with("-windows-gnu") {
-        println!("cargo:rustc-link-arg=-lstdc++");
+        println!("cargo:rustc-link-arg=-l:libstdc++.a");
     }
 
     println!("cargo:rerun-if-changed=src/");
