@@ -129,6 +129,12 @@ impl Borrow {
     }
 
     /// Nothing is what Encre's clear leaves when no copy landed; a rich copy is ours by its text.
+    /// Go is handed the text without its NULs, which a C string cannot carry, so they are not compared.
+    fn is_ours(&self, text: &str) -> bool {
+        let text = text.replace('\0', "");
+        self.ours.iter().any(|ours| ours.replace('\0', "") == text)
+    }
+
     fn holds_ours(&self, current: &Content) -> bool {
         self.copying
             || match current {
@@ -136,7 +142,7 @@ impl Borrow {
                 Content::Text(text)
                 | Content::Html {
                     alt: Some(text), ..
-                } => self.ours.contains(text),
+                } => self.is_ours(text),
                 Content::Files(files) => self.copied_files.as_ref() == Some(files),
                 Content::Image(image) => self.copied_image.as_ref().is_some_and(|copied| {
                     copied.width == image.width
@@ -325,6 +331,13 @@ mod tests {
             html: html.to_string(),
             alt: some(alt),
         }
+    }
+
+    #[test]
+    fn a_selection_with_a_nul_still_gives_the_users_clipboard_back() {
+        let mut borrow = captured("original", "ab");
+        pasted(&mut borrow, text("a\0b"), "revised");
+        assert!(is_text(borrow.take_restore(&text("revised")), "original"));
     }
 
     #[test]
