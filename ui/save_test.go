@@ -13,6 +13,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/utils"
@@ -658,5 +659,59 @@ func TestADeleteThatCannotBeSavedStillLeavesTheTabConsistent(t *testing.T) {
 	w.saveSettings()
 	if _, ok := cfg.FindProvider("local"); ok {
 		t.Fatal("the next Save brought the deleted provider back")
+	}
+}
+
+func TestAnAddThatCannotBeSavedLeavesNoProviderBehind(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(config.ConfigPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.ConfigPath(), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Fallback(errors.New("unreadable"))
+	w := newSettingsWindow(t, cfg)
+	if err := os.WriteFile(config.ConfigPath(), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w.showAddCustomProviderDialog()
+	var entries []*widget.Entry
+	var add *widget.Button
+	var walk func(fyne.CanvasObject)
+	walk = func(o fyne.CanvasObject) {
+		switch o := o.(type) {
+		case *widget.Entry:
+			entries = append(entries, o)
+		case *widget.Button:
+			if o.Text == "Add" {
+				add = o
+			}
+		}
+		if c, ok := o.(*fyne.Container); ok {
+			for _, child := range c.Objects {
+				walk(child)
+			}
+		} else if wid, ok := o.(fyne.Widget); ok {
+			for _, child := range test.WidgetRenderer(wid).Objects() {
+				walk(child)
+			}
+		}
+	}
+	walk(w.Canvas().Overlays().Top())
+	if len(entries) < 2 || add == nil {
+		t.Fatalf("test setup: found %d entries and add %v", len(entries), add != nil)
+	}
+	entries[0].SetText("local")
+	entries[1].SetText("http://localhost:11434/v1")
+
+	test.Tap(add)
+	if _, ok := cfg.FindProvider("local"); ok {
+		t.Fatal("a provider the user was told was not saved is in the live config")
+	}
+	test.Tap(add)
+	if _, ok := cfg.FindProvider("local"); ok {
+		t.Fatal("the second try left the provider behind too")
 	}
 }

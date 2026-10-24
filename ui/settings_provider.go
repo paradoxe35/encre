@@ -390,19 +390,25 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 			LowReasoning: true,
 		}
 
+		// The key is encrypted first and the add undone if it cannot be saved, so a refused add leaves nothing behind.
+		if apiKey := strings.TrimSpace(apiKeyEntry.Text); apiKey != "" {
+			encrypted, err := encryptAPIKey(apiKey)
+			if err != nil {
+				addReport.Fail("Could not save the API key: " + err.Error())
+				return
+			}
+			settings.APIKey = encrypted
+		}
+
 		if err := w.config.AddCustomProvider(name, settings); err != nil {
 			addReport.Fail(err.Error())
 			return
 		}
 
-		if apiKey := strings.TrimSpace(apiKeyEntry.Text); apiKey != "" {
-			if err := w.config.SetAPIKey(name, apiKey); err != nil {
-				addReport.Fail("Could not save the API key: " + err.Error())
-				return
-			}
-		}
-
 		if err := w.config.Save(); err != nil {
+			if undoErr := w.config.DeleteCustomProvider(name); undoErr != nil {
+				logger.Error("Could not undo the unsaved provider", "provider", name, "error", undoErr)
+			}
 			addReport.Fail("Could not save: " + err.Error())
 			return
 		}
