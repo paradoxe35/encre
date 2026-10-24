@@ -673,6 +673,12 @@ func TestCodeInsideHTMLAndQuotedHeadingsShowAsWritten(t *testing.T) {
 		{"<p>Use `x < y` here</p>", "x < y", "&lt;"},
 		{"<div>\n```\na < b\n```\n</div>", "a < b", "&lt;"},
 		{"> # Heading &amp;lt;b&gt;", "Heading &lt;b>", ""},
+		{"Use `foo\n<div>` here", "<div>", ""},
+		{"> **bold <b>tag</b>**", "bold <b>tag</b>", "\uE000"},
+		{"> ~~gone <i>x</i>~~", "gone <i>x</i>", ""},
+		{"> # Title *with <tag>*", "with <tag>", ""},
+		{"| a | <b>b</b> |\n|---|---|\n| <i>c</i> | d |", "<i>c</i>", ""},
+		{"[click <b>here</b>](https://example.org)", "click <b>here</b>", ""},
 	}
 	for _, c := range cases {
 		card, _ := newCard(t)

@@ -377,7 +377,7 @@ func (c *AnswerCard) segments() []widget.RichTextSegment {
 	}
 	switch {
 	case c.text != "":
-		segments = append(segments, adopt(c.content, widget.NewRichTextFromMarkdown(literalTags(c.text)).Segments)...)
+		segments = append(segments, adopt(c.content, restoreTags(widget.NewRichTextFromMarkdown(literalTags(c.text)).Segments))...)
 	case c.status != "":
 		for _, line := range strings.Split(c.status, "\n") {
 			segments = append(segments, &widget.TextSegment{Text: line + "…", Style: mutedStyle()})
