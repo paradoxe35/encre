@@ -339,16 +339,20 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 		return reply{}, fmt.Errorf("nothing to work with - the selection is empty")
 	}
 
+	// Read with the prompt, as Save may change the pair while the model answers.
+	var pair [2]string
+	if kind.Operation() == config.OpTranslate {
+		translate := cfg.Translation()
+		pair = [2]string{language.Find(translate.PrimaryLanguage).Name, language.Find(translate.SecondaryLanguage).Name}
+	}
+
 	result, err := p.complete(context.Background(), cfg, request{op: kind.Operation(), mentioned: mentioned, text: source})
 	if err != nil {
 		return reply{}, err
 	}
 
 	result.text = ai.CleanResponse(result.text, source)
-	if kind.Operation() == config.OpTranslate {
-		translate := cfg.Translation()
-		result.pair = [2]string{language.Find(translate.PrimaryLanguage).Name, language.Find(translate.SecondaryLanguage).Name}
-	}
+	result.pair = pair
 	if result.text == "" {
 		return reply{}, fmt.Errorf("the model returned an empty result")
 	}

@@ -35,13 +35,23 @@ type HotkeyCapture struct {
 	savePressed bool
 	mu          sync.Mutex
 
-	pressedKeys map[fyne.KeyName]bool
-	modifiers   map[fyne.KeyModifier]bool
+	// pressedKeys holds the key by the name the listener reads, see bindingKey.
+	pressedKeys map[string]bool
+	// lastScancode is the key KeyDown saw last, which a shortcut event arriving after it does not carry.
+	lastScancode int
+	modifiers    map[fyne.KeyModifier]bool
 }
 
 type captureEntry struct {
 	widget.Entry
 	parent *HotkeyCapture
+}
+
+func (e *captureEntry) KeyDown(key *fyne.KeyEvent) {
+	e.parent.mu.Lock()
+	e.parent.lastScancode = key.Physical.ScanCode
+	e.parent.mu.Unlock()
+	e.Entry.KeyDown(key)
 }
 
 func (e *captureEntry) TypedKey(key *fyne.KeyEvent) {
@@ -173,7 +183,7 @@ const unsetHotkeyText = "Click 'Capture' to set"
 func NewHotkeyCapture(binding binding.String) *HotkeyCapture {
 	h := &HotkeyCapture{
 		binding:     binding,
-		pressedKeys: make(map[fyne.KeyName]bool),
+		pressedKeys: make(map[string]bool),
 		modifiers:   make(map[fyne.KeyModifier]bool),
 	}
 
@@ -240,7 +250,7 @@ func (h *HotkeyCapture) startCapture() {
 		h.onCaptureStart()
 	}
 
-	h.pressedKeys = make(map[fyne.KeyName]bool)
+	h.pressedKeys = make(map[string]bool)
 	h.modifiers = make(map[fyne.KeyModifier]bool)
 
 	h.displayLabel.Hide()
@@ -328,8 +338,8 @@ func (h *HotkeyCapture) recordCombo(modifiers fyne.KeyModifier, key fyne.KeyName
 			h.modifiers[modifier] = true
 		}
 	}
-	if !isModifierKey(key) && registrable(key) {
-		h.pressedKeys = map[fyne.KeyName]bool{key: true}
+	if name := bindingKey(key, h.lastScancode); !isModifierKey(key) && registrableKeys[name] {
+		h.pressedKeys = map[string]bool{name: true}
 	}
 	h.updateDisplay()
 }
@@ -365,8 +375,8 @@ func (h *HotkeyCapture) handleKeyPress(key *fyne.KeyEvent) {
 		h.modifiers[fyne.KeyModifierSuper] = true
 	default:
 		// Only one non-modifier key is kept; a saved combo only ever matches modifiers plus one key.
-		if !isModifierKey(key.Name) && registrable(key.Name) {
-			h.pressedKeys = map[fyne.KeyName]bool{key.Name: true}
+		if name := bindingKey(key.Name, key.Physical.ScanCode); !isModifierKey(key.Name) && registrableKeys[name] {
+			h.pressedKeys = map[string]bool{name: true}
 		}
 	}
 
@@ -393,8 +403,8 @@ func (h *HotkeyCapture) combo() string {
 	if h.modifiers[fyne.KeyModifierSuper] {
 		parts = append(parts, getSuperName())
 	}
-	for keyName := range h.pressedKeys {
-		parts = append(parts, keyNameToString(keyName))
+	for name := range h.pressedKeys {
+		parts = append(parts, name)
 	}
 	return strings.Join(parts, "+")
 }
@@ -487,8 +497,6 @@ var registrableKeys = func() map[string]bool {
 	}
 	return keys
 }()
-
-func registrable(key fyne.KeyName) bool { return registrableKeys[keyNameToString(key)] }
 
 func keyNameToString(key fyne.KeyName) string {
 	keyStr := strings.ToLower(string(key))

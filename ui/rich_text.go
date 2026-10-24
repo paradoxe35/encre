@@ -539,3 +539,78 @@ func (l *tableLayout) Layout(objects []fyne.CanvasObject, _ fyne.Size) {
 		}
 	}
 }
+
+// literalTags writes '<' outside code as an entity, so a tag the model wrote as text shows instead of
+// vanishing: Fyne's Markdown renders no HTML, drops it with the rest of its block, and shows a
+// backslash escape as typed, but decodes entities.
+func literalTags(markdown string) string {
+	var out strings.Builder
+	fence := ""
+	for _, line := range strings.SplitAfter(markdown, "\n") {
+		trimmed := strings.TrimLeft(line, " ")
+		if marker := fenceMarker(trimmed); marker != "" {
+			switch {
+			case fence == "":
+				fence = marker
+			case strings.HasPrefix(trimmed, fence):
+				fence = ""
+			}
+			out.WriteString(line)
+			continue
+		}
+		if fence != "" || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
+			out.WriteString(line)
+			continue
+		}
+		out.WriteString(escapeTagsInLine(line))
+	}
+	return out.String()
+}
+
+func fenceMarker(line string) string {
+	for _, mark := range []string{"```", "~~~"} {
+		if strings.HasPrefix(line, mark) {
+			return mark
+		}
+	}
+	return ""
+}
+
+// escapeTagsInLine leaves code spans and autolinks such as <https://example.org> as they are.
+func escapeTagsInLine(line string) string {
+	var out strings.Builder
+	for i := 0; i < len(line); {
+		if line[i] == '`' {
+			run := i
+			for run < len(line) && line[run] == '`' {
+				run++
+			}
+			ticks := line[i:run]
+			if end := strings.Index(line[run:], ticks); end >= 0 {
+				out.WriteString(line[i : run+end+len(ticks)])
+				i = run + end + len(ticks)
+				continue
+			}
+			out.WriteString(ticks)
+			i = run
+			continue
+		}
+		if line[i] == '<' && !autolinkAt(line[i:]) {
+			out.WriteString("&lt;")
+			i++
+			continue
+		}
+		out.WriteByte(line[i])
+		i++
+	}
+	return out.String()
+}
+
+func autolinkAt(text string) bool {
+	end := strings.IndexByte(text, '>')
+	if end < 0 {
+		return false
+	}
+	inside := text[1:end]
+	return !strings.ContainsAny(inside, " \t<") && (strings.HasPrefix(inside, "http://") || strings.HasPrefix(inside, "https://") || strings.HasPrefix(inside, "mailto:"))
+}

@@ -206,6 +206,17 @@ const KEYS: &[(Key, &str)] = &[
     (Key::Num7, "7"),
     (Key::Num8, "8"),
     (Key::Num9, "9"),
+    // The recorder names a numpad digit like the top row's, so either key fires the binding.
+    (Key::Kp0, "0"),
+    (Key::Kp1, "1"),
+    (Key::Kp2, "2"),
+    (Key::Kp3, "3"),
+    (Key::Kp4, "4"),
+    (Key::Kp5, "5"),
+    (Key::Kp6, "6"),
+    (Key::Kp7, "7"),
+    (Key::Kp8, "8"),
+    (Key::Kp9, "9"),
     (Key::Space, "space"),
     (Key::Return, "return"),
     (Key::KpReturn, "return"),
@@ -1436,6 +1447,12 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_numpad_digit_fires_a_digit_binding() {
+        assert_eq!(key_name(&Key::Kp1), Some("1"));
+        assert_eq!(key_name(&Key::Num1), Some("1"));
     }
 
     #[test]

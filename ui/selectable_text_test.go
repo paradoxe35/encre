@@ -621,3 +621,18 @@ func TestTheSelectionDropsWhenTheTextBeforeItChanges(t *testing.T) {
 		t.Fatalf("after the text before it changed %q is selected", got)
 	}
 }
+
+func TestTagsWrittenAsTextShowInTheAnswer(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "<div> is a block element, while <span> is inline.\nMore text here.\n\nUse `<b>` or <https://example.org>.")
+	card.selection.SelectAll()
+	got := card.selection.SelectedText()
+	for _, want := range []string{"<div> is a block element, while <span> is inline.", "More text here.", "<b>", "https://example.org"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the answer reads %q, missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "&lt;") {
+		t.Errorf("the escape shows: %q", got)
+	}
+}
