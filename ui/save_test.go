@@ -1,8 +1,14 @@
 package ui
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/widget"
@@ -205,5 +211,169 @@ func TestThinkingLessIsOnByDefaultAndSavedPerProvider(t *testing.T) {
 	}
 	if !thinksLess(config.BuiltInGemini) {
 		t.Error("unticking one provider changed another")
+	}
+}
+
+// newSettingsWindow builds every tab saveSettings reads except System, whose overlay check needs a real display.
+func newSettingsWindow(t *testing.T, cfg *config.Config) *MainWindow {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	utils.EnsureAppHomeDir()
+
+	a := withDefaultTheme(t)
+	w := &MainWindow{Window: a.NewWindow("Encre"), app: a, config: cfg}
+	t.Cleanup(w.Close)
+	w.initializing = true
+	w.initBindings()
+	w.createProviderSection()
+	w.createHotkeysSection()
+	w.createActionsSection()
+	w.createSpeechSection()
+	w.initializing = false
+	return w
+}
+
+func status(w *MainWindow) string {
+	text, _ := w.statusBinding.Get()
+	return text
+}
+
+func TestAFailedSaveLeavesTheLiveConfigAlone(t *testing.T) {
+	cases := map[string]func(w *MainWindow){
+		"character limit": func(w *MainWindow) { w.operationEditors[config.OpTranslate].limit.SetText("0") },
+		"ask memory":      func(w *MainWindow) { w.operationEditors[config.OpAsk].ask.memory.SetText("101") },
+	}
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := config.Default()
+			w := newSettingsWindow(t, cfg)
+			provider := cfg.GetCurrentProvider()
+			before := cfg.GetProviderSettings(provider)
+			hotkey := cfg.Action(config.ActionOrder[0]).Hotkey
+			prompt := cfg.Operation(config.OpRevise).SystemPrompt
+
+			w.modelBinding.Set("another-model")
+			w.apiKeyBinding.Set("sk-new")
+			w.hotkeyBindings[config.ActionOrder[0]].Set("ctrl+alt+shift+f9")
+			w.operationEditors[config.OpRevise].prompt.SetText("changed prompt")
+			breakIt(w)
+
+			w.saveSettings()
+
+			if !strings.HasPrefix(status(w), "Error") {
+				t.Fatalf("status = %q", status(w))
+			}
+			if got := cfg.GetProviderSettings(provider); got != before {
+				t.Errorf("provider settings changed to %+v", got)
+			}
+			if got := cfg.Action(config.ActionOrder[0]).Hotkey; got != hotkey {
+				t.Errorf("hotkey changed to %q", got)
+			}
+			if got := cfg.Operation(config.OpRevise).SystemPrompt; got != prompt {
+				t.Errorf("revise prompt changed to %q", got)
+			}
+		})
+	}
+}
+
+func TestACustomProviderWithoutABaseURLChangesNothing(t *testing.T) {
+	cfg := config.Default()
+	if err := cfg.AddCustomProvider("local", config.ProviderSettings{BaseURL: "http://localhost:11434/v1", Model: "llama", NoAPIKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	w := newSettingsWindow(t, cfg)
+	current := cfg.GetCurrentProvider()
+	w.providerBinding.Set("local")
+	w.loadProviderSettings("local")
+	w.baseURLBinding.Set("")
+	w.modelBinding.Set("other")
+
+	w.saveSettings()
+
+	if !strings.HasPrefix(status(w), "Error") || cfg.GetCurrentProvider() != current || cfg.GetProviderSettings("local").Model != "llama" {
+		t.Fatalf("status %q, current %q, model %q", status(w), cfg.GetCurrentProvider(), cfg.GetProviderSettings("local").Model)
+	}
+}
+
+func TestStartOnLoginTheSystemRefusesIsShownAndNotSaved(t *testing.T) {
+	cfg := config.Default()
+	w := newSettingsWindow(t, cfg)
+	home, _ := os.UserHomeDir()
+	// A file where the autostart directory belongs makes enabling fail.
+	if err := os.MkdirAll(filepath.Join(home, ".config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "autostart"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.startOnLoginBinding.Set(true)
+
+	w.saveSettings()
+
+	if got := status(w); got == "Settings saved" || !strings.Contains(got, "Start on login") {
+		t.Fatalf("status = %q", got)
+	}
+	if cfg.AppearanceSettings().StartOnLogin {
+		t.Error("StartOnLogin was saved as on although the system refused it")
+	}
+	if on, _ := w.startOnLoginBinding.Get(); on {
+		t.Error("the checkbox still claims Start on login is on")
+	}
+}
+
+func TestASpeechKeyThatCannotBeEncryptedIsNotStoredInPlainText(t *testing.T) {
+	cfg := config.Default()
+	w := newSettingsWindow(t, cfg)
+	w.speechRemoteKey.SetText("sk-speech")
+
+	encrypt := encryptAPIKey
+	encryptAPIKey = func(plain string) (string, error) {
+		if plain == "sk-speech" {
+			return "", errors.New("no entropy")
+		}
+		return encrypt(plain)
+	}
+	t.Cleanup(func() { encryptAPIKey = encrypt })
+
+	w.saveSettings()
+
+	if got := cfg.SpeechSettings().RemoteAPIKey; got == "sk-speech" {
+		t.Fatal("the speech key was stored in plain text")
+	}
+	if !strings.HasPrefix(status(w), "Error") {
+		t.Fatalf("status = %q", status(w))
+	}
+}
+
+func TestShortenedErrorsKeepWholeCharacters(t *testing.T) {
+	w := &MainWindow{statusBinding: binding.NewString()}
+	w.reportSaveError("Error", errors.New(strings.Repeat("é", statusErrorLimit)))
+	if got := status(w); !utf8.ValidString(got) {
+		t.Errorf("status bar message %q is not valid UTF-8", got)
+	}
+	if got := shortMessage(strings.Repeat("ü", 100)); !utf8.ValidString(got) || utf8.RuneCountInString(got) != 80 {
+		t.Errorf("shortMessage = %q", got)
+	}
+}
+
+func TestDeletingAProviderTakesItOutOfTheActions(t *testing.T) {
+	cfg := config.Default()
+	if err := cfg.AddCustomProvider("local", config.ProviderSettings{BaseURL: "http://localhost:11434/v1", Model: "llama", NoAPIKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetOperation(config.OpTranslate, config.OperationConfig{CharacterLimit: 500, TimeoutSeconds: 30, ProviderID: "local"})
+	w := newSettingsWindow(t, cfg)
+	editor := w.operationEditors[config.OpTranslate]
+	if editor.provider.Selected != "local" {
+		t.Fatalf("test setup: translate uses %q", editor.provider.Selected)
+	}
+
+	w.deleteProvider("local")
+
+	if slices.Contains(editor.provider.Options, "local") || editor.provider.Selected != providerDefaultOption {
+		t.Errorf("the Actions tab still offers %v with %q chosen", editor.provider.Options, editor.provider.Selected)
+	}
+	if got := cfg.Operation(config.OpTranslate).ProviderID; got != "" {
+		t.Errorf("translate still points at %q", got)
 	}
 }

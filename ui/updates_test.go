@@ -41,7 +41,32 @@ func staticUpdater(t *testing.T, tags ...string) *updater.Updater {
 func newTestPanel(t *testing.T, tags ...string) *updatePanel {
 	t.Helper()
 	test.NewApp()
-	return newUpdatePanel(staticUpdater(t, tags...))
+	return holdStarts(t, newUpdatePanel(staticUpdater(t, tags...)))
+}
+
+// holdStarts makes the panel queue its background work so a test runs it with runPending.
+func holdStarts(t *testing.T, p *updatePanel) *updatePanel {
+	t.Helper()
+	p.start = func(f func()) {
+		if pending[p] != nil {
+			t.Fatal("background work started while earlier work is still pending")
+		}
+		pending[p] = f
+	}
+	t.Cleanup(func() { delete(pending, p) })
+	return p
+}
+
+var pending = map[*updatePanel]func(){}
+
+func runPending(t *testing.T, p *updatePanel) {
+	t.Helper()
+	f := pending[p]
+	if f == nil {
+		t.Fatal("no background work was started")
+	}
+	delete(pending, p)
+	f()
 }
 
 func TestProgressText(t *testing.T) {
@@ -110,12 +135,11 @@ func TestUpdateStateTransitions(t *testing.T) {
 func TestUpdatePanelCheckFindsRelease(t *testing.T) {
 	p := newTestPanel(t, "v1.0.0", "v2.0.0")
 
-	p.state.checking()
-	p.render()
+	p.checkForUpdates()
 	if !p.checkButton.Disabled() {
 		t.Fatal("the check button should be locked while checking")
 	}
-	p.check()
+	runPending(t, p)
 
 	if p.status.Text != "Encre v2.0.0 is available" {
 		t.Fatalf("status = %q", p.status.Text)
@@ -128,7 +152,8 @@ func TestUpdatePanelCheckFindsRelease(t *testing.T) {
 func TestUpdatePanelCheckUpToDate(t *testing.T) {
 	p := newTestPanel(t, "v1.0.0")
 
-	p.check()
+	p.checkForUpdates()
+	runPending(t, p)
 
 	if p.status.Text != "Encre is up to date" {
 		t.Fatalf("status = %q", p.status.Text)
@@ -141,7 +166,8 @@ func TestUpdatePanelCheckUpToDate(t *testing.T) {
 func TestUpdatePanelCheckFailureIsShown(t *testing.T) {
 	p := newTestPanel(t)
 
-	p.check()
+	p.checkForUpdates()
+	runPending(t, p)
 
 	if !strings.HasPrefix(p.status.Text, "Could not check for updates: ") || p.status.Importance != widget.DangerImportance {
 		t.Fatalf("status = %q with importance %v", p.status.Text, p.status.Importance)
@@ -154,13 +180,14 @@ func TestUpdatePanelCheckFailureIsShown(t *testing.T) {
 // The static release carries no checksums.txt, so the update is refused before anything is installed.
 func TestUpdatePanelUpdateFailureReenablesButton(t *testing.T) {
 	p := newTestPanel(t, "v2.0.0")
-	p.check()
+	p.checkForUpdates()
+	runPending(t, p)
 
 	p.runUpdate()
 	if !p.updateButton.Disabled() || !p.checkButton.Disabled() || p.status.Text != "Downloading" {
 		t.Fatalf("starting an update should lock the buttons, got %q", p.status.Text)
 	}
-	p.install(p.state.release)
+	runPending(t, p)
 
 	if !strings.HasPrefix(p.status.Text, "Update failed: ") || p.status.Importance != widget.DangerImportance {
 		t.Fatalf("status = %q with importance %v", p.status.Text, p.status.Importance)
@@ -242,13 +269,13 @@ func TestTrayGainsAnUpdateItemOnce(t *testing.T) {
 
 func TestRunUpdateIgnoresARepeatedClick(t *testing.T) {
 	test.NewApp()
-	p := newUpdatePanel(nil)
+	p := holdStarts(t, newUpdatePanel(nil))
 	p.state.found(&updater.Release{Tag: "v1.4.0"})
 	p.state.updating(updater.Progress{Stage: updater.Downloading})
 
 	p.runUpdate()
 
-	if p.state.phase != updateRunning {
+	if p.state.phase != updateRunning || pending[p] != nil {
 		t.Fatalf("a second runUpdate must not restart an update in flight")
 	}
 }
@@ -264,11 +291,12 @@ func TestAManualCheckAnnouncesInTheTray(t *testing.T) {
 	test.NewApp()
 	w := &MainWindow{config: config.Default()}
 	w.initBindings()
-	w.updates = newUpdatePanel(foundUpdater{rel: &updater.Release{Tag: "v1.6.0"}})
+	w.updates = holdStarts(t, newUpdatePanel(foundUpdater{rel: &updater.Release{Tag: "v1.6.0"}}))
 	w.updates.onFound = w.addTrayUpdateItem
 	w.tray = fyne.NewMenu("Encre", fyne.NewMenuItem("Settings", nil), fyne.NewMenuItem("Quit", nil))
 
-	w.updates.check()
+	w.updates.checkForUpdates()
+	runPending(t, w.updates)
 
 	if len(w.tray.Items) != 4 || w.tray.Items[0].Label != "Update to v1.6.0…" {
 		t.Fatalf("tray after a manual check: %d items, head %q", len(w.tray.Items), w.tray.Items[0].Label)

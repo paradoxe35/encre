@@ -93,6 +93,9 @@ type MainWindow struct {
 	// trayUpdate is the single "Update to vX" entry; a newer tag relabels it.
 	trayUpdate *fyne.MenuItem
 
+	// later runs a func on Fyne's thread after a delay; nil means a real timer.
+	later func(time.Duration, func())
+
 	onShowCallback func()
 	onHideCallback func()
 }
@@ -225,19 +228,7 @@ func (w *MainWindow) createContent() fyne.CanvasObject {
 	)
 
 	w.tabs = tabs
-	tabs.OnSelected = func(tab *container.TabItem) {
-		// History shows other tabs' activity, so it re-reads on every visit.
-		if tab.Text == "History" {
-			fyne.Do(w.refreshHistory)
-		}
-		// Works around an AppTabs layout width bug on Windows: https://github.com/fyne-io/fyne/issues/5338
-		go func() {
-			time.Sleep(50 * time.Millisecond)
-			fyne.Do(func() {
-				tab.Content.Refresh()
-			})
-		}()
-	}
+	tabs.OnSelected = w.onTabSelected
 
 	saveBtn := widget.NewButtonWithIcon("Save settings", theme.DocumentSaveIcon(), w.saveSettings)
 	saveBtn.Importance = widget.HighImportance
@@ -255,6 +246,31 @@ func (w *MainWindow) createContent() fyne.CanvasObject {
 	)
 
 	return container.NewPadded(content)
+}
+
+func (w *MainWindow) onTabSelected(tab *container.TabItem) {
+	w.stopCaptures()
+	// History shows other tabs' activity, so it re-reads on every visit.
+	if tab.Text == "History" {
+		fyne.Do(w.refreshHistory)
+	}
+	// Works around an AppTabs layout width bug on Windows: https://github.com/fyne-io/fyne/issues/5338
+	w.runLater(50*time.Millisecond, tab.Content.Refresh)
+}
+
+func (w *MainWindow) runLater(wait time.Duration, run func()) {
+	if w.later != nil {
+		w.later(wait, run)
+		return
+	}
+	time.AfterFunc(wait, func() { fyne.Do(run) })
+}
+
+// A capture left running keeps every global hotkey off.
+func (w *MainWindow) stopCaptures() {
+	for _, capture := range w.captures {
+		capture.StopCapture()
+	}
 }
 
 func (w *MainWindow) markDirty() {
@@ -350,6 +366,7 @@ func (w *MainWindow) ShowWindow() {
 }
 
 func (w *MainWindow) HideWindow() {
+	w.stopCaptures()
 	w.Hide()
 	if w.onHideCallback != nil {
 		w.onHideCallback()

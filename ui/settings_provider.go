@@ -374,29 +374,38 @@ func (w *MainWindow) showDeleteProviderConfirmation() {
 		"Delete provider",
 		fmt.Sprintf("Are you sure you want to delete '%s'?\n\nThis action cannot be undone.", currentProvider),
 		func(confirmed bool) {
-			if !confirmed {
-				return
+			if confirmed {
+				w.deleteProvider(currentProvider)
 			}
-
-			if err := w.config.DeleteCustomProvider(currentProvider); err != nil {
-				w.statusBinding.Set("Could not delete the provider: " + shortMessage(err.Error()))
-				return
-			}
-
-			if err := w.config.Save(); err != nil {
-				w.statusBinding.Set("Could not save: " + shortMessage(err.Error()))
-				return
-			}
-
-			w.refreshProviderList()
-			newProvider := w.config.GetCurrentProvider()
-			w.providerSelect.SetSelected(newProvider)
-			w.providerBinding.Set(newProvider)
-			w.loadProviderSettings(newProvider)
-			w.statusBinding.Set(fmt.Sprintf("Provider '%s' deleted", currentProvider))
 		},
 		w.Window,
 	)
+}
+
+func (w *MainWindow) deleteProvider(name string) {
+	if err := w.config.DeleteCustomProvider(name); err != nil {
+		w.statusBinding.Set("Could not delete the provider: " + shortMessage(err.Error()))
+		return
+	}
+	for _, op := range config.OperationOrder {
+		if operation := w.config.Operation(op); operation.ProviderID == name {
+			operation.ProviderID = ""
+			w.config.SetOperation(op, operation)
+		}
+	}
+
+	if err := w.config.Save(); err != nil {
+		w.statusBinding.Set("Could not save: " + shortMessage(err.Error()))
+		return
+	}
+
+	w.refreshProviderList()
+	w.refreshOperationProviderOptions()
+	newProvider := w.config.GetCurrentProvider()
+	w.providerSelect.SetSelected(newProvider)
+	w.providerBinding.Set(newProvider)
+	w.loadProviderSettings(newProvider)
+	w.statusBinding.Set(fmt.Sprintf("Provider '%s' deleted", name))
 }
 
 func (w *MainWindow) fetchModelsForCustomProvider(apiKey, baseURL string, requiresAPIKey bool, modelEntry *widget.Entry, report progress) {

@@ -523,7 +523,7 @@ func (w *MainWindow) speechStore() *stt.Store {
 	return w.speechStoreRef
 }
 
-func (w *MainWindow) applySpeechSettings() {
+func (w *MainWindow) applySpeechSettings(remoteAPIKey string) {
 	speech := w.config.SpeechSettings()
 
 	speech.Engine = engineFromLabel(w.speechEngine.Selected)
@@ -541,7 +541,7 @@ func (w *MainWindow) applySpeechSettings() {
 	}
 	speech.RemoteModel = w.speechRemoteModel.Text
 	speech.RemoteBaseURL = w.speechRemoteURL.Text
-	speech.RemoteAPIKey = encryptedRemoteAPIKey(w.speechRemoteKey.Text)
+	speech.RemoteAPIKey = remoteAPIKey
 
 	w.config.SetSpeechSettings(speech)
 }
@@ -558,14 +558,9 @@ func decryptedRemoteAPIKey(stored string) string {
 	return plain
 }
 
-// A failure to encrypt still saves the key in plain form rather than losing it.
-func encryptedRemoteAPIKey(plain string) string {
+func encryptedRemoteAPIKey(plain string) (string, error) {
 	if plain == "" {
-		return ""
+		return "", nil
 	}
-	encrypted, err := config.EncryptAPIKey(plain)
-	if err != nil {
-		return plain
-	}
-	return encrypted
+	return encryptAPIKey(plain)
 }

@@ -18,7 +18,7 @@ type HotkeyCapture struct {
 	widget.BaseWidget
 	binding        binding.String
 	captureBtn     *widget.Button
-	stopBtn        *widget.Button
+	stopBtn        *captureSaveButton
 	clearBtn       *widget.Button
 	container      *fyne.Container
 	displayLabel   *widget.Label
@@ -30,6 +30,8 @@ type HotkeyCapture struct {
 	siblings       []*HotkeyCapture
 
 	isCapturing bool
+	// savePressed lets the focus loss from pressing Save through, so the tap that follows can save.
+	savePressed bool
 	mu          sync.Mutex
 
 	pressedKeys map[fyne.KeyName]bool
@@ -49,6 +51,78 @@ func (e *captureEntry) TypedKey(key *fyne.KeyEvent) {
 func (e *captureEntry) TypedRune(r rune) {
 }
 
+// A key pressed with Ctrl, Alt or Super arrives here instead of TypedKey, and must never reach Entry.
+func (e *captureEntry) TypedShortcut(shortcut fyne.Shortcut) {
+	if modifiers, key, ok := shortcutCombo(shortcut); ok {
+		e.parent.recordCombo(modifiers, key)
+	}
+}
+
+func (e *captureEntry) FocusLost() {
+	e.Entry.FocusLost()
+	e.parent.focusLost()
+}
+
+func shortcutCombo(shortcut fyne.Shortcut) (fyne.KeyModifier, fyne.KeyName, bool) {
+	primary := fyne.KeyModifierShortcutDefault
+	switch s := shortcut.(type) {
+	case *desktop.CustomShortcut:
+		return s.Modifier, s.KeyName, true
+	case *fyne.ShortcutPaste:
+		if s.Secondary {
+			return fyne.KeyModifierShift, fyne.KeyInsert, true
+		}
+		return primary, fyne.KeyV, true
+	case *fyne.ShortcutCopy:
+		if s.Secondary {
+			return primary, fyne.KeyInsert, true
+		}
+		return primary, fyne.KeyC, true
+	case *fyne.ShortcutCut:
+		if s.Secondary {
+			return fyne.KeyModifierShift, fyne.KeyDelete, true
+		}
+		return primary, fyne.KeyX, true
+	case *fyne.ShortcutSelectAll:
+		return primary, fyne.KeyA, true
+	case *fyne.ShortcutUndo:
+		return primary, fyne.KeyZ, true
+	case *fyne.ShortcutRedo:
+		return primary, fyne.KeyY, true
+	}
+	return 0, "", false
+}
+
+type captureSaveButton struct {
+	widget.Button
+	parent *HotkeyCapture
+}
+
+func newCaptureSaveButton(parent *HotkeyCapture) *captureSaveButton {
+	b := &captureSaveButton{parent: parent}
+	b.Text = "Save"
+	b.Icon = theme.ConfirmIcon()
+	b.OnTapped = parent.saveAndStop
+	b.ExtendBaseWidget(b)
+	return b
+}
+
+// The press unfocuses the entry before the tap, which would otherwise end the capture unsaved.
+func (b *captureSaveButton) MouseDown(*desktop.MouseEvent) {
+	b.parent.mu.Lock()
+	b.parent.savePressed = true
+	b.parent.mu.Unlock()
+}
+
+func (b *captureSaveButton) MouseUp(*desktop.MouseEvent) {}
+
+func (b *captureSaveButton) Tapped(e *fyne.PointEvent) {
+	b.Button.Tapped(e)
+	b.parent.mu.Lock()
+	b.parent.savePressed = false
+	b.parent.mu.Unlock()
+}
+
 func (e *captureEntry) CreateRenderer() fyne.WidgetRenderer {
 	e.ExtendBaseWidget(e)
 	renderer := e.Entry.CreateRenderer()
@@ -66,9 +140,9 @@ type themedBackgroundRenderer struct {
 
 func (r *themedBackgroundRenderer) BackgroundColor() color.Color {
 	if r.entry.Disabled() {
-		return theme.Color(theme.ColorNameDisabledButton)
+		return theme.ColorForWidget(theme.ColorNameDisabledButton, r.entry)
 	}
-	return theme.Color(theme.ColorNameInputBackground)
+	return theme.ColorForWidget(theme.ColorNameInputBackground, r.entry)
 }
 
 const unsetHotkeyText = "Click 'Capture' to set"
@@ -94,9 +168,7 @@ func NewHotkeyCapture(binding binding.String) *HotkeyCapture {
 		h.startCapture()
 	})
 
-	h.stopBtn = widget.NewButtonWithIcon("Save", theme.ConfirmIcon(), func() {
-		h.saveAndStop()
-	})
+	h.stopBtn = newCaptureSaveButton(h)
 	h.stopBtn.Importance = widget.HighImportance
 	h.stopBtn.Hide()
 
@@ -162,6 +234,9 @@ func (h *HotkeyCapture) startCapture() {
 func (h *HotkeyCapture) saveAndStop() {
 	if !h.saveHotkey() {
 		// Stopping here would hide saveHotkey's error behind the restored old binding.
+		if h.window != nil {
+			h.window.Canvas().Focus(h.entry)
+		}
 		return
 	}
 	h.stopCapture()
@@ -175,6 +250,7 @@ func (h *HotkeyCapture) stopCapture() {
 	}
 
 	h.isCapturing = false
+	h.savePressed = false
 	h.mu.Unlock()
 
 	for _, sibling := range h.siblings {
@@ -190,6 +266,33 @@ func (h *HotkeyCapture) stopCapture() {
 	h.captureBtn.Show()
 	h.UpdateFromBinding()
 	h.displayLabel.Show()
+}
+
+func (h *HotkeyCapture) focusLost() {
+	h.mu.Lock()
+	pressed := h.savePressed
+	h.savePressed = false
+	h.mu.Unlock()
+	if !pressed {
+		h.stopCapture()
+	}
+}
+
+func (h *HotkeyCapture) recordCombo(modifiers fyne.KeyModifier, key fyne.KeyName) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.isCapturing {
+		return
+	}
+	for _, modifier := range []fyne.KeyModifier{fyne.KeyModifierShift, fyne.KeyModifierControl, fyne.KeyModifierAlt, fyne.KeyModifierSuper} {
+		if modifiers&modifier != 0 {
+			h.modifiers[modifier] = true
+		}
+	}
+	if !isModifierKey(key) {
+		h.pressedKeys = map[fyne.KeyName]bool{key: true}
+	}
+	h.updateDisplay()
 }
 
 func (h *HotkeyCapture) handleKeyPress(key *fyne.KeyEvent) {

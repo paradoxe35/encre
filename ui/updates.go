@@ -109,10 +109,12 @@ type updatePanel struct {
 	updateButton *widget.Button
 	// onFound hears about a release a manual check turned up, so the tray can announce it too.
 	onFound func(*updater.Release)
+	// start runs the blocking work off Fyne's thread; tests replace it to run that work themselves.
+	start func(func())
 }
 
 func newUpdatePanel(u Updater) *updatePanel {
-	p := &updatePanel{updater: u, state: newUpdateState(), status: widget.NewLabel("")}
+	p := &updatePanel{updater: u, state: newUpdateState(), status: widget.NewLabel(""), start: func(f func()) { go f() }}
 	p.status.Wrapping = fyne.TextWrapWord
 	p.checkButton = widget.NewButton("Check for updates", p.checkForUpdates)
 	p.updateButton = widget.NewButtonWithIcon("Update", theme.DownloadIcon(), p.runUpdate)
@@ -155,7 +157,7 @@ func (p *updatePanel) render() {
 func (p *updatePanel) checkForUpdates() {
 	p.state.checking()
 	p.render()
-	go p.check()
+	p.start(p.check)
 }
 
 // check runs off Fyne's thread and reports back through fyne.Do.
@@ -188,7 +190,7 @@ func (p *updatePanel) runUpdate() {
 	rel := p.state.release
 	p.state.updating(updater.Progress{Stage: updater.Downloading})
 	p.render()
-	go p.install(rel)
+	p.start(func() { p.install(rel) })
 }
 
 // install runs off Fyne's thread; on success the process is replaced before Update returns.

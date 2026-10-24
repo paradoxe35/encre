@@ -7,20 +7,39 @@ import (
 
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/logger"
+	"github.com/paradoxe35/encre/internal/platform"
 )
 
 const statusErrorLimit = 60
 
+// encryptAPIKey is swapped in tests to make encryption fail.
+var encryptAPIKey = config.EncryptAPIKey
+
+type providerDraft struct {
+	name     string
+	settings config.ProviderSettings
+}
+
+// Everything that can fail is checked before anything is applied: a half-applied config would be written by the next unrelated Save.
 func (w *MainWindow) saveSettings() {
-	if err := w.applyProviderSettings(); err != nil {
+	provider, err := w.providerDraft()
+	if err != nil {
 		w.reportSaveError("Error", err)
+		return
+	}
+	operations, err := w.operationDrafts()
+	if err != nil {
+		w.reportSaveError("Error", err)
+		return
+	}
+	speechKey, err := encryptedRemoteAPIKey(w.speechRemoteKey.Text)
+	if err != nil {
+		w.reportSaveError("Error", fmt.Errorf("speech API key: %w", err))
 		return
 	}
 
-	if err := w.applyActionSettings(); err != nil {
-		w.reportSaveError("Error", err)
-		return
-	}
+	w.applyProvider(provider)
+	w.applyActions(operations)
 
 	w.config.SetTranslation(config.TranslateConfig{
 		PrimaryLanguage:   w.primaryLanguage.Code(),
@@ -28,7 +47,7 @@ func (w *MainWindow) saveSettings() {
 	})
 	w.config.SetProviderMentionsEnabled(w.mentionsCheck.Checked)
 	w.config.SetAnswerCardSettings(w.answerCardSettings())
-	w.applySpeechSettings()
+	w.applySpeechSettings(speechKey)
 
 	startMinimized, _ := w.startMinimizedBinding.Get()
 	startOnLogin, _ := w.startOnLoginBinding.Get()
@@ -36,62 +55,120 @@ func (w *MainWindow) saveSettings() {
 	textIndicator, _ := w.textIndicator.Get()
 	themeSetting, _ := w.themeBinding.Get()
 
+	w.applyTheme(themeSetting)
+	w.applyAutoStartSetting(startOnLogin)
+	// The saved setting follows what the system actually did, not what was asked.
+	actualStartOnLogin := platform.GetAutoStart().IsEnabled()
+
 	w.config.SetAppearanceSettings(config.AppearanceConfig{
 		Theme:          themeSetting,
 		StartMinimized: startMinimized,
-		StartOnLogin:   startOnLogin,
+		StartOnLogin:   actualStartOnLogin,
 		Indicators:     &config.IndicatorsConfig{Voice: voiceIndicator, Text: textIndicator},
 	})
 
 	pasteShortcut, _ := w.pasteShortcutBinding.Get()
 	w.config.SetPasteShortcut(config.PasteShortcut(pasteShortcut))
 
-	w.applyTheme(themeSetting)
-	w.applyAutoStartSetting(startOnLogin)
-
 	if err := w.config.Save(); err != nil {
 		w.reportSaveError("Error saving settings", err)
 		return
 	}
 
-	w.statusBinding.Set("Settings saved")
+	if actualStartOnLogin != startOnLogin {
+		w.startOnLoginBinding.Set(actualStartOnLogin)
+		w.statusBinding.Set(startOnLoginFailure(startOnLogin))
+	} else {
+		w.statusBinding.Set("Settings saved")
+	}
 	w.markClean()
 	logger.Info("Settings saved")
 }
 
+func startOnLoginFailure(wanted bool) string {
+	if wanted {
+		return "Settings saved, but Start on login could not be turned on"
+	}
+	return "Settings saved, but Start on login could not be turned off"
+}
+
 func (w *MainWindow) applyProviderSettings() error {
+	draft, err := w.providerDraft()
+	if err != nil {
+		return err
+	}
+	w.applyProvider(draft)
+	return nil
+}
+
+func (w *MainWindow) providerDraft() (providerDraft, error) {
 	provider, _ := w.providerBinding.Get()
 	apiKey, _ := w.apiKeyBinding.Get()
 	model, _ := w.modelBinding.Get()
 	baseURL, _ := w.baseURLBinding.Get()
 	lowReasoning, _ := w.lowReasoningBinding.Get()
 
-	existing := w.config.GetProviderSettings(provider)
 	isCustom := w.config.IsCustomProvider(provider)
-
 	if isCustom && baseURL == "" {
-		return errors.New("base URL is required for custom providers")
+		return providerDraft{}, errors.New("base URL is required for custom providers")
 	}
 
-	// The form owns the model, reasoning and, for custom providers, the base URL; the rest is kept as saved.
-	settings := existing
+	encryptedKey, err := encryptAPIKey(apiKey)
+	if err != nil {
+		return providerDraft{}, err
+	}
+
+	// The form owns the model, reasoning, API key and, for custom providers, the base URL; the rest is kept as saved.
+	settings := w.config.GetProviderSettings(provider)
 	settings.Model = model
 	settings.LowReasoning = lowReasoning
+	settings.APIKey = encryptedKey
 	if isCustom {
 		settings.BaseURL = baseURL
 	}
-	w.config.SetProviderSettings(provider, settings)
+	return providerDraft{name: provider, settings: settings}, nil
+}
 
-	if err := w.config.SetAPIKey(provider, apiKey); err != nil {
-		return err
-	}
-
-	w.config.SetCurrentProvider(provider)
+func (w *MainWindow) applyProvider(draft providerDraft) {
+	w.config.SetProviderSettings(draft.name, draft.settings)
+	w.config.SetCurrentProvider(draft.name)
 	w.refreshOperationProviderOptions()
-	return nil
 }
 
 func (w *MainWindow) applyActionSettings() error {
+	operations, err := w.operationDrafts()
+	if err != nil {
+		return err
+	}
+	w.applyActions(operations)
+	return nil
+}
+
+func (w *MainWindow) operationDrafts() (map[config.Operation]config.OperationConfig, error) {
+	operations := make(map[config.Operation]config.OperationConfig, len(w.operationEditors))
+	for op, editor := range w.operationEditors {
+		limit, err := strconv.Atoi(editor.limit.Text)
+		if err != nil || validateCharacterLimit(editor.limit.Text) != nil {
+			return nil, fmt.Errorf("%s: character limit must be between 1 and 100000", op.Label())
+		}
+
+		operation := config.OperationConfig{
+			SystemPrompt:   editor.prompt.Text,
+			CharacterLimit: limit,
+			TimeoutSeconds: int(editor.timeout.Value),
+			ProviderID:     providerID(editor.provider.Selected),
+		}
+		if editor.ask != nil {
+			if err := editor.ask.apply(&operation); err != nil {
+				return nil, fmt.Errorf("%s: %w", op.Label(), err)
+			}
+		}
+		operations[op] = operation
+	}
+	return operations, nil
+}
+
+func (w *MainWindow) applyActions(operations map[config.Operation]config.OperationConfig) {
 	for _, kind := range config.ActionOrder {
 		action := w.config.Action(kind)
 
@@ -106,33 +183,25 @@ func (w *MainWindow) applyActionSettings() error {
 		w.config.SetAction(kind, action)
 	}
 
-	for op, editor := range w.operationEditors {
-		limit, err := strconv.Atoi(editor.limit.Text)
-		if err != nil || validateCharacterLimit(editor.limit.Text) != nil {
-			return fmt.Errorf("%s: character limit must be between 1 and 100000", op.Label())
-		}
-
-		operation := config.OperationConfig{
-			SystemPrompt:   editor.prompt.Text,
-			CharacterLimit: limit,
-			TimeoutSeconds: int(editor.timeout.Value),
-			ProviderID:     providerID(editor.provider.Selected),
-		}
-		if editor.ask != nil {
-			if err := editor.ask.apply(&operation); err != nil {
-				return fmt.Errorf("%s: %w", op.Label(), err)
-			}
+	for op, operation := range operations {
+		// applyProvider may have reset a choice whose provider is no longer configured.
+		if editor, ok := w.operationEditors[op]; ok {
+			operation.ProviderID = providerID(editor.provider.Selected)
 		}
 		w.config.SetOperation(op, operation)
 	}
-	return nil
 }
 
 func (w *MainWindow) reportSaveError(prefix string, err error) {
-	message := err.Error()
-	if len(message) > statusErrorLimit {
-		message = message[:statusErrorLimit-3] + "..."
-	}
-	w.statusBinding.Set(prefix + ": " + message)
+	w.statusBinding.Set(prefix + ": " + truncateRunes(err.Error(), statusErrorLimit))
 	logger.Error(prefix, "error", err)
+}
+
+// truncateRunes keeps at most limit characters, ending in "..." when it cuts.
+func truncateRunes(message string, limit int) string {
+	runes := []rune(message)
+	if len(runes) <= limit {
+		return message
+	}
+	return string(runes[:limit-3]) + "..."
 }
