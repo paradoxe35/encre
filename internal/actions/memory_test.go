@@ -151,6 +151,20 @@ func TestAQuestionAskedFromAnOlderAnswerLeavesTheLaterOnesOut(t *testing.T) {
 	}
 }
 
+func TestOtherActionsDoNotBreakAskMemoryBeforeItsConfiguredLimit(t *testing.T) {
+	p, prompts := askProcessor(t, 2)
+	ask(t, p, "first", "")
+	for i := 0; i < history.MaxEntries; i++ {
+		p.history.Add(history.Entry{Kind: history.KindRevise, Result: "unrelated"})
+	}
+	ask(t, p, "follow-up", "first")
+
+	want := []ai.Turn{{Question: "first", Answer: "answer to first"}}
+	if got := (*prompts)[1].History; !reflect.DeepEqual(got, want) {
+		t.Fatalf("follow-up sent %v, want %v", got, want)
+	}
+}
+
 func TestAQuestionOverTheLimitSaysSoAndWhereToRaiseIt(t *testing.T) {
 	p, _ := askProcessor(t, 1)
 	_, err := p.Ask(context.Background(), Question{Text: strings.Repeat("a", 101), ID: "q"}, func(string) {}, func(string) {})

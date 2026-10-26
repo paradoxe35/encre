@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,10 @@ const (
 
 const MaxEntries = 200
 
+var historyKinds = [...]Kind{KindRevise, KindTranslate, KindDictate, KindAsk}
+
+const maxFileEntries = 2 * MaxEntries * len(historyKinds)
+
 // Language fields are only meaningful for translations.
 type Entry struct {
 	ID         string    `json:"id"`
@@ -43,7 +48,7 @@ type Entry struct {
 
 func NewID() string { return time.Now().Format("20060102150405.000000000") }
 
-// Reads load the whole file, which trimming keeps under 2*MaxEntries lines.
+// Reads load the whole file, which trimming keeps under a bounded number of lines.
 type Store struct {
 	mu   sync.Mutex
 	path string
@@ -114,7 +119,7 @@ func (s *Store) Add(entry Entry) {
 	}
 
 	s.lines++
-	if s.lines > 2*MaxEntries {
+	if s.lines > maxFileEntries {
 		s.trimLocked()
 	}
 	notify = s.onChange
@@ -151,12 +156,9 @@ func (s *Store) Recent(kind Kind) []Entry {
 	defer file.Close()
 
 	all := readEntries(file)
-	if len(all) > MaxEntries {
-		all = all[len(all)-MaxEntries:]
-	}
 
 	var entries []Entry
-	for i := len(all) - 1; i >= 0; i-- {
+	for i := len(all) - 1; i >= 0 && len(entries) < MaxEntries; i-- {
 		if kind == "" || all[i].Kind == kind {
 			entries = append(entries, all[i])
 		}
@@ -202,6 +204,10 @@ func (s *Store) Clear() error {
 	fileMu.Lock()
 	defer fileMu.Unlock()
 	// Removing a symlink would leave every entry in the file it points to; emptying goes through it.
+	if err := utils.MakePrivate(s.path); err != nil {
+		logger.Error("Failed to restrict history file permissions", "path", s.path, "error", err)
+		return err
+	}
 	if err := os.Truncate(s.path, 0); err != nil && !os.IsNotExist(err) {
 		logger.Error("Failed to clear history file", "path", s.path, "error", err)
 		return err
@@ -211,7 +217,7 @@ func (s *Store) Clear() error {
 	return nil
 }
 
-// Cutting back to MaxEntries once past twice that amortises to one rewrite every MaxEntries appends.
+// Retain the newest entries for each operation so unrelated history cannot break Ask threads.
 func (s *Store) trimLocked() {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
@@ -220,14 +226,44 @@ func (s *Store) trimLocked() {
 	}
 
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	s.lines = len(lines)
-	if len(lines) <= MaxEntries {
+	type retainedLine struct {
+		kind Kind
+		text string
+	}
+	parsed := make([]retainedLine, len(lines))
+	for i, line := range lines {
+		var entry Entry
+		kind := Kind("\x00invalid")
+		if json.Unmarshal([]byte(line), &entry) == nil {
+			kind = entry.Kind
+			if !slices.Contains(historyKinds[:], kind) {
+				kind = Kind("\x00other")
+			}
+		}
+		parsed[i] = retainedLine{kind: kind, text: line}
+	}
+
+	counts := make(map[Kind]int)
+	kept := make([]string, 0, maxFileEntries)
+	for i := len(parsed) - 1; i >= 0; i-- {
+		line := parsed[i]
+		if counts[line.kind] >= MaxEntries {
+			continue
+		}
+		counts[line.kind]++
+		kept = append(kept, line.text)
+	}
+	for left, right := 0, len(kept)-1; left < right; left, right = left+1, right-1 {
+		kept[left], kept[right] = kept[right], kept[left]
+	}
+	if len(kept) == len(lines) {
+		s.lines = len(lines)
 		return
 	}
-	keep := strings.Join(lines[len(lines)-MaxEntries:], "\n") + "\n"
+	keep := strings.Join(kept, "\n") + "\n"
 	if err := utils.WriteFileAtomic(s.path, []byte(keep), 0o600); err != nil {
 		logger.Error("Failed to trim history file", "path", s.path, "error", err)
 		return
 	}
-	s.lines = MaxEntries
+	s.lines = len(kept)
 }
