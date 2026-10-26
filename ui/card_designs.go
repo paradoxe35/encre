@@ -257,6 +257,10 @@ func (t *cardTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) c
 	if c, ok := t.colors[variant][name]; ok {
 		return c
 	}
+	// The app's darker border is for the settings window's boxes; a card keeps Fyne's softer line.
+	if name == theme.ColorNameInputBorder {
+		return theme.DefaultTheme().Color(name, variant)
+	}
 	return t.base.Color(name, variant)
 }
 

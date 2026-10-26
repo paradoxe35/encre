@@ -28,6 +28,24 @@ fn main() {
         .expect("Unable to generate C bindings with cbindgen")
         .write_to_file(output_file);
 
+    // ggml is C++, and on MinGW nothing links its runtime into what cargo links itself, the tests;
+    // the static library leaves that to the Go build, which adds -lstdc++. Linked from the archive,
+    // as the Go build links statically too: the libstdc++ DLL first on PATH may not be the one built against.
+    let target = env::var("TARGET").unwrap_or_default();
+    if target.ends_with("-windows-gnu") {
+        // The archive comes last on the line, so what it calls in turn is named again after it.
+        for arg in [
+            "-l:libstdc++.a",
+            "-l:libpthread.a",
+            "-lmingwex",
+            "-lmsvcrt",
+            "-lkernel32",
+            "-lgcc",
+        ] {
+            println!("cargo:rustc-link-arg={arg}");
+        }
+    }
+
     println!("cargo:rerun-if-changed=src/");
     println!("cargo:rerun-if-changed=cbindgen.toml");
 }

@@ -319,11 +319,11 @@ func LanguageSetName(presetID, model string) string {
 
 	switch presetID {
 	case "openai":
-		// whisper-1 predates the gpt- models and takes only the 639-1 subset.
-		if strings.HasPrefix(model, "whisper") {
-			return "whisper"
+		// gpt-transcribe also takes some 639-3 and regional zh codes; the models before it take 639-1 only.
+		if isGPTTranscribe(model) {
+			return "gpt-transcribe"
 		}
-		return "gpt-transcribe"
+		return "whisper"
 	case "groq":
 		return "whisper"
 	case "gemini":

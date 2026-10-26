@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -17,27 +18,40 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/paradoxe35/encre/internal/logger"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	extast "github.com/yuin/goldmark/extension/ast"
+	gtext "github.com/yuin/goldmark/text"
 )
 
-// adopt gives nested text the holder's theme, which Fyne gives only to top-level text.
-func adopt(holder *widget.RichText, segments []widget.RichTextSegment) []widget.RichTextSegment {
-	return adoptWithin(holder, holder, segments)
+// adopt gives nested text the holder's theme, which Fyne gives only to top-level text, and passes
+// the wheel from code and tables that scroll sideways on to outer, the scroll the text reads in.
+func adopt(holder *widget.RichText, outer fyne.Scrollable, segments []widget.RichTextSegment) []widget.RichTextSegment {
+	return adoptWithin(holder, holder, outer, segments)
 }
 
 // adoptWithin takes the theme from holder, and lays lists out across within, the rich text they sit in.
-func adoptWithin(holder, within *widget.RichText, segments []widget.RichTextSegment) []widget.RichTextSegment {
+func adoptWithin(holder, within *widget.RichText, outer fyne.Scrollable, segments []widget.RichTextSegment) []widget.RichTextSegment {
 	adopted := make([]widget.RichTextSegment, 0, len(segments))
 	for _, segment := range segments {
 		switch segment := segment.(type) {
 		case *widget.ListSegment:
-			adopted = append(adopted, newCardList(holder, within, segment))
+			adopted = append(adopted, newCardList(holder, within, outer, segment))
 		case *widget.ParagraphSegment:
-			segment.Texts = adoptWithin(holder, within, segment.Texts)
+			segment.Texts = adoptWithin(holder, within, outer, segment.Texts)
 			adopted = append(adopted, segment)
 		case *widget.TableSegment:
-			adopted = append(adopted, &cardTable{TableSegment: segment, holder: holder})
+			// Linked here, as paragraphs are, before a monospace design marks every text as code.
+			for _, row := range append([][][]widget.RichTextSegment{segment.Headers}, segment.Rows...) {
+				for c, cell := range row {
+					row[c] = linkedCell(cell)
+				}
+			}
+			adopted = append(adopted, &cardTable{TableSegment: segment, holder: holder, outer: outer})
 		case *widget.CodeBlockSegment:
-			adopted = append(adopted, &cardCode{CodeBlockSegment: segment, holder: holder})
+			adopted = append(adopted, &cardCode{CodeBlockSegment: segment, holder: holder, outer: outer})
 		case *widget.SeparatorSegment:
 			adopted = append(adopted, &cardRule{holder: holder})
 		case *widget.CheckBoxSegment:
@@ -82,7 +96,7 @@ func linked(text *widget.TextSegment) []widget.RichTextSegment {
 		if before != "" {
 			parts = append(parts, &widget.TextSegment{Text: before, Style: text.Style})
 		}
-		parts = append(parts, &widget.HyperlinkSegment{Text: address, URL: target})
+		parts = append(parts, &widget.HyperlinkSegment{Text: address, URL: target, SizeName: sizeNameCardLink, TextStyle: text.Style.TextStyle})
 		rest = after
 	}
 	if len(parts) == 0 {
@@ -97,6 +111,7 @@ func linked(text *widget.TextSegment) []widget.RichTextSegment {
 // safeLink keeps a link only to the web or mail; the answer may repeat a page that aims one at a file or another app.
 func safeLink(link *widget.HyperlinkSegment) widget.RichTextSegment {
 	if link.URL != nil && (link.URL.Scheme == "http" || link.URL.Scheme == "https" || link.URL.Scheme == "mailto") {
+		link.SizeName = sizeNameCardLink
 		return link
 	}
 	return &widget.TextSegment{Text: link.Text, Style: widget.RichTextStyleInline}
@@ -112,7 +127,7 @@ func imageLink(image *widget.ImageSegment) widget.RichTextSegment {
 	if err != nil || (address.Scheme != "http" && address.Scheme != "https") {
 		return &widget.TextSegment{Text: label, Style: widget.RichTextStyleInline}
 	}
-	return &widget.HyperlinkSegment{Text: label, URL: address}
+	return &widget.HyperlinkSegment{Text: label, URL: address, SizeName: sizeNameCardLink}
 }
 
 func eachText(segments []widget.RichTextSegment, do func(*widget.TextSegment)) {
@@ -159,7 +174,13 @@ type listItem struct {
 	text   *widget.RichText
 }
 
-func newCardList(holder, within *widget.RichText, list *widget.ListSegment) *cardList {
+// Fyne gives a theme override's scope to a new widget only when the override is refreshed, a new
+// scope each time whose fonts are parsed and kept anew; this hands one the scope its parent has.
+//
+//go:linkname themeLikeParent fyne.io/fyne/v2/internal/cache.OverrideThemeMatchingScope
+func themeLikeParent(o, parent fyne.CanvasObject) bool
+
+func newCardList(holder, within *widget.RichText, outer fyne.Scrollable, list *widget.ListSegment) *cardList {
 	l := &cardList{within: within}
 	for _, item := range list.Segments() {
 		texts := item.(*widget.ParagraphSegment).Texts
@@ -172,10 +193,32 @@ func newCardList(holder, within *widget.RichText, list *widget.ListSegment) *car
 		}
 		text := widget.NewRichText()
 		text.Wrapping = fyne.TextWrapWord
-		text.Segments = adoptWithin(holder, text, texts)
+		segments := adoptWithin(holder, text, outer, texts)
+		// An item measures its links in its own theme, the app's unless given the holder's: while it is
+		// still empty, so Fyne keeps only the item for it. That clears Fyne's text caches, so only an
+		// item whose links the app's size would measure wrong is given it.
+		if holdsLink(segments) && theme.SizeForWidget(theme.SizeNameText, holder) != theme.Current().Size(theme.SizeNameText) {
+			themeLikeParent(text, holder)
+		}
+		text.Segments = segments
 		l.items = append(l.items, listItem{marker: marker, text: text})
 	}
 	return l
+}
+
+// holdsLink looks only at an item's own text: a list nested in it measures its items itself.
+func holdsLink(segments []widget.RichTextSegment) bool {
+	for _, segment := range segments {
+		switch segment := segment.(type) {
+		case *widget.HyperlinkSegment:
+			return true
+		case *widget.ParagraphSegment:
+			if holdsLink(segment.Texts) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (l *cardList) Inline() bool { return false }
@@ -270,6 +313,7 @@ func (l *listLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 type cardCode struct {
 	*widget.CodeBlockSegment
 	holder *widget.RichText
+	outer  fyne.Scrollable
 }
 
 func (c *cardCode) Visual() fyne.CanvasObject {
@@ -283,7 +327,7 @@ func (c *cardCode) Visual() fyne.CanvasObject {
 		ColorName: theme.ColorNameForeground, SizeName: theme.SizeNameText, TextStyle: fyne.TextStyle{Monospace: true},
 	}}
 	setHolder(text, c.holder)
-	code := container.NewStack(panel, container.NewHScroll(widget.NewRichText(text)))
+	code := container.NewStack(panel, newSideScroll(widget.NewRichText(text), c.outer))
 	// Fyne indents quoted code only for its own segment type.
 	if depth := quotingLevel(c.CodeBlockSegment); depth > 0 {
 		inset := th.Size(theme.SizeNameLineSpacing) * 4 * float32(depth)
@@ -396,6 +440,20 @@ func (r *cardRule) Update(fyne.CanvasObject) {}
 type cardTable struct {
 	*widget.TableSegment
 	holder *widget.RichText
+	outer  fyne.Scrollable
+}
+
+// linkedCell makes a bare address in a cell a link, as it is in a paragraph.
+func linkedCell(segments []widget.RichTextSegment) []widget.RichTextSegment {
+	var parts []widget.RichTextSegment
+	for _, segment := range segments {
+		if text, ok := segment.(*widget.TextSegment); ok {
+			parts = append(parts, linked(text)...)
+		} else {
+			parts = append(parts, segment)
+		}
+	}
+	return parts
 }
 
 func (t *cardTable) rows() [][][]widget.RichTextSegment {
@@ -433,7 +491,21 @@ func (t *cardTable) Visual() fyne.CanvasObject {
 		lines[i] = canvas.NewRectangle(th.Color(theme.ColorNameSeparator, variant))
 	}
 	grid := &fyne.Container{Layout: &tableLayout{cols: cols, rows: len(rows)}, Objects: append(cells, lines...)}
-	return container.NewHScroll(grid)
+	return newSideScroll(grid, t.outer)
+}
+
+// unpadded lays a link without its inner padding, as Fyne does for one in a paragraph.
+type unpadded struct{ link fyne.Widget }
+
+func (u unpadded) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	pad := theme.SizeForWidget(theme.SizeNameInnerPadding, u.link)
+	objects[0].Move(fyne.NewPos(-pad, -pad))
+	objects[0].Resize(size.AddWidthHeight(2*pad, 2*pad))
+}
+
+func (u unpadded) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	pad := theme.SizeForWidget(theme.SizeNameInnerPadding, u.link)
+	return objects[0].MinSize().SubtractWidthHeight(2*pad, 2*pad)
 }
 
 func (t *cardTable) align(col int) fyne.TextAlign {
@@ -453,7 +525,12 @@ func tableCell(th fyne.Theme, variant fyne.ThemeVariant, segments []widget.RichT
 			segment = safeLink(link)
 		}
 		if link, ok := segment.(*widget.HyperlinkSegment); ok {
-			texts = append(texts, widget.NewHyperlink(link.Text, link.URL))
+			cell := widget.NewHyperlink(link.Text, link.URL)
+			cell.SizeName = sizeNameCardLink
+			cell.TextStyle = link.TextStyle
+			cell.TextStyle.Bold = cell.TextStyle.Bold || header
+			// Fyne unpads a link within a paragraph, so its text runs on from the words beside it.
+			texts = append(texts, &fyne.Container{Layout: unpadded{cell}, Objects: []fyne.CanvasObject{cell}})
 			continue
 		}
 		text, ok := segment.(*widget.TextSegment)
@@ -538,4 +615,224 @@ func (l *tableLayout) Layout(objects []fyne.CanvasObject, _ fyne.Size) {
 			y += tableLine
 		}
 	}
+}
+
+// markdownSegments lays the answer out as Fyne's Markdown does; should Fyne's renderer fail on some
+// shape of reply, as it did on formatted task items, the answer shows as plain text rather than
+// taking the app down.
+func markdownSegments(markdown string) (segments []widget.RichTextSegment) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Could not lay the answer out as Markdown", "error", r)
+			segments = []widget.RichTextSegment{&widget.TextSegment{Text: markdown, Style: widget.RichTextStyleInline}}
+		}
+	}()
+	return restoreTags(widget.NewRichTextFromMarkdown(literalTags(markdown)).Segments)
+}
+
+// tagMark stands in for the '<' of HTML the model wrote, which Fyne's Markdown would drop. An entity
+// would not do: Fyne decodes them in some text and not others, and never in code. The mark is plain
+// text to every parser, and restoreTags puts the '<' back once Fyne has laid the answer out.
+const tagMark = "\uE000"
+
+// Fyne's Markdown panics on a task item whose text starts with formatting, and keeps only its first
+// words; the checkbox is written as one of these instead, so the item parses as text and the card
+// draws the box.
+const (
+	openTask = "\uE001"
+	doneTask = "\uE002"
+)
+
+// literalTags marks the '<' of the answer's HTML, found by parsing it as Fyne does, so code,
+// autolinks and everything else are left alone.
+func literalTags(markdown string) string {
+	markdown = markTags(markdown)
+	// Once the tags are text, lines that were HTML may parse as task items; until none are left.
+	for range 8 {
+		marked, found := markTasks(markdown)
+		if !found {
+			break
+		}
+		markdown = marked
+	}
+	return markdown
+}
+
+func markTags(markdown string) string {
+	var spans [][2]int
+	walk(markdown, func(node ast.Node) {
+		var lines *gtext.Segments
+		switch node := node.(type) {
+		case *ast.RawHTML:
+			lines = node.Segments
+		case *ast.HTMLBlock:
+			lines = node.Lines()
+			if node.HasClosure() {
+				spans = append(spans, [2]int{node.ClosureLine.Start, node.ClosureLine.Stop})
+			}
+		}
+		for i := 0; lines != nil && i < lines.Len(); i++ {
+			spans = append(spans, [2]int{lines.At(i).Start, lines.At(i).Stop})
+		}
+	})
+	if len(spans) == 0 {
+		return markdown
+	}
+	slices.SortFunc(spans, func(a, b [2]int) int { return a[0] - b[0] })
+
+	var out strings.Builder
+	at := 0
+	for _, span := range spans {
+		if span[0] < at {
+			continue
+		}
+		out.WriteString(markdown[at:span[0]])
+		out.WriteString(strings.ReplaceAll(markdown[span[0]:span[1]], "<", tagMark))
+		at = span[1]
+	}
+	out.WriteString(markdown[at:])
+	return out.String()
+}
+
+// markTasks swaps each task item's "[ ]" or "[x]" for a mark; each is three bytes, so no offset moves.
+func markTasks(markdown string) (string, bool) {
+	marked := []byte(markdown)
+	found := false
+	walk(markdown, func(node ast.Node) {
+		box, ok := node.(*extast.TaskCheckBox)
+		if !ok || box.Parent().Lines().Len() == 0 {
+			return
+		}
+		at := box.Parent().Lines().At(0).Start
+		if at+3 > len(marked) || marked[at] != '[' || marked[at+2] != ']' {
+			return
+		}
+		mark := openTask
+		if box.IsChecked {
+			mark = doneTask
+		}
+		copy(marked[at:], mark)
+		found = true
+	})
+	return string(marked), found
+}
+
+func walk(markdown string, visit func(ast.Node)) {
+	ast.Walk(markdownParser.Parse(gtext.NewReader([]byte(markdown))), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			visit(node)
+		}
+		return ast.WalkContinue, nil
+	})
+}
+
+var markdownParser = goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.TaskList, extension.Table)).Parser()
+
+// sameLine is text that runs on with a task's first words; Fyne calls headings and quotes inline
+// too, so their size and quoting tell them apart.
+func sameLine(next widget.RichTextSegment, first *widget.TextSegment) bool {
+	if !next.Inline() {
+		return false
+	}
+	text, ok := next.(*widget.TextSegment)
+	return !ok || text.Style.SizeName == first.Style.SizeName && text.Style.QuotingDepth == first.Style.QuotingDepth
+}
+
+// taskFrom reads a text that opens with a task mark as the checkbox, labelled with the rest of its
+// item as plain text: Fyne's own checkbox label is plain, and that is what this stands in for.
+func taskFrom(text string, rest []widget.RichTextSegment) *widget.CheckBoxSegment {
+	for _, mark := range []string{openTask, doneTask} {
+		if first, ok := strings.CutPrefix(text, mark); ok {
+			label := first
+			for _, segment := range rest {
+				label += segment.Textual()
+			}
+			return &widget.CheckBoxSegment{Text: strings.TrimSpace(label), Checked: mark == doneTask}
+		}
+	}
+	return nil
+}
+
+// restoreTags turns literalTags' marks back into '<', and a task mark back into a checkbox, in every
+// text Fyne made of the answer.
+func restoreTags(segments []widget.RichTextSegment) []widget.RichTextSegment {
+	put := func(text string) string { return strings.ReplaceAll(text, tagMark, "<") }
+	restored := make([]widget.RichTextSegment, 0, len(segments))
+	for i, segment := range segments {
+		switch segment := segment.(type) {
+		case *widget.TextSegment:
+			segment.Text = put(segment.Text)
+			if strings.HasPrefix(segment.Text, openTask) || strings.HasPrefix(segment.Text, doneTask) {
+				// The label is the item's first line; a paragraph, code block or heading after it stays its own.
+				end := i + 1
+				for end < len(segments) && sameLine(segments[end], segment) {
+					end++
+				}
+				restored = append(restored, taskFrom(segment.Text, restoreTags(segments[i+1:end])))
+				return append(restored, restoreTags(segments[end:])...)
+			}
+		case *widget.HyperlinkSegment:
+			segment.Text = put(segment.Text)
+		case *widget.CodeBlockSegment:
+			segment.Text = put(segment.Text)
+		case *widget.CheckBoxSegment:
+			segment.Text = put(segment.Text)
+		case *widget.ImageSegment:
+			segment.Title = put(segment.Title)
+		case *widget.ParagraphSegment:
+			segment.Texts = restoreTags(segment.Texts)
+		case *widget.ListSegment:
+			segment.Items = restoreTags(segment.Items)
+		case *widget.TableSegment:
+			for i, cell := range segment.Headers {
+				segment.Headers[i] = restoreTags(cell)
+			}
+			for _, row := range segment.Rows {
+				for i, cell := range row {
+					row[i] = restoreTags(cell)
+				}
+			}
+		}
+		restored = append(restored, segment)
+	}
+	return restored
+}
+
+// sideScroll scrolls wide content sideways, and gives a mostly vertical wheel or swipe to outer:
+// Fyne turns it sideways, so the reader would stop moving whenever the pointer is over code.
+type sideScroll struct {
+	*container.Scroll
+	outer fyne.Scrollable
+}
+
+func newSideScroll(content fyne.CanvasObject, outer fyne.Scrollable) *sideScroll {
+	// Not NewHScroll: a scroll extends only once, and this one must be drawn as the sideScroll.
+	s := &sideScroll{Scroll: &container.Scroll{Direction: container.ScrollHorizontalOnly, Content: content}, outer: outer}
+	s.ExtendBaseWidget(s)
+	return s
+}
+
+func (s *sideScroll) Scrolled(event *fyne.ScrollEvent) {
+	dx, dy := event.Scrolled.DX, event.Scrolled.DY
+	fits := s.Content.MinSize().Width <= s.Size().Width
+	vertical := math.Abs(float64(dy)) > math.Abs(float64(dx))
+	// An answer with nowhere to go leaves the wheel to the block, which Fyne turns sideways, as before.
+	if s.outer != nil && (fits || vertical && canScrollBy(s.outer, dy)) {
+		s.outer.Scrolled(event)
+		return
+	}
+	s.Scroll.Scrolled(event)
+}
+
+// canScrollBy is whether a wheel's dy would move the scroll: a negative dy reads further down.
+func canScrollBy(outer fyne.Scrollable, dy float32) bool {
+	scroll, ok := outer.(*container.Scroll)
+	if !ok {
+		return true
+	}
+	spare := scroll.Content.Size().Height - scroll.Size().Height
+	if dy < 0 {
+		return scroll.Offset.Y < spare
+	}
+	return scroll.Offset.Y > 0
 }

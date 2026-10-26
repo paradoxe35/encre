@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Build the Rust FFI static library. Usage: build-rust-ffi.sh [target-triple]
+# Build the Rust FFI static library, or with --test run its tests the same way.
+# Usage: build-rust-ffi.sh [--test] [target-triple]
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root/rust-ffi"
 
+command=build
+if [ "${1:-}" = "--test" ]; then
+  command=test
+  shift
+fi
 target="${1:-}"
-cargo_args=(build --release)
+cargo_args=("$command" --release)
 if [ -n "$target" ]; then
   cargo_args+=(--target "$target")
   out_dir="target/$target/release"

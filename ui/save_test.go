@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -12,14 +13,16 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/testhome"
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
 // Without its BaseURL, GetConfiguredProviderNames drops the provider and resets any override.
 func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	cfg := config.Default()
@@ -78,7 +81,7 @@ func TestSaveSettingsPreservesBuiltInBaseURLAndOperationOverride(t *testing.T) {
 
 // Publishing early would re-register shortcuts from a config that still says this one is off.
 func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	cfg := config.Default()
@@ -148,7 +151,7 @@ func TestSaveDoesNotPublishBeforeActionsAreApplied(t *testing.T) {
 }
 
 func TestSavingAskKeepsItsSettingsAndRefusesBadOnes(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	cfg := config.Default()
@@ -182,7 +185,7 @@ func TestSavingAskKeepsItsSettingsAndRefusesBadOnes(t *testing.T) {
 }
 
 func TestThinkingLessIsOnByDefaultAndSavedPerProvider(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	cfg := config.Default()
@@ -218,7 +221,7 @@ func TestThinkingLessIsOnByDefaultAndSavedPerProvider(t *testing.T) {
 // newSettingsWindow builds every tab saveSettings reads except System, whose overlay check needs a real display.
 func newSettingsWindow(t *testing.T, cfg *config.Config) *MainWindow {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	a := withDefaultTheme(t)
@@ -296,16 +299,11 @@ func TestACustomProviderWithoutABaseURLChangesNothing(t *testing.T) {
 	}
 }
 
-// refuseStartOnLogin puts a file where the autostart directory belongs, which makes enabling fail.
+// refuseStartOnLogin makes the login item refuse to be turned on, as a system may.
 func refuseStartOnLogin(t *testing.T) {
 	t.Helper()
-	home, _ := os.UserHomeDir()
-	if err := os.MkdirAll(filepath.Join(home, ".config"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".config", "autostart"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	loginItem.refuse = true
+	t.Cleanup(func() { *loginItem = fakeLoginItem{} })
 }
 
 // queuedDriver runs fyne.Do later, as the running app does on its own thread; the test driver runs it at once.
@@ -412,7 +410,7 @@ func TestShortenedErrorsKeepWholeCharacters(t *testing.T) {
 	if got := status(w); !utf8.ValidString(got) {
 		t.Errorf("status bar message %q is not valid UTF-8", got)
 	}
-	if got := shortMessage(strings.Repeat("ü", 100)); !utf8.ValidString(got) || utf8.RuneCountInString(got) != 80 {
+	if got := shortMessage(strings.Repeat("ü", 400)); !utf8.ValidString(got) || utf8.RuneCountInString(got) != statusErrorLimit {
 		t.Errorf("shortMessage = %q", got)
 	}
 }
@@ -525,5 +523,221 @@ func TestEnteringAKeyThisComputerCouldNotReadReplacesIt(t *testing.T) {
 	}
 	if got := cfg.SpeechSettings().RemoteAPIKey; got != "" {
 		t.Errorf("clearing the new speech key kept %q", got)
+	}
+}
+
+func TestASpeechKeyStaysWithTheServiceItWasEnteredFor(t *testing.T) {
+	cfg := config.Default()
+	w := newSettingsWindow(t, cfg)
+	w.speechRemote.SetSelected("OpenAI")
+	w.speechRemoteKey.SetText("sk-openai-secret")
+	w.saveSettings()
+
+	w.speechRemote.SetSelected("Custom")
+	if w.speechRemoteKey.Text != "" {
+		t.Fatalf("the OpenAI key followed to Custom: %q", w.speechRemoteKey.Text)
+	}
+	w.speechRemoteURL.SetText("https://third-party.example/v1")
+	w.speechRemote.SetSelected("Groq")
+	w.speechRemote.SetSelected("Custom")
+	if w.speechRemoteURL.Text != "https://third-party.example/v1" {
+		t.Fatalf("the custom endpoint became %q after looking at another service", w.speechRemoteURL.Text)
+	}
+	w.speechRemote.SetSelected("OpenAI")
+	if w.speechRemoteKey.Text != "sk-openai-secret" {
+		t.Fatalf("going back to the saved service shows key %q", w.speechRemoteKey.Text)
+	}
+
+	w.speechRemote.SetSelected("Custom")
+	w.saveSettings()
+	speech := cfg.SpeechSettings()
+	if key, _ := config.DecryptAPIKey(speech.RemoteAPIKey); key != "" || speech.RemoteBaseURL != "https://third-party.example/v1" {
+		t.Fatalf("saved custom service holds key %q and endpoint %q", key, speech.RemoteBaseURL)
+	}
+}
+
+func TestAProviderEditSurvivesLookingAtAnotherAndIsSaved(t *testing.T) {
+	cfg := config.Default()
+	w := newSettingsWindow(t, cfg)
+	names := cfg.GetAllProviderNames()
+	first, other := names[0], names[1]
+	w.providerSelect.SetSelected(first)
+	w.apiKeyBinding.Set("sk-typed")
+	w.modelBinding.Set("typed-model")
+
+	w.providerSelect.SetSelected(other)
+	if key, _ := w.apiKeyBinding.Get(); key == "sk-typed" {
+		t.Fatal("the key typed for one provider showed on another")
+	}
+	w.providerSelect.SetSelected(first)
+	if key, _ := w.apiKeyBinding.Get(); key != "sk-typed" {
+		t.Fatalf("coming back shows key %q, not the one typed", key)
+	}
+
+	w.providerSelect.SetSelected(other)
+	w.saveSettings()
+	if key, _ := cfg.GetAPIKey(first); key != "sk-typed" || cfg.GetProviderSettings(first).Model != "typed-model" {
+		t.Fatalf("saving from %s stored %s as key %q, model %q", other, first, key, cfg.GetProviderSettings(first).Model)
+	}
+	if cfg.GetCurrentProvider() != other {
+		t.Fatalf("the provider shown at Save, %s, is not current: %s", other, cfg.GetCurrentProvider())
+	}
+}
+
+func TestAResultIsStaleOnceTheFormItWasAboutChanged(t *testing.T) {
+	cfg := config.Default()
+	w := newSettingsWindow(t, cfg)
+	provider, _ := w.providerBinding.Get()
+
+	stale := w.formChangedSince(provider)
+	if stale() {
+		t.Fatal("an untouched form already counts as changed")
+	}
+	w.apiKeyBinding.Set("sk-edited-meanwhile")
+	if !stale() {
+		t.Fatal("a result about the key replaced meanwhile still lands")
+	}
+}
+
+func TestRePickingOrDeletingProvidersKeepsWhatIsTyped(t *testing.T) {
+	cfg := config.Default()
+	if err := cfg.AddCustomProvider("local", config.ProviderSettings{BaseURL: "http://localhost:11434/v1", Model: "llama", NoAPIKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	w := newSettingsWindow(t, cfg)
+	current := cfg.GetCurrentProvider()
+	w.providerSelect.SetSelected(current)
+	w.apiKeyBinding.Set("sk-typed")
+
+	w.providerSelect.SetSelected(current)
+	if key, _ := w.apiKeyBinding.Get(); key != "sk-typed" {
+		t.Fatalf("picking the shown provider again shows key %q", key)
+	}
+
+	w.providerSelect.SetSelected("local")
+	w.deleteProvider("local")
+	if shown, _ := w.providerBinding.Get(); shown != current {
+		t.Fatalf("after the delete %q is shown, want %q", shown, current)
+	}
+	if key, _ := w.apiKeyBinding.Get(); key != "sk-typed" {
+		t.Fatalf("after deleting another provider, %s shows key %q", current, key)
+	}
+}
+
+func TestADeleteThatCannotBeSavedStillLeavesTheTabConsistent(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory the test cannot write to")
+	}
+	cfg := config.Default()
+	if err := cfg.AddCustomProvider("local", config.ProviderSettings{BaseURL: "http://localhost:11434/v1", Model: "llama", NoAPIKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	w := newSettingsWindow(t, cfg)
+	w.providerSelect.SetSelected("local")
+
+	dir := filepath.Dir(config.ConfigPath())
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+	w.deleteProvider("local")
+	if shown, _ := w.providerBinding.Get(); shown == "local" || slices.Contains(w.providerSelect.Options, "local") {
+		t.Fatalf("the tab still offers the deleted provider: shown %q, options %v", shown, w.providerSelect.Options)
+	}
+	if !strings.Contains(status(w), "could not save") {
+		t.Fatalf("status %q does not say the delete was not saved", status(w))
+	}
+	os.Chmod(dir, 0o700)
+	w.saveSettings()
+	if _, ok := cfg.FindProvider("local"); ok {
+		t.Fatal("the next Save brought the deleted provider back")
+	}
+}
+
+func TestAnAddThatCannotBeSavedLeavesNoProviderBehind(t *testing.T) {
+	testhome.Use(t)
+	if err := os.MkdirAll(filepath.Dir(config.ConfigPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.ConfigPath(), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Fallback(errors.New("unreadable"))
+	w := newSettingsWindow(t, cfg)
+	if err := os.WriteFile(config.ConfigPath(), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w.showAddCustomProviderDialog()
+	var entries []*widget.Entry
+	var add *widget.Button
+	var walk func(fyne.CanvasObject)
+	walk = func(o fyne.CanvasObject) {
+		switch o := o.(type) {
+		case *widget.Entry:
+			entries = append(entries, o)
+		case *widget.Button:
+			if o.Text == "Add" {
+				add = o
+			}
+		}
+		if c, ok := o.(*fyne.Container); ok {
+			for _, child := range c.Objects {
+				walk(child)
+			}
+		} else if wid, ok := o.(fyne.Widget); ok {
+			for _, child := range test.WidgetRenderer(wid).Objects() {
+				walk(child)
+			}
+		}
+	}
+	walk(w.Canvas().Overlays().Top())
+	if len(entries) < 2 || add == nil {
+		t.Fatalf("test setup: found %d entries and add %v", len(entries), add != nil)
+	}
+	entries[0].SetText("local")
+	entries[1].SetText("http://localhost:11434/v1")
+
+	test.Tap(add)
+	if _, ok := cfg.FindProvider("local"); ok {
+		t.Fatal("a provider the user was told was not saved is in the live config")
+	}
+	test.Tap(add)
+	if _, ok := cfg.FindProvider("local"); ok {
+		t.Fatal("the second try left the provider behind too")
+	}
+}
+
+func TestDeletingTheCurrentProviderLeavesNothingUnsaved(t *testing.T) {
+	cfg := config.Default()
+	if err := cfg.AddCustomProvider("local", config.ProviderSettings{BaseURL: "http://localhost:11434/v1", Model: "llama", NoAPIKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetCurrentProvider("local")
+	w := newSettingsWindow(t, cfg)
+	w.providerSelect.SetSelected("local")
+	w.markClean()
+
+	w.deleteProvider("local")
+	if w.dirty {
+		t.Fatal("deleting a provider marked the settings unsaved")
+	}
+}
+
+func TestACustomServicesLanguageIsSavedAsItsCode(t *testing.T) {
+	for _, code := range []string{"zu", "ga", "rw", "jv", "fr"} {
+		cfg := config.Default()
+		speech := cfg.SpeechSettings()
+		speech.Engine, speech.RemoteProvider, speech.RemoteModel, speech.Language = config.SpeechRemote, "custom", "some-local-server", code
+		cfg.SetSpeechSettings(speech)
+		w := newSettingsWindow(t, cfg)
+		w.refreshLanguages(config.SpeechRemote)
+		if got := w.selectedSpeechLanguage(); got != code {
+			t.Errorf("a saved %q reads back as %q", code, got)
+		}
 	}
 }

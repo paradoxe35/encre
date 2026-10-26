@@ -30,6 +30,10 @@ var ErrHalted = fmt.Errorf("Encre is stopping: %w", context.Canceled)
 // An action that outlives this is cut short and the clipboard restored under it.
 const haltWait = 3 * time.Second
 
+// insertWait bounds how long a finished dictation waits for a running action to give the clipboard
+// back; much longer and the user has likely moved to another window, and the take is in History anyway.
+const insertWait = 30 * time.Second
+
 type Processor struct {
 	mu               sync.Mutex
 	config           *config.Config
@@ -147,6 +151,32 @@ func (p *Processor) overlay() overlay.Overlay {
 	return p.indicator
 }
 
+// beginWithin waits for a running action to end, since a dictation already spoken should not be refused.
+func (p *Processor) beginWithin(wait time.Duration) (func(), error) {
+	deadline := time.After(wait)
+	for {
+		p.mu.Lock()
+		idle, lifetime := p.idle, p.lifetimeLocked()
+		p.mu.Unlock()
+		if idle == nil {
+			release, err := p.begin()
+			if err == nil || !errors.Is(err, errBusy) {
+				return release, err
+			}
+			continue
+		}
+		select {
+		case <-idle:
+		case <-lifetime.Done():
+			return nil, ErrHalted
+		case <-deadline:
+			return nil, errBusy
+		}
+	}
+}
+
+var errBusy = errors.New("another action is already running")
+
 // Two overlapping runs would fight over the clipboard, which each saves and restores.
 func (p *Processor) begin() (func(), error) {
 	p.mu.Lock()
@@ -157,7 +187,7 @@ func (p *Processor) begin() (func(), error) {
 	if p.processing {
 		p.mu.Unlock()
 		logger.Warn("Already processing an action")
-		return nil, fmt.Errorf("another action is already running")
+		return nil, errBusy
 	}
 	p.processing = true
 	idle := make(chan struct{})
@@ -310,8 +340,6 @@ func (p *Processor) RecordDictation(raw, final string) {
 
 // Never blocks the caller: history is a convenience, not a dependency.
 func (p *Processor) recordHistory(kind config.ActionKind, original string, result reply) {
-	cfg := p.currentConfig()
-
 	entry := history.Entry{
 		Kind:       history.Kind(kind.Operation()),
 		Original:   original,
@@ -321,9 +349,7 @@ func (p *Processor) recordHistory(kind config.ActionKind, original string, resul
 		Characters: utf8.RuneCountInString(result.text),
 	}
 	if kind.Operation() == config.OpTranslate {
-		translate := cfg.Translation()
-		entry.FromLang = language.Find(translate.PrimaryLanguage).Name
-		entry.ToLang = language.Find(translate.SecondaryLanguage).Name
+		entry.FromLang, entry.ToLang = result.pair[0], result.pair[1]
 	}
 	p.history.Add(entry)
 }
@@ -332,6 +358,8 @@ type reply struct {
 	text     string
 	provider string
 	model    string
+	// pair is the translate languages the prompt was built with; either may be the source.
+	pair [2]string
 }
 
 func (p *Processor) transform(text string, kind config.ActionKind) (reply, error) {
@@ -341,12 +369,20 @@ func (p *Processor) transform(text string, kind config.ActionKind) (reply, error
 		return reply{}, fmt.Errorf("nothing to work with - the selection is empty")
 	}
 
+	// Read with the prompt, as Save may change the pair while the model answers.
+	var pair [2]string
+	if kind.Operation() == config.OpTranslate {
+		translate := cfg.Translation()
+		pair = [2]string{language.Find(translate.PrimaryLanguage).Name, language.Find(translate.SecondaryLanguage).Name}
+	}
+
 	result, err := p.complete(context.Background(), cfg, request{op: kind.Operation(), mentioned: mentioned, text: source})
 	if err != nil {
 		return reply{}, err
 	}
 
-	result.text = ai.CleanResponse(result.text)
+	result.text = ai.CleanResponse(result.text, source)
+	result.pair = pair
 	if result.text == "" {
 		return reply{}, fmt.Errorf("the model returned an empty result")
 	}
@@ -535,7 +571,11 @@ func (p *Processor) parseProviderMention(cfg *config.Config, text string) (provi
 		return "", text
 	}
 
-	mention, rest, _ := strings.Cut(trimmed, " ")
+	// The mention may end the line, as "@claude" written above the text it is about.
+	mention, rest := trimmed, ""
+	if end := strings.IndexFunc(trimmed, unicode.IsSpace); end >= 0 {
+		mention, rest = trimmed[:end], trimmed[end:]
+	}
 	name, found := cfg.FindProvider(strings.TrimPrefix(mention, "@"))
 	if !found {
 		return "", text
@@ -577,7 +617,7 @@ func (p *Processor) InsertText(text string) error {
 		return nil
 	}
 
-	release, err := p.begin()
+	release, err := p.beginWithin(insertWait)
 	if err != nil {
 		return err
 	}
@@ -624,7 +664,7 @@ func (p *Processor) CleanTranscript(text string) (string, error) {
 		return "", fmt.Errorf("transcript cleanup failed: %w", err)
 	}
 
-	cleaned = ai.CleanResponse(cleaned)
+	cleaned = ai.CleanResponse(cleaned, trimmed)
 	if cleaned == "" {
 		return "", fmt.Errorf("transcript cleanup returned empty text")
 	}

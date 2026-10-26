@@ -11,7 +11,7 @@ package input
 #cgo darwin LDFLAGS: -framework CoreFoundation -framework Security -framework AppKit -framework ApplicationServices -framework Carbon
 
 #cgo windows LDFLAGS: ${SRCDIR}/../../lib/libencre_ffi.a
-#cgo windows LDFLAGS: -lws2_32 -luserenv -lbcrypt -lntdll -static
+#cgo windows LDFLAGS: -lws2_32 -luserenv -lbcrypt -lntdll -lgdi32 -static
 
 #include <stdlib.h>
 #include "bindings.h"

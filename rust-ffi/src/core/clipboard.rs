@@ -61,11 +61,22 @@ fn without_cr(path: PathBuf) -> PathBuf {
     }
 }
 
+/// Firefox on Windows adds a temporary file to a copied image; Explorer's file copies carry no picture.
+/// Elsewhere a file manager's copy may carry the file's icon, so the files win there.
+const IMAGE_BEATS_FILES: bool = cfg!(target_os = "windows");
+
 /// Files first, since their names come along as text that pastes no file. HTML keeps its text as
 /// the plain alternative. Text beats an image, since a document copy also carries a picture of it,
 /// but an image beats HTML without text, which a browser adds to a copied image as a bare tag.
 fn content_of(formats: &mut impl Formats) -> Content {
+    content_by(formats, IMAGE_BEATS_FILES)
+}
+
+fn content_by(formats: &mut impl Formats, image_beats_files: bool) -> Content {
     if let Some(files) = formats.files().filter(|files| !files.is_empty()) {
+        if image_beats_files && let Some(image) = formats.image() {
+            return Content::Image(image);
+        }
         return Content::Files(files.into_iter().map(without_cr).collect());
     }
     let text = formats.text().filter(|text| !text.is_empty());
@@ -92,6 +103,8 @@ struct Borrow {
     copying: bool,
     /// Files the capture copied along with their names, as a Finder copy does.
     copied_files: Option<Vec<PathBuf>>,
+    /// A picture the capture's copy put up with its text, which on Windows is read before the text.
+    copied_image: Option<ImageData<'static>>,
 }
 
 impl Borrow {
@@ -101,18 +114,27 @@ impl Borrow {
             ours: Vec::new(),
             copying: false,
             copied_files: None,
+            copied_image: None,
         }
     }
 
     fn captured(&mut self, text: String, current: Content) {
         self.ours.push(text);
         self.copying = false;
-        if let Content::Files(files) = current {
-            self.copied_files = Some(files);
+        match current {
+            Content::Files(files) => self.copied_files = Some(files),
+            Content::Image(image) => self.copied_image = Some(image),
+            _ => {}
         }
     }
 
     /// Nothing is what Encre's clear leaves when no copy landed; a rich copy is ours by its text.
+    /// Go is handed the text without its NULs, which a C string cannot carry, so they are not compared.
+    fn is_ours(&self, text: &str) -> bool {
+        let text = text.replace('\0', "");
+        self.ours.iter().any(|ours| ours.replace('\0', "") == text)
+    }
+
     fn holds_ours(&self, current: &Content) -> bool {
         self.copying
             || match current {
@@ -120,9 +142,14 @@ impl Borrow {
                 Content::Text(text)
                 | Content::Html {
                     alt: Some(text), ..
-                } => self.ours.contains(text),
+                } => self.is_ours(text),
                 Content::Files(files) => self.copied_files.as_ref() == Some(files),
-                Content::Html { alt: None, .. } | Content::Image(_) => false,
+                Content::Image(image) => self.copied_image.as_ref().is_some_and(|copied| {
+                    copied.width == image.width
+                        && copied.height == image.height
+                        && copied.bytes == image.bytes
+                }),
+                Content::Html { alt: None, .. } => false,
             }
     }
 
@@ -139,6 +166,7 @@ impl Borrow {
         self.ours.clear();
         self.copying = false;
         self.copied_files = None;
+        self.copied_image = None;
         restore
     }
 }
@@ -210,7 +238,18 @@ impl ClipboardManager {
     fn put(&self, content: Content) -> Result<(), arboard::Error> {
         let mut clipboard = self.clipboard.lock();
         match content {
-            Content::Files(files) => clipboard.set().exclude_from_history().file_list(&files),
+            // A file deleted meanwhile cannot be listed; its path still beats Encre's text left behind.
+            Content::Files(files) => clipboard
+                .set()
+                .exclude_from_history()
+                .file_list(&files)
+                .or_else(|_| {
+                    let paths: Vec<_> = files.iter().map(|file| file.to_string_lossy()).collect();
+                    clipboard
+                        .set()
+                        .exclude_from_history()
+                        .text(paths.join("\n"))
+                }),
             Content::Html { html, alt } => clipboard.set().exclude_from_history().html(html, alt),
             Content::Text(text) => clipboard.set().exclude_from_history().text(text),
             Content::Image(image) => clipboard.set().exclude_from_history().image(image),
@@ -295,6 +334,13 @@ mod tests {
     }
 
     #[test]
+    fn a_selection_with_a_nul_still_gives_the_users_clipboard_back() {
+        let mut borrow = captured("original", "ab");
+        pasted(&mut borrow, text("a\0b"), "revised");
+        assert!(is_text(borrow.take_restore(&text("revised")), "original"));
+    }
+
+    #[test]
     fn text_is_kept_as_text() {
         let mut fake = Fake {
             text: some("user's own text"),
@@ -304,6 +350,26 @@ mod tests {
         let content = content_of(&mut fake);
         assert!(matches!(content, Content::Text(text) if text == "user's own text"));
         assert!(!fake.image_read, "text was enough");
+    }
+
+    #[test]
+    fn a_browser_image_with_a_temporary_file_stays_an_image_where_that_happens() {
+        let copied = || Fake {
+            files: Some(files(&["/tmp/image.png"])),
+            image: Some(picture()),
+            ..Fake::default()
+        };
+        assert!(matches!(content_by(&mut copied(), true), Content::Image(_)));
+        assert!(matches!(
+            content_by(&mut copied(), false),
+            Content::Files(_)
+        ));
+
+        let mut explorer = Fake {
+            files: Some(files(&["/home/me/report.pdf"])),
+            ..Fake::default()
+        };
+        assert!(matches!(content_by(&mut explorer, true), Content::Files(_)));
     }
 
     #[test]
@@ -384,6 +450,21 @@ mod tests {
             matches!(&content, Content::Files(paths) if *paths == files(&["/home/me/report.pdf", "/home/me/notes.txt"])),
             "{content:?}"
         );
+    }
+
+    #[test]
+    fn a_picture_the_capture_copied_is_ours_and_another_is_not() {
+        let mut borrow = Borrow::new(Content::Text("original".to_string()));
+        borrow.copying = true;
+        borrow.captured("selection".to_string(), Content::Image(picture()));
+        assert!(borrow.holds_ours(&Content::Image(picture())));
+
+        let other = ImageData {
+            width: 2,
+            height: 1,
+            bytes: vec![0; 8].into(),
+        };
+        assert!(!borrow.holds_ours(&Content::Image(other)));
     }
 
     #[test]

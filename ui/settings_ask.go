@@ -25,8 +25,8 @@ func (w *MainWindow) newAskEditor(ask config.OperationConfig) *askEditor {
 
 func (a *askEditor) items(w *MainWindow) []*widget.FormItem {
 	return []*widget.FormItem{
-		{Text: "Remembered messages", Widget: a.memory, HintText: "1 sends only the question; 2 adds the previous exchange"},
-		{Text: "Tools", Widget: a.tools, HintText: "Web search, web pages, Wikipedia and weather; free, with no API key"},
+		{Text: "Remembered messages", Widget: a.memory, HintText: "1: the question only; 2: plus the last exchange"},
+		{Text: "Tools", Widget: a.tools, HintText: "Web search, pages, Wikipedia, weather; no API key"},
 		widget.NewFormItem("Card style", w.answerCardStyleSelect()),
 		widget.NewFormItem("Answer text size", w.answerTextSizeSelect()),
 	}

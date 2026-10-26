@@ -12,9 +12,20 @@ import (
 type APIError struct {
 	StatusCode int
 	Message    string
+	// full is the provider's whole message, which Message may cut, for telling one refusal from another.
+	full string
 }
 
 func (e *APIError) Error() string { return e.Message }
+
+// refusalText is what a refusal said in full, for matching the setting it names.
+func refusalText(err error) string {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.full != "" {
+		return strings.ToLower(apiErr.full)
+	}
+	return strings.ToLower(err.Error())
+}
 
 var (
 	errNoReply = errors.New("the reply held no text")
@@ -50,21 +61,21 @@ func (e *replyError) err() error {
 	if e == nil {
 		return nil
 	}
-	return &APIError{Message: e.Message}
+	return &APIError{Message: clip(e.Message, messageLimit)}
 }
 
 func statusError(provider string, status int, body []byte) error {
 	var reply struct {
 		Error *replyError `json:"error"`
 	}
-	message := ""
+	message, full := "", ""
 	if json.Unmarshal(body, &reply) == nil && reply.Error != nil {
-		message = reply.Error.Message
+		message, full = clip(reply.Error.Message, messageLimit), reply.Error.Message
 	}
 	if message == "" {
 		message = statusHint(status, body)
 	}
-	return &APIError{StatusCode: status, Message: fmt.Sprintf("%s: %s (%d)", provider, message, status)}
+	return &APIError{StatusCode: status, Message: fmt.Sprintf("%s: %s (%d)", provider, message, status), full: full}
 }
 
 func statusHint(status int, body []byte) string {
@@ -87,10 +98,16 @@ func statusHint(status int, body []byte) string {
 	return "request failed"
 }
 
-func preview(text string) string {
-	const limit = 120
-	if len(text) <= limit {
+func preview(text string) string { return clip(text, 120) }
+
+// A provider's own message is shown whole up to this; proxies put tracebacks there.
+const messageLimit = 300
+
+// clip cuts on a rune, so a message in any script ends whole.
+func clip(text string, limit int) string {
+	runes := []rune(text)
+	if len(runes) <= limit {
 		return text
 	}
-	return text[:limit] + "..."
+	return string(runes[:limit]) + "..."
 }

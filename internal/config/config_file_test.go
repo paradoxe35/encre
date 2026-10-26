@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/paradoxe35/encre/internal/testhome"
 )
 
 func skipOnWindows(t *testing.T) {
@@ -28,7 +30,7 @@ func perm(t *testing.T, path string) os.FileMode {
 
 func TestLoadCreatesAPrivateDirectoryAndFile(t *testing.T) {
 	skipOnWindows(t)
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 
 	if _, err := Load(); err != nil {
 		t.Fatal(err)
@@ -44,7 +46,7 @@ func TestLoadCreatesAPrivateDirectoryAndFile(t *testing.T) {
 // Older installs wrote 0644, and the file holds API keys.
 func TestLoadTightensAnExistingWorldReadableConfig(t *testing.T) {
 	skipOnWindows(t)
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	if err := os.MkdirAll(filepath.Dir(ConfigPath()), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +64,7 @@ func TestLoadTightensAnExistingWorldReadableConfig(t *testing.T) {
 
 func TestSaveTightensAnExistingWorldReadableConfig(t *testing.T) {
 	skipOnWindows(t)
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	resetListeners(t)
 	if err := os.MkdirAll(filepath.Dir(ConfigPath()), 0o755); err != nil {
 		t.Fatal(err)
@@ -80,7 +82,7 @@ func TestSaveTightensAnExistingWorldReadableConfig(t *testing.T) {
 }
 
 func TestLoadSetsACorruptConfigAside(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	resetListeners(t)
 	if err := os.MkdirAll(filepath.Dir(ConfigPath()), 0o700); err != nil {
 		t.Fatal(err)
@@ -118,7 +120,7 @@ func TestLoadSetsACorruptConfigAside(t *testing.T) {
 }
 
 func TestConcurrentSavesLeaveAValidFile(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	resetListeners(t)
 	cfg, err := Load()
 	if err != nil {
@@ -149,7 +151,7 @@ func TestConcurrentSavesLeaveAValidFile(t *testing.T) {
 }
 
 func TestAFallbackNeverOverwritesAConfigItCouldNotLoad(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	resetListeners(t)
 	if err := os.MkdirAll(filepath.Dir(ConfigPath()), 0o700); err != nil {
 		t.Fatal(err)

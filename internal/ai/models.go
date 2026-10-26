@@ -37,7 +37,8 @@ func endpointFor(provider, apiKey, baseURL string) modelsEndpoint {
 			headers: map[string]string{"x-goog-api-key": apiKey},
 		}
 	default:
-		return bearerEndpoint(base, apiKey)
+		// The same /v1 a chat request adds to a bare local host such as http://localhost:11434.
+		return bearerEndpoint(withAPIVersion(base), apiKey)
 	}
 }
 

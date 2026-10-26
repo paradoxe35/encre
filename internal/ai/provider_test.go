@@ -2,12 +2,14 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/paradoxe35/encre/internal/config"
 )
@@ -417,5 +419,20 @@ func TestTheClientLeavesTheWaitToItsCaller(t *testing.T) {
 	}
 	if httpClient.Timeout != 0 {
 		t.Fatal("a whole-request timeout would cut long streams off")
+	}
+}
+
+func TestAProvidersLongErrorMessageIsCut(t *testing.T) {
+	trace := strings.Repeat("Traceback line é\n", 500)
+	body, _ := json.Marshal(map[string]any{"error": map[string]any{"message": trace}})
+	err := statusError("openai", http.StatusInternalServerError, body)
+	if n := len([]rune(err.Error())); n > messageLimit+40 {
+		t.Fatalf("the error is %d characters", n)
+	}
+	if !utf8.ValidString(err.Error()) {
+		t.Fatal("the cut split a character")
+	}
+	if got := preview(strings.Repeat("é", 200)); !utf8.ValidString(got) {
+		t.Fatal("preview split a character")
 	}
 }

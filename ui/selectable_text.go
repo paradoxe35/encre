@@ -559,22 +559,24 @@ func (s *selectableText) collect() {
 				if link == nil {
 					owner = object
 				}
-			case *container.Scroll:
+			case *container.Scroll, *sideScroll:
+				// A sideScroll's renderer is kept under it, not under the scroll it wraps.
+				scroll := sideways(object)
 				end := at.Add(object.Size())
 				clip = [2]fyne.Position{
 					{X: max(clip[0].X, at.X), Y: max(clip[0].Y, at.Y)},
 					{X: min(clip[1].X, end.X), Y: min(clip[1].Y, end.Y)},
 				}
-				s.hook(object, hooked)
+				s.hook(scroll, hooked)
 				if renderer, ok := cachedRenderer(object); ok {
 					for _, child := range renderer.Objects() {
 						if area, ok := child.(scrollArea); ok && area.Visible() {
-							s.bars = append(s.bars, innerBar{scroll: object, area: area, pos: at.Add(area.Position())})
+							s.bars = append(s.bars, innerBar{scroll: scroll, area: area, pos: at.Add(area.Position())})
 						}
 					}
 				}
 				// The scroll moves its content after telling of the scroll, so the offset is where it will be.
-				walk(object.Content, at.Subtract(object.Offset), clip, owner)
+				walk(scroll.Content, at.Subtract(scroll.Offset), clip, owner)
 				return
 			}
 			renderer, ok := cachedRenderer(object)
@@ -601,6 +603,14 @@ func drawn(link *widget.Hyperlink) {
 	if renderer, ok := cachedRenderer(link); ok {
 		renderer.Layout(link.Size())
 	}
+}
+
+// sideways is the scroll a code block or table scrolls with, whether wrapped or not.
+func sideways(object fyne.Widget) *container.Scroll {
+	if side, ok := object.(*sideScroll); ok {
+		return side.Scroll
+	}
+	return object.(*container.Scroll)
 }
 
 // hook repaints the marks as a scroll within the text scrolls; each render brings new scrolls, so only those drawn now are kept.

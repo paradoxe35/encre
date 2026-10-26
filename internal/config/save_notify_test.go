@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paradoxe35/encre/internal/testhome"
 	"github.com/paradoxe35/encre/internal/utils"
 )
 
@@ -24,7 +25,7 @@ func resetListeners(t *testing.T) {
 
 // SetAPIKey must not publish, or a hotkey enabled in the same save would go unregistered.
 func TestSetAPIKeyDoesNotPublish(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Use(t)
 	utils.EnsureAppHomeDir()
 
 	resetListeners(t)

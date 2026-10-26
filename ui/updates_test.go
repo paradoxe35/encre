@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/data/binding"
@@ -303,5 +304,35 @@ func TestAManualCheckAnnouncesInTheTray(t *testing.T) {
 	}
 	if w.updates.state.release == nil || w.updates.state.release.Tag != "v1.6.0" {
 		t.Fatal("the panel did not keep the release")
+	}
+}
+
+// stallingUpdater sends nothing until it is cancelled.
+type stallingUpdater struct{ foundUpdater }
+
+func (stallingUpdater) Update(ctx context.Context, _ *updater.Release, _ ...updater.Option) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestAStalledDownloadIsGivenUp(t *testing.T) {
+	test.NewApp()
+	previous := downloadStall
+	downloadStall = 50 * time.Millisecond
+	t.Cleanup(func() { downloadStall = previous })
+
+	p := holdStarts(t, newUpdatePanel(stallingUpdater{}))
+	done := make(chan struct{})
+	go func() {
+		p.install(&updater.Release{Tag: "v2.0.0"})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a download that sent nothing held the panel")
+	}
+	if !p.state.failed || !strings.Contains(p.state.status, errDownloadStalled.Error()) {
+		t.Fatalf("the panel shows %q", p.state.status)
 	}
 }

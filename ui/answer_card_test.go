@@ -10,7 +10,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
@@ -23,6 +22,8 @@ import (
 func newCard(t *testing.T) (*AnswerCard, fyne.App) {
 	t.Helper()
 	app := test.NewTempApp(t)
+	// As in the app, where the settings window applies its theme before the card exists.
+	app.Settings().SetTheme(newAppTheme(nil))
 	card := NewAnswerCard(app)
 	card.later = func(time.Duration, func()) {}
 	card.animate = func(_, to fyne.Size, apply func(fyne.Size)) *fyne.Animation {
@@ -155,6 +156,7 @@ func TestLongAnswersStopGrowingTheCard(t *testing.T) {
 
 // No pointer move first: a two-finger scroll moves none.
 func TestTheWheelScrollsAnAnswerThatOutgrewTheCard(t *testing.T) {
+	settleScrolls(t)
 	card, _ := newCard(t)
 	var batch func()
 	card.later = func(_ time.Duration, run func()) { batch = run }
@@ -192,6 +194,7 @@ func streamInto(t *testing.T) (*AnswerCard, func(paragraphs int, done bool)) {
 }
 
 func TestAReaderKeepsTheirPlaceWhileTheAnswerGrows(t *testing.T) {
+	settleScrolls(t)
 	card, stream := streamInto(t)
 	stream(100, false)
 	stream(200, false)
@@ -206,6 +209,7 @@ func TestAReaderKeepsTheirPlaceWhileTheAnswerGrows(t *testing.T) {
 }
 
 func TestScrollingWhileTheAnswerStreamsIsNeverUndone(t *testing.T) {
+	settleScrolls(t)
 	card, stream := streamInto(t)
 	for paragraphs := 1; paragraphs <= 60; paragraphs++ {
 		if paragraphs%5 == 0 {
@@ -285,6 +289,22 @@ func TestEnterSendsAndShiftEnterBreaksTheLine(t *testing.T) {
 	card.input.TypedKey(&fyne.KeyEvent{Name: fyne.KeyReturn})
 	if len(asked) != 1 {
 		t.Fatal("an empty input was sent")
+	}
+}
+
+func TestShiftLetGoElsewhereDoesNotStickInTheInput(t *testing.T) {
+	card, _ := newCard(t)
+	var asked []string
+	card.SetOnAsk(func(question string) { asked = append(asked, question) })
+	card.Prompt()
+
+	card.input.KeyDown(&fyne.KeyEvent{Name: desktop.KeyShiftLeft})
+	card.input.FocusLost()
+	card.input.FocusGained()
+	test.Type(card.input, "hello")
+	card.input.TypedKey(&fyne.KeyEvent{Name: fyne.KeyReturn})
+	if len(asked) != 1 || asked[0] != "hello" {
+		t.Fatalf("enter after shift was let go elsewhere sent %v and left %q", asked, card.input.Text)
 	}
 }
 
@@ -791,7 +811,7 @@ func TestATableKeepsItsAlignmentLinksAndEmptyRows(t *testing.T) {
 		t.Error("the link in a cell lost its hyperlink")
 	}
 
-	grid := table.Visual().(*container.Scroll).Content.(*fyne.Container)
+	grid := table.Visual().(*sideScroll).Content.(*fyne.Container)
 	layout := grid.Layout.(*tableLayout)
 	_, heights := layout.measure(grid.Objects)
 	if empty := heights[len(heights)-1]; empty < heights[0] {

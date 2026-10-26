@@ -3,11 +3,14 @@ package actions
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/paradoxe35/encre/internal/stt"
 
 	"github.com/paradoxe35/encre/internal/config"
 	"github.com/paradoxe35/encre/internal/overlay"
@@ -336,6 +339,9 @@ func TestACleanUpFailureIsReportedAndNothingIsTyped(t *testing.T) {
 	if typed := h.typist.typedSoFar(); len(typed) != 0 {
 		t.Fatalf("typed %v after a failed clean-up", typed)
 	}
+	if got := h.typist.remembered(); len(got) != 1 || got[0][0] == "" || got[0][0] != got[0][1] {
+		t.Fatalf("history %v after a failed clean-up, want the raw transcript kept", got)
+	}
 }
 
 func TestAnEmptyTranscriptIsReportedNotSwallowed(t *testing.T) {
@@ -375,15 +381,15 @@ func TestAStartErrorIsReportedAndTheReleaseIsIgnored(t *testing.T) {
 	}
 }
 
-func TestAnInsertFailureIsReportedAndNotRemembered(t *testing.T) {
+func TestAnInsertFailureIsReportedAndTheTranscriptKept(t *testing.T) {
 	h := newHarness(t, false)
 	boom := errors.New("paste refused")
 	h.typist.insErr = boom
 	h.take()
 
 	h.expectReport(t, boom)
-	if got := h.typist.remembered(); len(got) != 0 {
-		t.Fatalf("history %v after a failed paste", got)
+	if got := h.typist.remembered(); len(got) != 1 || got[0][0] == "" {
+		t.Fatalf("history %v after a failed paste, want the transcript kept", got)
 	}
 }
 
@@ -877,5 +883,17 @@ func TestATypedQuestionThatFailsSaysSoInTheView(t *testing.T) {
 	}
 	if answer := <-view.done; answer.failure != "no provider configured" {
 		t.Fatalf("showed %+v", answer)
+	}
+}
+
+func TestAPartlyTranscribedTakeIsTypedAndReported(t *testing.T) {
+	h := newHarness(t, false)
+	partial := fmt.Errorf("%w: part 2 of 3: timeout", stt.ErrPartial)
+	h.speech.stops = []stopResult{{text: "the first part", err: partial}}
+	h.take()
+
+	h.expectReport(t, stt.ErrPartial)
+	if typed := h.typist.typedSoFar(); !slices.Equal(typed, []string{"the first part"}) {
+		t.Fatalf("typed %v, want the part that came back", typed)
 	}
 }

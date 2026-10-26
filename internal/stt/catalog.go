@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -310,9 +311,21 @@ func Catalogue() []Model {
 	return append(all, custom...)
 }
 
+// FindModel falls back to the file a saved ID names, so a model a catalogue refresh dropped or
+// moved still resolves, as the downloaded file it already is.
 func FindModel(id string) (Model, bool) {
-	for _, model := range Catalogue() {
+	models := Catalogue()
+	for _, model := range models {
 		if model.ID == id {
+			return model, true
+		}
+	}
+	file := path.Base(id)
+	if id == "" || file == "." || file == "/" {
+		return Model{}, false
+	}
+	for _, model := range models {
+		if path.Base(model.Filename) == file {
 			return model, true
 		}
 	}

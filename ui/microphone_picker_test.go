@@ -1,18 +1,41 @@
 package ui
 
 import (
+	"errors"
 	"os"
 	"testing"
 
 	"fyne.io/fyne/v2/test"
 	"github.com/paradoxe35/encre/internal/input"
+	"github.com/paradoxe35/encre/internal/platform"
 )
 
-// Widgets need a driver before they can refresh.
+// Widgets need a driver before they can refresh, and the login item must stay the user's own.
 func TestMain(m *testing.M) {
 	test.NewApp()
+	systemAutoStart = func() platform.AutoStart { return loginItem }
 	os.Exit(m.Run())
 }
+
+// loginItem stands in for the system's login item in every test.
+var loginItem = &fakeLoginItem{}
+
+type fakeLoginItem struct{ on, refuse bool }
+
+func (f *fakeLoginItem) Enable() error {
+	if f.refuse {
+		return errors.New("the system refused the login item")
+	}
+	f.on = true
+	return nil
+}
+
+func (f *fakeLoginItem) Disable() error {
+	f.on = false
+	return nil
+}
+
+func (f *fakeLoginItem) IsEnabled() bool { return f.on }
 
 func lister(devices ...input.Device) func() []input.Device {
 	return func() []input.Device { return devices }

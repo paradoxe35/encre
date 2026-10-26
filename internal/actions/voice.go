@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -206,10 +207,12 @@ func (d *Voice) stop(kind config.ActionKind) {
 		if ahead != nil {
 			<-ahead
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, stt.ErrPartial) {
 			d.fail(kind, err)
 			return
 		}
+		// What part of a take came back is still typed; that it is only part is reported after, once.
+		partial := err
 
 		logger.Info("Recording transcribed", "action", kind, "characters", len(raw))
 		if strings.TrimSpace(raw) == "" {
@@ -222,25 +225,32 @@ func (d *Voice) stop(kind config.ActionKind) {
 		} else {
 			err = d.write(raw)
 		}
-		if err != nil {
+		switch {
+		case err != nil && partial != nil:
+			d.fail(kind, fmt.Errorf("%w (%w)", err, partial))
+		case err != nil:
 			d.fail(kind, err)
+		case partial != nil:
+			d.fail(kind, partial)
 		}
 	}()
 }
 
+// A take that cannot be typed is still kept in History, so what was said is never lost.
 func (d *Voice) write(raw string) error {
 	text := raw
 	if d.config().SpeechSettings().CleanUp {
 		cleaned, err := d.assistant.CleanTranscript(raw)
 		if err != nil {
-			return err
+			d.assistant.RecordDictation(raw, raw)
+			return fmt.Errorf("%w; the transcript is in History", err)
 		}
 		text = cleaned
 	}
-	if err := d.assistant.InsertText(text); err != nil {
-		return err
-	}
 	d.assistant.RecordDictation(raw, text)
+	if err := d.assistant.InsertText(text); err != nil {
+		return fmt.Errorf("%w; the transcript is in History", err)
+	}
 	return nil
 }
 

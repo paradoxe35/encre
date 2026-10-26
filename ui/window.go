@@ -13,7 +13,6 @@ import (
 	"github.com/paradoxe35/encre/internal/input"
 	"github.com/paradoxe35/encre/internal/logger"
 	"github.com/paradoxe35/encre/internal/permissions"
-	"github.com/paradoxe35/encre/internal/platform"
 	"github.com/paradoxe35/encre/internal/stt"
 	updater "github.com/paradoxe35/go-updater"
 )
@@ -80,9 +79,23 @@ type MainWindow struct {
 	speechRemote        *widget.Select
 	speechRemoteModel   *widget.SelectEntry
 	speechRemoteURL     *widget.Entry
-	speechRemoteKey     *widget.Entry
+	// speechPresetURL shows a known service's endpoint, which a disabled entry draws too faintly to read.
+	speechPresetURL  *widget.Label
+	speechRemoteKey  *widget.Entry
+	speechRemoteForm *widget.Form
+	// Tabs not on screen at a theme change, which Fyne leaves in the old theme until re-applied.
+	themeStale          map[*container.TabItem]bool
+	reapplyingTheme     bool
+	themeApplied        *string
 	speechKeyUnreadable bool
-	microphoneNotice    *fyne.Container
+	// The key and endpoint typed for each service, so one service's key is never sent to another.
+	speechServiceDrafts map[string]speechServiceDraft
+	speechServiceShown  string
+	speechServiceSaved  string
+	// providerForms holds the AI tab's unsaved edits to providers the user moved away from.
+	providerForms    map[string]providerForm
+	providerShown    string
+	microphoneNotice *fyne.Container
 
 	baseURLContainer *fyne.Container
 
@@ -133,6 +146,7 @@ func NewMainWindow(app fyne.App, cfg *config.Config, hotkeyManager *input.FFIHot
 	mw.applyTheme(themeName)
 
 	mw.mainContent = mw.createContent()
+	mw.watchTheme()
 	mw.rootContainer = container.NewStack(mw.mainContent, prompt.root)
 	// The window paints its own background, padding included, since the theme's is see-through.
 	window.SetPadded(false)
@@ -176,8 +190,7 @@ func (w *MainWindow) initBindings() {
 	w.textIndicator.Set(indicators.Text)
 
 	// Re-check actual system state: the user may have removed the login item outside the app.
-	autoStart := platform.GetAutoStart()
-	actualStartOnLogin := autoStart.IsEnabled()
+	actualStartOnLogin := systemAutoStart().IsEnabled()
 	w.startOnLoginBinding.Set(actualStartOnLogin)
 
 	// One listener per binding covers both directions without Bind overwriting it.
@@ -253,6 +266,12 @@ func (w *MainWindow) createContent() fyne.CanvasObject {
 
 func (w *MainWindow) onTabSelected(tab *container.TabItem) {
 	w.stopCaptures()
+	if w.themeStale[tab] {
+		delete(w.themeStale, tab)
+		w.reapplyingTheme = true
+		w.app.Settings().SetTheme(w.app.Settings().Theme())
+		w.reapplyingTheme = false
+	}
 	// History shows other tabs' activity, so it re-reads on every visit.
 	if tab.Text == "History" {
 		fyne.Do(w.refreshHistory)

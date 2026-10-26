@@ -131,7 +131,7 @@ func (p *provider) open(ctx context.Context, prompt Prompt, lowReasoning bool) (
 
 // Matched on wording too: a 400 has many causes, and only this one is cured by not streaming.
 func streamingRefused(err error) bool {
-	return refusedRequest(err) && strings.Contains(strings.ToLower(err.Error()), "stream")
+	return refusedRequest(err) && strings.Contains(refusalText(err), "stream")
 }
 
 // Endpoint/model pairs whose 400 named a setting they refuse, sent without it until the app restarts.
@@ -162,13 +162,18 @@ func (p *provider) send(ctx context.Context, prompt Prompt, stream, lowReasoning
 	}
 	target := known.apply(p.endpoint)
 	resp, err := p.post(ctx, target, prompt, stream, lowReasoning)
-	learned, ok := relaxed(target, known, err)
-	if !ok {
-		return resp, err
-	}
-	resp, err = p.post(ctx, learned.apply(p.endpoint), prompt, stream, lowReasoning)
-	if err == nil {
-		relaxedEndpoints.Store(key, learned)
+	// An endpoint may refuse one setting and then another; each refusal teaches one, a few at most.
+	for range 3 {
+		learned, ok := relaxed(target, known, err)
+		if !ok {
+			return resp, err
+		}
+		known, target = learned, learned.apply(p.endpoint)
+		resp, err = p.post(ctx, target, prompt, stream, lowReasoning)
+		if err == nil {
+			relaxedEndpoints.Store(key, known)
+			return resp, nil
+		}
 	}
 	return resp, err
 }
@@ -180,7 +185,7 @@ func relaxed(target endpoint, known relaxation, err error) (relaxation, bool) {
 	if !refusedRequest(err) {
 		return known, false
 	}
-	message := strings.ToLower(err.Error())
+	message := refusalText(err)
 	if strings.Contains(message, "temperature") && target.temperature != defaultTemperature {
 		known.dropTemperature = true
 		return known, true

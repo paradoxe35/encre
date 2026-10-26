@@ -18,20 +18,61 @@ import (
 	"github.com/paradoxe35/encre/internal/logger"
 )
 
-func (w *MainWindow) loadProviderSettings(provider string) {
-	settings := w.config.GetProviderSettings(provider)
-
-	apiKey, err := w.config.GetAPIKey(provider)
-	w.apiKeyBinding.Set(apiKey)
-	w.setAPIKeyUnreadable(err != nil)
-	w.modelBinding.Set(settings.Model)
-	w.lowReasoningBinding.Set(settings.LowReasoning)
-
-	if w.config.IsCustomProvider(provider) {
-		w.baseURLBinding.Set(settings.BaseURL)
-	} else {
-		w.baseURLBinding.Set("")
+// formChangedSince reports, when a test or a model list lands, that it is about another provider,
+// key, model or address than the one now on screen.
+func (w *MainWindow) formChangedSince(provider string) func() bool {
+	then := w.shownProviderForm()
+	return func() bool {
+		now := w.shownProviderForm()
+		shown, _ := w.providerBinding.Get()
+		return shown != provider || now.apiKey != then.apiKey || now.model != then.model || now.baseURL != then.baseURL
 	}
+}
+
+// providerForm is what the AI tab shows for one provider, kept while another is looked at until Save.
+type providerForm struct {
+	apiKey, model, baseURL   string
+	lowReasoning, unreadable bool
+}
+
+func (w *MainWindow) shownProviderForm() providerForm {
+	apiKey, _ := w.apiKeyBinding.Get()
+	model, _ := w.modelBinding.Get()
+	baseURL, _ := w.baseURLBinding.Get()
+	lowReasoning, _ := w.lowReasoningBinding.Get()
+	return providerForm{apiKey: apiKey, model: model, baseURL: baseURL, lowReasoning: lowReasoning, unreadable: w.apiKeyUnreadable}
+}
+
+// Picking the provider already shown, or loading it twice as Add and Delete do, keeps what is typed.
+func (w *MainWindow) loadProviderSettings(provider string) {
+	if provider == w.providerShown {
+		w.updateProviderUI(provider)
+		return
+	}
+	if w.providerShown != "" {
+		if w.providerForms == nil {
+			w.providerForms = make(map[string]providerForm)
+		}
+		w.providerForms[w.providerShown] = w.shownProviderForm()
+	}
+	w.providerShown = provider
+
+	form, edited := w.providerForms[provider]
+	delete(w.providerForms, provider)
+	if !edited {
+		settings := w.config.GetProviderSettings(provider)
+		apiKey, err := w.config.GetAPIKey(provider)
+		form = providerForm{apiKey: apiKey, model: settings.Model, lowReasoning: settings.LowReasoning, unreadable: err != nil}
+		if w.config.IsCustomProvider(provider) {
+			form.baseURL = settings.BaseURL
+		}
+	}
+
+	w.apiKeyBinding.Set(form.apiKey)
+	w.setAPIKeyUnreadable(form.unreadable)
+	w.modelBinding.Set(form.model)
+	w.lowReasoningBinding.Set(form.lowReasoning)
+	w.baseURLBinding.Set(form.baseURL)
 
 	w.updateProviderUI(provider)
 }
@@ -142,8 +183,7 @@ func (w *MainWindow) browseProviderModels(report progress) {
 		return
 	}
 
-	// The list may arrive after the user moved on to another provider, whose model it is not.
-	stale := func() bool { now, _ := w.providerBinding.Get(); return now != provider }
+	stale := w.formChangedSince(provider)
 	w.loadModels(provider, apiKey, baseURL, current, report, stale, func(model string) {
 		if stale() {
 			return
@@ -186,11 +226,16 @@ func (w *MainWindow) testAPIConnection(report progress) {
 	}
 
 	report.Busy("Testing the connection…")
+	stale := w.formChangedSince(provider)
 
 	go func() {
 		err := answers(testProvider, 10*time.Second)
 
 		fyne.Do(func() {
+			if stale() {
+				report.Done("")
+				return
+			}
 			if err != nil {
 				logger.Error("API connection test failed", "error", err)
 				report.Fail("Connection failed: " + shortMessage(err.Error()))
@@ -284,12 +329,17 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 	apiKeyEntry := widget.NewPasswordEntry()
 	apiKeyEntry.PlaceHolder = "Enter your API key"
 
+	var form *widget.Form
 	requiresKey := widget.NewCheck("Requires an API key", func(checked bool) {
 		if checked {
 			apiKeyEntry.Enable()
 		} else {
 			apiKeyEntry.SetText("")
 			apiKeyEntry.Disable()
+		}
+		// A form greys its labels only when refreshed, not when a field is turned off.
+		if form != nil {
+			form.Refresh()
 		}
 	})
 	requiresKey.SetChecked(true)
@@ -310,7 +360,7 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 	nameEntry.OnChanged = func(string) { addReport.Clear() }
 	baseURLEntry.OnChanged = func(string) { addReport.Clear() }
 
-	form := widget.NewForm(
+	form = widget.NewForm(
 		widget.NewFormItem("Name", nameEntry),
 		widget.NewFormItem("Base URL", baseURLEntry),
 		widget.NewFormItem("API key", apiKeyEntry),
@@ -345,19 +395,25 @@ func (w *MainWindow) showAddCustomProviderDialog() {
 			LowReasoning: true,
 		}
 
+		// The key is encrypted first and the add undone if it cannot be saved, so a refused add leaves nothing behind.
+		if apiKey := strings.TrimSpace(apiKeyEntry.Text); apiKey != "" {
+			encrypted, err := encryptAPIKey(apiKey)
+			if err != nil {
+				addReport.Fail("Could not save the API key: " + err.Error())
+				return
+			}
+			settings.APIKey = encrypted
+		}
+
 		if err := w.config.AddCustomProvider(name, settings); err != nil {
 			addReport.Fail(err.Error())
 			return
 		}
 
-		if apiKey := strings.TrimSpace(apiKeyEntry.Text); apiKey != "" {
-			if err := w.config.SetAPIKey(name, apiKey); err != nil {
-				addReport.Fail("Could not save the API key: " + err.Error())
-				return
-			}
-		}
-
 		if err := w.config.Save(); err != nil {
+			if undoErr := w.config.DeleteCustomProvider(name); undoErr != nil {
+				logger.Error("Could not undo the unsaved provider", "provider", name, "error", undoErr)
+			}
 			addReport.Fail("Could not save: " + err.Error())
 			return
 		}
@@ -417,17 +473,29 @@ func (w *MainWindow) deleteProvider(name string) {
 		}
 	}
 
-	if err := w.config.Save(); err != nil {
-		w.statusBinding.Set("Could not save: " + shortMessage(err.Error()))
-		return
-	}
+	// The provider is gone from the live config either way, so the tab must stop showing it.
+	saveErr := w.config.Save()
 
 	w.refreshProviderList()
 	w.refreshOperationProviderOptions()
+	delete(w.providerForms, name)
+	if w.providerShown == name {
+		w.providerShown = ""
+	}
 	newProvider := w.config.GetCurrentProvider()
+	wasClean := !w.dirty
 	w.providerSelect.SetSelected(newProvider)
 	w.providerBinding.Set(newProvider)
 	w.loadProviderSettings(newProvider)
+	if saveErr == nil && wasClean {
+		// Showing the provider the config now has is not an edit; the binding listeners run later.
+		w.markClean()
+		fyne.Do(w.markClean)
+	}
+	if saveErr != nil {
+		w.statusBinding.Set(fmt.Sprintf("Provider '%s' deleted, but could not save: %s", name, shortMessage(saveErr.Error())))
+		return
+	}
 	w.statusBinding.Set(fmt.Sprintf("Provider '%s' deleted", name))
 }
 

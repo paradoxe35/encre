@@ -281,3 +281,55 @@ func TestTheCaptureFieldFollowsAThemeOverride(t *testing.T) {
 		t.Fatalf("background = %v, want the override's %v", got, want)
 	}
 }
+
+func TestOnlyKeysTheListenerCanReadAreRecorded(t *testing.T) {
+	held := "ctrl+" + getAltName()
+	for key, want := range map[fyne.KeyName]string{
+		fyne.KeyUnknown:  held,
+		fyne.KeyPlus:     held,
+		fyne.KeyMinus:    held,
+		fyne.KeyPageUp:   held + "+pageup",
+		fyne.KeyPageDown: held + "+pagedown",
+		fyne.KeyF12:      held + "+f12",
+	} {
+		h, _, _ := capturing(t)
+		h.entry.TypedShortcut(&desktop.CustomShortcut{KeyName: key, Modifier: fyne.KeyModifierControl | fyne.KeyModifierAlt})
+		if h.entry.Text != want {
+			t.Errorf("%q was captured as %q, want %q", key, h.entry.Text, want)
+		}
+	}
+}
+
+func TestLettersAreSavedWhereTheListenerReadsThem(t *testing.T) {
+	cases := []struct {
+		goos     string
+		key      fyne.KeyName
+		scancode int
+		want     string
+	}{
+		{"linux", fyne.KeyZ, 29, "y"},   // QWERTZ Z sits on the US Y key
+		{"linux", fyne.KeyA, 24, "q"},   // AZERTY A sits on the US Q key
+		{"linux", fyne.KeyM, 47, ""},    // AZERTY M sits on the US semicolon, which the listener cannot match
+		{"linux", fyne.Key1, 87, "1"},   // numpad 1
+		{"linux", fyne.KeyF5, 71, "f5"}, // not positional
+		{"darwin", fyne.KeyZ, 0x10, "y"},
+		{"windows", fyne.KeyZ, 44, "z"}, // Windows matches by virtual key, which follows the layout
+		{"linux", fyne.KeyZ, 0, "z"},    // no scancode known
+	}
+	for _, c := range cases {
+		if got := bindingKeyOn(c.goos, c.key, c.scancode); got != c.want {
+			t.Errorf("%s %q at %d is saved as %q, want %q", c.goos, c.key, c.scancode, got, c.want)
+		}
+	}
+}
+
+func TestTabIsRecordedRatherThanEndingTheCapture(t *testing.T) {
+	h, _, _ := capturing(t)
+	if !h.entry.AcceptsTab() {
+		t.Fatal("Tab would move focus and end the capture")
+	}
+	h.stopCapture()
+	if h.entry.AcceptsTab() {
+		t.Fatal("Tab is kept from moving focus once the capture ended")
+	}
+}

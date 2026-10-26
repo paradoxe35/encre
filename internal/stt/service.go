@@ -17,6 +17,9 @@ import (
 
 var ErrNoModel = errors.New("no speech model selected - choose one in Settings > Speech")
 
+// ErrPartial comes with the text of the part of a take that was transcribed, to be typed and reported.
+var ErrPartial = errors.New("only part of the dictation was transcribed")
+
 var witaiTranscribe = witai.Transcribe
 
 type speechEngine interface {
@@ -37,10 +40,12 @@ type Service struct {
 	store     *Store
 	newEngine func() (speechEngine, error)
 
-	mu           sync.Mutex
-	speech       speechEngine
-	recording    bool
-	takes        int
+	mu        sync.Mutex
+	speech    speechEngine
+	recording bool
+	takes     int
+	// orphans are engines Close left to the takes still transcribing on them, with how many.
+	orphans      map[speechEngine]int
 	model        string
 	device       string
 	language     string
@@ -114,12 +119,14 @@ func (s *Service) applyEngine(speech speechEngine, cfg config.SpeechConfig) erro
 
 	switch engine {
 	case config.SpeechWitAI:
+		s.unloadIdleModel(speech)
 		if err := s.applyCaptureOnly(speech, true); err != nil {
 			return err
 		}
 		s.witaiLang = cfg.Language
 		return nil
 	case config.SpeechRemote:
+		s.unloadIdleModel(speech)
 		if err := s.applyCaptureOnly(speech, true); err != nil {
 			return err
 		}
@@ -143,6 +150,16 @@ func (s *Service) applyEngine(speech speechEngine, cfg config.SpeechConfig) erro
 		s.model = path
 	}
 	return nil
+}
+
+// unloadIdleModel frees a model kept loaded for an engine no longer in use, once no take needs it.
+func (s *Service) unloadIdleModel(speech speechEngine) {
+	if s.model == "" || s.takes > 0 {
+		return
+	}
+	s.model = ""
+	speech.Unload()
+	logger.Info("Speech model unloaded")
 }
 
 func (s *Service) applyCaptureOnly(speech speechEngine, capture bool) error {
@@ -252,9 +269,12 @@ func (s *Service) StopRecording() (string, error) {
 
 	text, err := speech.Stop()
 	if err != nil {
-		// Ask for the model again next time: a failed load surfaces here.
+		// Ask for the model again next time: a failed load surfaces here. Unless it is kept loaded,
+		// finishing the take unloads it and does the same, so the name is left for that to see.
 		s.mu.Lock()
-		s.model = ""
+		if s.keepLoaded {
+			s.model = ""
+		}
 		s.mu.Unlock()
 		return "", err
 	}
@@ -271,12 +291,8 @@ func (s *Service) stopWitAI(speech speechEngine, lang string) (string, error) {
 
 	// Transcribe times each chunk itself: a long take is many sequential requests.
 	text, err := witaiTranscribe(context.Background(), pcm, lang)
-	if err != nil && text == "" {
-		return "", err
-	}
 	if err != nil {
-		// Dropping minutes of dictation for one failed chunk would be worse than typing what came back.
-		logger.Warn("Wit.ai transcribed only part of the dictation", "characters", len(text), "error", err)
+		return partly(text, err)
 	}
 
 	logger.Info("Dictation transcribed", "characters", len(text), "engine", "witai")
@@ -289,21 +305,45 @@ func (s *Service) stopRemote(speech speechEngine, cfg config.SpeechConfig) (stri
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), remoteRequestTimeout)
-	defer cancel()
-
-	text, err := RemoteTranscribe(ctx, cfg, pcm)
+	// Each request has its own deadline: a long take is several of them. Like a local take, it is
+	// left to finish when the service closes, as a handed-over app may yet resume.
+	text, err := RemoteTranscribe(context.Background(), cfg, pcm)
 	if err != nil {
-		return "", err
+		return partly(text, err)
 	}
 
 	logger.Info("Dictation transcribed", "characters", len(text), "engine", "remote")
 	return text, nil
 }
 
+// partly keeps what came back before a failure: dropping minutes of dictation would be worse.
+func partly(text string, err error) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		return "", err
+	}
+	logger.Warn("Only part of the dictation was transcribed", "characters", len(text), "error", err)
+	return text, fmt.Errorf("%w: %w", ErrPartial, err)
+}
+
 // Sent under the lock so a later take's load queues behind the unload.
 func (s *Service) finishTake(speech speechEngine) {
 	s.mu.Lock()
+	// A take that outlived Close belongs to an engine Close left running for it; the last such take
+	// closes it, and the count of a later engine is left alone.
+	if speech != s.speech {
+		left, orphaned := s.orphans[speech]
+		last := orphaned && left <= 1
+		if last {
+			delete(s.orphans, speech)
+		} else if orphaned {
+			s.orphans[speech] = left - 1
+		}
+		s.mu.Unlock()
+		if last {
+			speech.Close()
+		}
+		return
+	}
 	defer s.mu.Unlock()
 
 	s.takes--
@@ -333,16 +373,29 @@ func (s *Service) Cancel() {
 // A take still transcribing holds the engine; closing would wait, and the process is leaving.
 func (s *Service) Close() {
 	s.mu.Lock()
-	speech, inFlight := s.speech, s.takes > 0
+	speech, recording, pending := s.speech, s.recording, s.takes
+	if recording {
+		// The open take is cancelled below, and ends no other way.
+		pending--
+	}
 	s.speech = nil
 	s.recording = false
 	s.takes = 0
+	if speech != nil && pending > 0 {
+		if s.orphans == nil {
+			s.orphans = make(map[speechEngine]int)
+		}
+		s.orphans[speech] += pending
+	}
 	s.mu.Unlock()
 
 	if speech == nil {
 		return
 	}
-	if inFlight {
+	if recording {
+		speech.Cancel()
+	}
+	if pending > 0 {
 		logger.Info("Speech engine left running: a take is still transcribing")
 		return
 	}

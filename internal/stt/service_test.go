@@ -346,8 +346,8 @@ func TestWitAIPartialTranscriptIsTyped(t *testing.T) {
 	t.Cleanup(func() { witaiTranscribe = previous })
 
 	text, err := service.StopRecording()
-	if err != nil || text != "the first minute" {
-		t.Fatalf("got %q, %v, want the partial transcript", text, err)
+	if !errors.Is(err, ErrPartial) || text != "the first minute" {
+		t.Fatalf("got %q, %v, want the partial transcript and ErrPartial", text, err)
 	}
 }
 
@@ -363,5 +363,137 @@ func TestWitAIFailureWithNoTextStillFails(t *testing.T) {
 
 	if _, err := service.StopRecording(); err == nil {
 		t.Fatal("expected the failure to surface")
+	}
+}
+
+func TestAFailedTakeStillUnloadsAModelNotKept(t *testing.T) {
+	service, fake, cfg := newTestService(t, false)
+	fake.stopErr = errors.New("microphone unavailable")
+
+	if err := service.StartRecording(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.StopRecording(); err == nil {
+		t.Fatal("test setup: the stop did not fail")
+	}
+	if got := commands(fake.entries(), "unload"); len(got) != 1 {
+		t.Fatalf("a failed take left the model loaded: %v", fake.entries())
+	}
+
+	fake.stopErr = nil
+	take(t, service, cfg)
+	if got := commands(fake.entries(), "use"); len(got) != 2 {
+		t.Errorf("the next take did not ask for the model again: %v", fake.entries())
+	}
+}
+
+func TestATakeThatOutlivesCloseDoesNotCountAgainstTheNextEngine(t *testing.T) {
+	service, _, cfg := newTestService(t, false)
+	if err := service.StartRecording(cfg); err != nil {
+		t.Fatal(err)
+	}
+	old := service.speech
+	service.Close()
+	service.finishTake(old)
+	if service.takes != 0 {
+		t.Fatalf("takes = %d after a closed engine's take ended", service.takes)
+	}
+}
+
+func TestAnEngineLeftToATakeIsClosedWhenThatTakeEnds(t *testing.T) {
+	service, fake, cfg := newTestService(t, false)
+	gate := make(chan struct{})
+	fake.gateStop(gate)
+	if err := service.StartRecording(cfg); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	go func() {
+		service.StopRecording()
+		close(stopped)
+	}()
+	for !slices.Contains(fake.entries(), "stop") {
+		time.Sleep(time.Millisecond)
+	}
+
+	service.Close()
+	if slices.Contains(fake.entries(), "close") {
+		t.Fatal("closed the engine under the take still transcribing")
+	}
+	close(gate)
+	<-stopped
+	if got := commands(fake.entries(), "close"); len(got) != 1 {
+		t.Fatalf("the engine left to the take was not closed once it ended: %v", fake.entries())
+	}
+}
+
+func TestClosingWhileRecordingStopsTheMicrophone(t *testing.T) {
+	service, fake, cfg := newTestService(t, false)
+	if err := service.StartRecording(cfg); err != nil {
+		t.Fatal(err)
+	}
+	service.Close()
+	if !slices.Contains(fake.entries(), "cancel") || !slices.Contains(fake.entries(), "close") {
+		t.Fatalf("an open recording outlived Close: %v", fake.entries())
+	}
+}
+
+func TestEveryEngineLeftToATakeIsClosedThoughCloseCameTwice(t *testing.T) {
+	service, _, cfg := newTestService(t, false)
+	var engines []*fakeEngine
+	gate := make(chan struct{})
+	service.newEngine = func() (speechEngine, error) {
+		engine := &fakeEngine{}
+		engine.gateStop(gate)
+		engines = append(engines, engine)
+		return engine, nil
+	}
+
+	var stopped sync.WaitGroup
+	for range 2 {
+		if err := service.StartRecording(cfg); err != nil {
+			t.Fatal(err)
+		}
+		engine := engines[len(engines)-1]
+		stopped.Add(1)
+		go func() {
+			defer stopped.Done()
+			service.StopRecording()
+		}()
+		for !slices.Contains(engine.entries(), "stop") {
+			time.Sleep(time.Millisecond)
+		}
+		service.Close()
+	}
+	close(gate)
+	stopped.Wait()
+
+	for i, engine := range engines {
+		if got := commands(engine.entries(), "close"); len(got) != 1 {
+			t.Errorf("engine %d left to its take was closed %d times: %v", i, len(got), engine.entries())
+		}
+	}
+}
+
+func TestSwitchingToAHostedEngineFreesAKeptModel(t *testing.T) {
+	service, fake, cfg := newTestService(t, true)
+	if err := service.Prepare(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg.Engine = config.SpeechRemote
+	if err := service.Prepare(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands(fake.entries(), "unload"); len(got) != 1 {
+		t.Errorf("unload commands = %v, want the kept model freed once the hosted engine is chosen", got)
+	}
+
+	cfg.Engine = config.SpeechLocal
+	if err := service.Prepare(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands(fake.entries(), "use"); len(got) != 2 {
+		t.Errorf("use commands = %v, want the model loaded again on switching back", got)
 	}
 }

@@ -121,7 +121,21 @@ func holdCallbackGateway(action *C.char, down C.int) {
 	dispatchHoldUp(name)
 }
 
+// A hold that starts while hotkeys are off, as during capture, is the keys being recorded; its
+// release is still delivered, so a hold begun before the capture ends.
 func dispatchHoldDown(action string) {
+	globalFFIMu.Lock()
+	manager := globalFFIHotkeyManager
+	globalFFIMu.Unlock()
+	if manager != nil {
+		manager.mu.Lock()
+		disabled := manager.disabled
+		manager.mu.Unlock()
+		if disabled {
+			return
+		}
+	}
+
 	holdMu.Lock()
 	binding, ok := holdBindings[action]
 	if !ok {

@@ -177,3 +177,25 @@ func TestForgettingAnIdleBindingIsSilent(t *testing.T) {
 		t.Fatalf("saw %v for a binding that was never pressed", edges)
 	}
 }
+
+// Capturing a shortcut turns hotkeys off; pressing the dictate keys then must not open the microphone.
+func TestAHoldDoesNotStartWhileHotkeysAreOff(t *testing.T) {
+	log := bind(t, "dictate")
+	globalFFIMu.Lock()
+	before := globalFFIHotkeyManager
+	globalFFIHotkeyManager = &FFIHotkeyManager{disabled: true}
+	globalFFIMu.Unlock()
+	t.Cleanup(func() {
+		globalFFIMu.Lock()
+		globalFFIHotkeyManager = before
+		globalFFIMu.Unlock()
+	})
+
+	dispatchHoldDown("dictate")
+	dispatchHoldUp("dictate")
+	settle()
+
+	if edges := log.seen(); len(edges) != 0 {
+		t.Fatalf("a hold reached the handler while hotkeys were off: %v", edges)
+	}
+}

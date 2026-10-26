@@ -2,15 +2,21 @@ package ai
 
 import "strings"
 
-// The reply is pasted into the user's text, so a fence or quotes wrapping all of it are stripped.
-func CleanResponse(raw string) string {
+// The reply is pasted into the user's text, so a fence or quotes wrapping all of it are stripped,
+// unless the source text came wrapped the same way and the model rightly kept it.
+func CleanResponse(raw, source string) string {
 	text := strings.TrimSpace(raw)
 	if text == "" {
 		return ""
 	}
+	source = strings.TrimSpace(source)
 
-	text = stripCodeFence(text)
-	text = stripWrappingQuotes(text)
+	if stripped := stripCodeFence(text); stripped == text || stripCodeFence(source) == source {
+		text = stripped
+	}
+	if !quoted(source) {
+		text = stripWrappingQuotes(text)
+	}
 
 	return strings.TrimSpace(text)
 }
@@ -73,4 +79,24 @@ func stripWrappingQuotes(text string) string {
 	}
 
 	return text
+}
+
+// Every pair a selection may open and close with, wider than what is stripped, since a translation
+// may rightly swap „…“ or 「…」 for the target language's own quotes.
+var sourceQuotePairs = append([][2]rune{
+	{'„', '“'}, {'‚', '‘'}, {'»', '«'}, {'‹', '›'}, {'「', '」'}, {'『', '』'}, {'‘', '’'},
+}, quotePairs...)
+
+// quoted reads only the ends, so a quotation with quotes inside it still counts.
+func quoted(source string) bool {
+	runes := []rune(source)
+	if len(runes) < 2 {
+		return false
+	}
+	for _, pair := range sourceQuotePairs {
+		if runes[0] == pair[0] && runes[len(runes)-1] == pair[1] {
+			return true
+		}
+	}
+	return false
 }

@@ -149,8 +149,9 @@ func defaultHotkeys() map[ActionKind]string {
 	switch runtime.GOOS {
 	case "darwin":
 		return map[ActionKind]string{
-			ActionReviseSelection:    "ctrl+cmd",
-			ActionReviseEverything:   "ctrl+option+space",
+			ActionReviseSelection: "ctrl+cmd",
+			// Not ctrl+option+space, which macOS keeps for "select next input source".
+			ActionReviseEverything:   "ctrl+option+r",
 			ActionTranslateSelection: "ctrl+option+g",
 			ActionDictate:            "ctrl+shift+space",
 			ActionAskByVoice:         "ctrl+option+a",

@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/paradoxe35/encre/internal/config"
+	"github.com/paradoxe35/encre/internal/stt/pcm"
 )
 
 const (
 	remoteSampleRate     = 16_000 // what encre_stt_stop_pcm delivers
 	remoteBitsPerSample  = 16
 	remoteChannels       = 1
+	wavHeaderBytes       = 44
 	remoteMaxAudioBytes  = 25 * 1024 * 1024 // OpenAI and Groq's free tier both cap uploads here
 	remoteRequestTimeout = 3 * time.Minute
 
@@ -32,13 +34,52 @@ var errUndecryptableKey = errors.New("the saved API key could not be decrypted; 
 
 var remoteClient = &http.Client{Timeout: remoteRequestTimeout}
 
-// pcm is headerless 16-bit signed little-endian mono at remoteSampleRate.
-func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) (string, error) {
+// audio is headerless 16-bit signed little-endian mono at remoteSampleRate. A take over what one
+// request may carry is sent in pieces cut at pauses; one failing on the service's side does not cost
+// the others, whose text comes back with the error.
+func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, audio []byte) (string, error) {
 	// Nothing was heard: a header-only file costs a request, and some services reject it as too short.
-	if len(pcm) == 0 {
+	if len(audio) == 0 {
 		return "", nil
 	}
-	wav := wavFile(pcm)
+
+	pieces := pcm.Split(audio, remotePieceBytes(cfg), remoteSampleRate)
+	failures := pcm.NewFailures(len(pieces))
+	var parts []string
+	for i, piece := range pieces {
+		pieceCtx, cancel := context.WithTimeout(ctx, remoteRequestTimeout)
+		text, err := transcribeWAV(pieceCtx, cfg, wavFile(piece))
+		cancel()
+		if err != nil {
+			if !failures.Failed(i, err) {
+				break
+			}
+			continue
+		}
+		failures.Succeeded()
+		parts = append(parts, text)
+	}
+	return pcm.Join(parts), failures.Err()
+}
+
+// remoteUploadSafeBytes keeps a piece under both OpenAI's 25 MiB, which counts the whole form, and
+// a 25 MB read as millions, with room for the form's other fields.
+const remoteUploadSafeBytes = 25_000_000 - 64<<10
+
+// remotePieceBytes is the most audio one request carries, less its WAV header; Gemini sends it
+// as base64, a third larger.
+func remotePieceBytes(cfg config.SpeechConfig) int {
+	if protocolFor(cfg.RemoteProvider) == ProtocolGemini {
+		limit := geminiMaxRequestBytes
+		if IsGeminiTranscribeModel(cfg.RemoteModel) {
+			limit = interactionsMaxRequestBytes
+		}
+		return limit/4*3 - wavHeaderBytes
+	}
+	return remoteUploadSafeBytes - wavHeaderBytes
+}
+
+func transcribeWAV(ctx context.Context, cfg config.SpeechConfig, wav []byte) (string, error) {
 	if protocolFor(cfg.RemoteProvider) == ProtocolGemini {
 		return geminiTranscribe(ctx, cfg, wav)
 	}
@@ -78,7 +119,10 @@ func RemoteTranscribe(ctx context.Context, cfg config.SpeechConfig, pcm []byte) 
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("hosted service returned %s: %s", resp.Status, remoteErrorMessage(respBody, resp.Status))
+		return "", &remoteStatusError{
+			status:  resp.StatusCode,
+			message: fmt.Sprintf("hosted service returned %s: %s", resp.Status, remoteErrorMessage(respBody, resp.Status)),
+		}
 	}
 
 	return parseRemoteResponse(respBody)
@@ -113,12 +157,17 @@ func remoteRequestBody(cfg config.SpeechConfig, wav []byte) (io.Reader, string, 
 	return &buf, writer.FormDataContentType(), nil
 }
 
-// gpt- transcribe models take a repeated languages[]; everything else takes language.
+// Only gpt-transcribe takes a repeated languages[]; gpt-4o-transcribe and the rest keep the one language.
 func remoteLanguageField(model string) string {
-	if strings.HasPrefix(strings.ToLower(model), "gpt-") {
+	if isGPTTranscribe(model) {
 		return "languages[]"
 	}
 	return "language"
+}
+
+func isGPTTranscribe(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return model == "gpt-transcribe" || strings.HasPrefix(model, "gpt-transcribe-")
 }
 
 // Falls back to the raw value for a key stored in plaintext.
@@ -209,7 +258,7 @@ func wavHeader(dataLen int) []byte {
 	byteRate := remoteSampleRate * remoteChannels * remoteBitsPerSample / 8
 	blockAlign := remoteChannels * remoteBitsPerSample / 8
 
-	buf := make([]byte, 44)
+	buf := make([]byte, wavHeaderBytes)
 	copy(buf[0:4], "RIFF")
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(36+dataLen))
 	copy(buf[8:12], "WAVE")

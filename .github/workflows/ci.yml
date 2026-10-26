@@ -1,0 +1,163 @@
+name: CI
+
+# Pull requests are tested once, and main again after a merge; a push to a PR branch is the PR's run.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same PR replaces the run still going; every merge to main keeps its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  RUST_VERSION: "stable"
+  # Same AVX2 baseline as the release build, so the tests run the code that ships; inert on arm64.
+  TRANSCRIBE_CMAKE_ARGS: >-
+    -DGGML_NATIVE=OFF
+    -DGGML_SSE42=ON
+    -DGGML_AVX=ON
+    -DGGML_AVX2=ON
+    -DGGML_FMA=ON
+    -DGGML_F16C=ON
+    -DGGML_BMI2=ON
+  # Fyne 2.8 needs macOS 11, as the release build targets.
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    # One platform failing still lets the others report.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rust_target: ""
+            rust_out: rust-ffi/target/release
+          - os: macos-latest
+            rust_target: ""
+            rust_out: rust-ffi/target/release
+          # The Go toolchain links with MinGW, so the library is built for the GNU target, as released.
+          - os: windows-latest
+            rust_target: x86_64-pc-windows-gnu
+            rust_out: rust-ffi/target/x86_64-pc-windows-gnu/release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TARGET_ARG: ${{ matrix.rust_target && format('--target {0}', matrix.rust_target) || '' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy, rustfmt
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust-ffi/target/
+          key: ${{ runner.os }}-ci-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ci-cargo-
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            xvfb \
+            libasound2-dev \
+            libgl1-mesa-dev \
+            libwayland-dev \
+            xorg-dev \
+            libx11-dev \
+            libxkbfile-dev \
+            libxtst-dev \
+            libxdo-dev \
+            libxi-dev \
+            libpng-dev \
+            libjpeg-dev \
+            libxinerama-dev \
+            libxcb-xkb-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-x11-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libxfixes-dev \
+            libxxf86vm-dev \
+            libxkbcommon-dev
+
+      - name: Install MinGW
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install mingw -y --no-progress
+
+      - name: Check Rust formatting
+        working-directory: rust-ffi
+        run: cargo fmt --check
+
+      # On Windows the build script gives ggml's archives the lib prefix rustc links by.
+      - name: Build Rust FFI library
+        run: |
+          bash scripts/build-rust-ffi.sh ${{ matrix.rust_target }}
+          mkdir -p lib
+          cp ${{ matrix.rust_out }}/libencre_ffi.a lib/
+
+      # In release, through the same script, so the tests link against archives it can rename too.
+      - name: Rust tests
+        run: bash scripts/build-rust-ffi.sh --test ${{ matrix.rust_target }}
+
+      - name: Rust lints
+        working-directory: rust-ffi
+        run: cargo clippy --all-targets $CARGO_TARGET_ARG
+
+      - name: Check Go formatting
+        run: |
+          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          if [ -n "$unformatted" ]; then
+            echo "Run gofmt on:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Go vet
+        env:
+          CGO_ENABLED: 1
+        run: go vet ./...
+
+      # The clipboard and window tests need an X server on Linux; -noreset keeps it up between one
+      # test's last connection and the next test's first, which a reset would refuse.
+      - name: Go tests with the race detector
+        env:
+          CGO_ENABLED: 1
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" go test -race -count=1 ./...
+          else
+            go test -race -count=1 ./...
+          fi

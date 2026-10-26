@@ -55,7 +55,6 @@ func (w *MainWindow) createSystemSection() fyne.CanvasObject {
 	if version.IsProduction(w.app) {
 		versionLabel := widget.NewLabel(fmt.Sprintf("Version: %s", version.GetVersion(w.app)))
 		versionLabel.TextStyle.Italic = true
-		versionLabel.Importance = widget.LowImportance
 
 		form.Add(widget.NewSeparator())
 		form.Add(container.NewPadded(versionLabel))
@@ -77,7 +76,7 @@ func (w *MainWindow) createIndicatorControls() fyne.CanvasObject {
 	voice.Disable()
 	text.Disable()
 	hint := widget.NewLabel("Not available on Wayland.")
-	hint.Importance = widget.LowImportance
+	hint.TextStyle.Italic = true
 	return container.NewVBox(voice, text, hint)
 }
 
@@ -87,7 +86,7 @@ func (w *MainWindow) createUpdateControls() fyne.CanvasObject {
 
 	if w.updates == nil {
 		hint := widget.NewLabel("Updates are checked in release builds.")
-		hint.Importance = widget.LowImportance
+		hint.TextStyle.Italic = true
 		return container.NewVBox(label, hint)
 	}
 	return container.NewVBox(label, w.updates.content())
@@ -111,7 +110,27 @@ func (w *MainWindow) createPasteShortcutControls() fyne.CanvasObject {
 }
 
 func (w *MainWindow) applyTheme(themeName string) {
+	if w.themeApplied != nil && *w.themeApplied == themeName {
+		return
+	}
+	w.themeApplied = &themeName
 	w.app.Settings().SetTheme(newAppTheme(themeVariant(themeName)))
+}
+
+// watchTheme marks the tabs off screen at any theme change, the system's own included, so their
+// first visit re-applies it: Fyne re-themes only the tab on screen.
+func (w *MainWindow) watchTheme() {
+	w.app.Settings().AddListener(func(fyne.Settings) {
+		if w.reapplyingTheme || w.tabs == nil {
+			return
+		}
+		w.themeStale = make(map[*container.TabItem]bool)
+		for _, tab := range w.tabs.Items {
+			if tab != w.tabs.Selected() {
+				w.themeStale[tab] = true
+			}
+		}
+	})
 }
 
 // themeVariant is the variant a theme setting pins, or nil when it follows the system.
@@ -128,8 +147,11 @@ func themeVariant(themeName string) *fyne.ThemeVariant {
 	return &variant
 }
 
+// systemAutoStart is the login item; tests swap it, so they never add or remove the real one.
+var systemAutoStart = platform.GetAutoStart
+
 func (w *MainWindow) applyAutoStartSetting(enabled bool) {
-	autoStart := platform.GetAutoStart()
+	autoStart := systemAutoStart()
 
 	if enabled {
 		if err := autoStart.Enable(); err != nil {

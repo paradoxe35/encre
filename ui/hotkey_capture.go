@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image/color"
 	"runtime"
 	"strings"
@@ -34,13 +35,30 @@ type HotkeyCapture struct {
 	savePressed bool
 	mu          sync.Mutex
 
-	pressedKeys map[fyne.KeyName]bool
-	modifiers   map[fyne.KeyModifier]bool
+	// pressedKeys holds the key by the name the listener reads, see bindingKey.
+	pressedKeys map[string]bool
+	// lastScancode is the key KeyDown saw last, which a shortcut event arriving after it does not carry.
+	lastScancode int
+	modifiers    map[fyne.KeyModifier]bool
 }
 
 type captureEntry struct {
 	widget.Entry
 	parent *HotkeyCapture
+}
+
+// Tab is a key to record while capturing, not a move to the next field that would end the capture.
+func (e *captureEntry) AcceptsTab() bool {
+	e.parent.mu.Lock()
+	defer e.parent.mu.Unlock()
+	return e.parent.isCapturing
+}
+
+func (e *captureEntry) KeyDown(key *fyne.KeyEvent) {
+	e.parent.mu.Lock()
+	e.parent.lastScancode = key.Physical.ScanCode
+	e.parent.mu.Unlock()
+	e.Entry.KeyDown(key)
 }
 
 func (e *captureEntry) TypedKey(key *fyne.KeyEvent) {
@@ -172,7 +190,7 @@ const unsetHotkeyText = "Click 'Capture' to set"
 func NewHotkeyCapture(binding binding.String) *HotkeyCapture {
 	h := &HotkeyCapture{
 		binding:     binding,
-		pressedKeys: make(map[fyne.KeyName]bool),
+		pressedKeys: make(map[string]bool),
 		modifiers:   make(map[fyne.KeyModifier]bool),
 	}
 
@@ -181,7 +199,7 @@ func NewHotkeyCapture(binding binding.String) *HotkeyCapture {
 	h.displayLabel.TextStyle.Monospace = true
 
 	h.entry = &captureEntry{parent: h}
-	h.entry.PlaceHolder = "Press keys in sequence (Esc to cancel, Enter to save)"
+	h.entry.PlaceHolder = "Press keys… (Esc/Enter)"
 	h.entry.TextStyle.Bold = true
 	h.entry.TextStyle.Monospace = true
 	h.entry.Hide()
@@ -239,7 +257,7 @@ func (h *HotkeyCapture) startCapture() {
 		h.onCaptureStart()
 	}
 
-	h.pressedKeys = make(map[fyne.KeyName]bool)
+	h.pressedKeys = make(map[string]bool)
 	h.modifiers = make(map[fyne.KeyModifier]bool)
 
 	h.displayLabel.Hide()
@@ -327,8 +345,8 @@ func (h *HotkeyCapture) recordCombo(modifiers fyne.KeyModifier, key fyne.KeyName
 			h.modifiers[modifier] = true
 		}
 	}
-	if !isModifierKey(key) {
-		h.pressedKeys = map[fyne.KeyName]bool{key: true}
+	if name := bindingKey(key, h.lastScancode); !isModifierKey(key) && registrableKeys[name] {
+		h.pressedKeys = map[string]bool{name: true}
 	}
 	h.updateDisplay()
 }
@@ -364,8 +382,8 @@ func (h *HotkeyCapture) handleKeyPress(key *fyne.KeyEvent) {
 		h.modifiers[fyne.KeyModifierSuper] = true
 	default:
 		// Only one non-modifier key is kept; a saved combo only ever matches modifiers plus one key.
-		if !isModifierKey(key.Name) {
-			h.pressedKeys = map[fyne.KeyName]bool{key.Name: true}
+		if name := bindingKey(key.Name, key.Physical.ScanCode); !isModifierKey(key.Name) && registrableKeys[name] {
+			h.pressedKeys = map[string]bool{name: true}
 		}
 	}
 
@@ -392,8 +410,8 @@ func (h *HotkeyCapture) combo() string {
 	if h.modifiers[fyne.KeyModifierSuper] {
 		parts = append(parts, getSuperName())
 	}
-	for keyName := range h.pressedKeys {
-		parts = append(parts, keyNameToString(keyName))
+	for name := range h.pressedKeys {
+		parts = append(parts, name)
 	}
 	return strings.Join(parts, "+")
 }
@@ -401,7 +419,7 @@ func (h *HotkeyCapture) combo() string {
 func (h *HotkeyCapture) saveHotkey() bool {
 	valid := len(h.modifiers) > 0 && (len(h.pressedKeys) > 0 || isModifierOnlyAllowed(h.modifiers))
 	if !valid {
-		h.entry.SetText("Invalid combination (need modifier + key)")
+		h.entry.SetText("Needs a modifier + key")
 		return false
 	}
 
@@ -430,11 +448,13 @@ func (h *HotkeyCapture) clearHotkey() {
 	h.UpdateFromBinding()
 }
 
+// Kept in place when there is nothing to clear, so every row's Capture button lines up.
 func (h *HotkeyCapture) syncClearButton() {
+	h.clearBtn.Show()
 	if value, _ := h.binding.Get(); value != "" {
-		h.clearBtn.Show()
+		h.clearBtn.Enable()
 	} else {
-		h.clearBtn.Hide()
+		h.clearBtn.Disable()
 	}
 }
 
@@ -467,10 +487,34 @@ func isModifierOnlyAllowed(mods map[fyne.KeyModifier]bool) bool {
 	return mods[fyne.KeyModifierControl] && mods[fyne.KeyModifierSuper]
 }
 
+// The keys the hotkey listener knows by name; others, such as ö or numpad keys, would be saved as
+// a name it cannot read, or as nothing at all.
+var registrableKeys = func() map[string]bool {
+	keys := map[string]bool{
+		"space": true, "return": true, "escape": true, "tab": true, "backspace": true, "delete": true,
+		"insert": true, "home": true, "end": true, "pageup": true, "pagedown": true,
+		"up": true, "down": true, "left": true, "right": true,
+	}
+	for c := 'a'; c <= 'z'; c++ {
+		keys[string(c)] = true
+	}
+	for c := '0'; c <= '9'; c++ {
+		keys[string(c)] = true
+	}
+	for i := 1; i <= 12; i++ {
+		keys[fmt.Sprintf("f%d", i)] = true
+	}
+	return keys
+}()
+
 func keyNameToString(key fyne.KeyName) string {
 	keyStr := strings.ToLower(string(key))
 
 	switch key {
+	case fyne.KeyPageUp:
+		return "pageup"
+	case fyne.KeyPageDown:
+		return "pagedown"
 	case fyne.KeySpace:
 		return "space"
 	case fyne.KeyEscape:

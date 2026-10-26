@@ -158,17 +158,42 @@ func Search(query string) []Language {
 	return append(prefix, contains...)
 }
 
+// Old and macro codes a system locale may carry, under the code the list uses.
+var localeAliases = map[string]string{"iw": "he", "in": "id", "no": "nb", "nn": "nb"}
+
 // The secondary is English or French, whichever the primary is not.
 func Defaults(localeTag string) (primary, secondary string) {
 	primary = "en"
 	if IsKnown(localeTag) {
 		primary = Find(localeTag).Code
-	} else if base, _, found := strings.Cut(localeTag, "-"); found && IsKnown(base) {
-		primary = Find(base).Code
+	} else if code := localeCode(localeTag); IsKnown(code) {
+		primary = Find(code).Code
 	}
 
 	if strings.EqualFold(primary, "en") {
 		return primary, "fr"
 	}
 	return primary, "en"
+}
+
+// localeCode reads a system locale such as zh-CN, zh_TW or iw-IL as a code of the list.
+func localeCode(tag string) string {
+	parts := strings.FieldsFunc(strings.ToLower(tag), func(r rune) bool { return r == '-' || r == '_' })
+	if len(parts) == 0 {
+		return ""
+	}
+	base := parts[0]
+	if alias, ok := localeAliases[base]; ok {
+		return alias
+	}
+	if base == "zh" {
+		for _, part := range parts[1:] {
+			switch part {
+			case "hant", "tw", "hk", "mo":
+				return "zh-Hant"
+			}
+		}
+		return "zh-Hans"
+	}
+	return base
 }

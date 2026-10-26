@@ -348,7 +348,7 @@ func (c *AnswerCard) render() {
 	} else {
 		c.reading.Show()
 	}
-	setVisible(c.copy, c.text != "")
+	setVisible(c.copy, strings.TrimSpace(c.text) != "")
 
 	if size := c.fit(); size != c.target {
 		c.resizeTo(size)
@@ -377,7 +377,7 @@ func (c *AnswerCard) segments() []widget.RichTextSegment {
 	}
 	switch {
 	case c.text != "":
-		segments = append(segments, adopt(c.content, widget.NewRichTextFromMarkdown(c.text).Segments)...)
+		segments = append(segments, adopt(c.content, c.scroll, markdownSegments(c.text))...)
 	case c.status != "":
 		for _, line := range strings.Split(c.status, "\n") {
 			segments = append(segments, &widget.TextSegment{Text: line + "…", Style: mutedStyle()})
@@ -500,6 +500,7 @@ func (c *AnswerCard) build() {
 	c.selection.scroll = c.scroll
 	c.selection.later = func(wait time.Duration, run func()) { c.later(wait, run) }
 	c.reading = container.NewThemeOverride(c.scroll, c.readingTheme())
+	lendCardLinks(c.reading.Theme)
 
 	c.input = newQuestionEntry(c.submit, c.Hide, c.browse, func() { c.copySelection(c.selection.SelectedText()) })
 	c.input.TextStyle.Monospace = designFor(c.style).monospace
@@ -592,6 +593,7 @@ func (c *AnswerCard) retheme() {
 	}
 	c.look.Theme = c.cardTheme()
 	c.reading.Theme = c.readingTheme()
+	lendCardLinks(c.reading.Theme)
 	c.look.Refresh()
 	if c.visible {
 		c.render()
@@ -919,6 +921,12 @@ func (e *questionEntry) KeyDown(key *fyne.KeyEvent) {
 		e.shift = true
 	}
 	e.Entry.KeyDown(key)
+}
+
+// Shift let go after focus moved on never reaches KeyUp here.
+func (e *questionEntry) FocusLost() {
+	e.shift = false
+	e.Entry.FocusLost()
 }
 
 func (e *questionEntry) KeyUp(key *fyne.KeyEvent) {

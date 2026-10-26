@@ -262,6 +262,11 @@ pub unsafe extern "C" fn encre_stt_stop_pcm(handle: SttHandle, out_len: *mut usi
                 return std::ptr::null_mut();
             }
         };
+        // A microphone that never opened is the error, not a take with nothing said.
+        if let Err(message) = &stopped.text {
+            set_last_error(message.clone());
+            return std::ptr::null_mut();
+        }
 
         let bytes = pcm16_bytes(&stopped.speech.samples).into_boxed_slice();
         let len = bytes.len();

@@ -226,12 +226,36 @@ func TestShippedDefaultsAreUnchanged(t *testing.T) {
 func TestDefaultHotkeysMatchWhatShipped(t *testing.T) {
 	actions := DefaultActions()
 
-	want := map[ActionKind]string{
-		ActionReviseEverything:   "ctrl+alt+space",
-		ActionTranslateSelection: "ctrl+alt+g",
+	// What each platform shipped: a changed default would move a hotkey users already learned.
+	shipped := map[string]map[ActionKind]string{
+		"darwin": {
+			ActionReviseSelection:    "ctrl+cmd",
+			ActionReviseEverything:   "ctrl+option+r",
+			ActionTranslateSelection: "ctrl+option+g",
+			ActionDictate:            "ctrl+shift+space",
+			ActionAskByVoice:         "ctrl+option+a",
+			ActionAskByTyping:        "ctrl+option+k",
+		},
+		"windows": {
+			ActionReviseSelection:    "ctrl+win",
+			ActionReviseEverything:   "ctrl+alt+space",
+			ActionTranslateSelection: "ctrl+alt+g",
+			ActionDictate:            "ctrl+shift+space",
+			ActionAskByVoice:         "ctrl+alt+a",
+			ActionAskByTyping:        "ctrl+alt+k",
+		},
+		"linux": {
+			ActionReviseSelection:    "ctrl+super",
+			ActionReviseEverything:   "ctrl+alt+space",
+			ActionTranslateSelection: "ctrl+alt+g",
+			ActionDictate:            "ctrl+shift+space",
+			ActionAskByVoice:         "ctrl+alt+a",
+			ActionAskByTyping:        "ctrl+alt+k",
+		},
 	}
-	if runtime.GOOS == "linux" {
-		want[ActionReviseSelection] = "ctrl+super"
+	want, ok := shipped[runtime.GOOS]
+	if !ok {
+		want = shipped["linux"]
 	}
 
 	for kind, binding := range want {
@@ -261,5 +285,23 @@ func TestMemoryCountsTheQuestionAndStaysInRange(t *testing.T) {
 		if got := (OperationConfig{Memory: memory}).Remembered(); got != want {
 			t.Errorf("memory %d remembers %d earlier questions, want %d", memory, got, want)
 		}
+	}
+}
+
+func TestAClearedHotkeyAndADisabledActionStayThatWay(t *testing.T) {
+	cfg := &Config{Actions: map[ActionKind]ActionConfig{
+		ActionReviseSelection:    {Enabled: false, Hotkey: ""},
+		ActionTranslateSelection: {Enabled: true, Hotkey: ""},
+	}}
+	cfg.applyDefaults()
+
+	if got := cfg.Actions[ActionReviseSelection]; got.Enabled || got.Hotkey != "" {
+		t.Errorf("the cleared, disabled revise came back as %+v", got)
+	}
+	if got := cfg.Actions[ActionTranslateSelection]; !got.Enabled || got.Hotkey != "" {
+		t.Errorf("the enabled translate without a hotkey came back as %+v", got)
+	}
+	if got := cfg.Actions[ActionDictate]; got.Hotkey == "" {
+		t.Error("a missing action did not get its default hotkey")
 	}
 }

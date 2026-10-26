@@ -206,6 +206,17 @@ const KEYS: &[(Key, &str)] = &[
     (Key::Num7, "7"),
     (Key::Num8, "8"),
     (Key::Num9, "9"),
+    // The recorder names a numpad digit like the top row's, so either key fires the binding.
+    (Key::Kp0, "0"),
+    (Key::Kp1, "1"),
+    (Key::Kp2, "2"),
+    (Key::Kp3, "3"),
+    (Key::Kp4, "4"),
+    (Key::Kp5, "5"),
+    (Key::Kp6, "6"),
+    (Key::Kp7, "7"),
+    (Key::Kp8, "8"),
+    (Key::Kp9, "9"),
     (Key::Space, "space"),
     (Key::Return, "return"),
     (Key::KpReturn, "return"),
@@ -253,11 +264,14 @@ const STANDALONE_KEY: &str = "escape";
 
 /// A modifier is required, or the binding would fire on ordinary typing.
 fn parse_binding(binding: &str) -> Result<(Modifiers, Option<&'static str>), String> {
-    let parts: Vec<&str> = binding
-        .split('+')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect();
+    if binding.trim().is_empty() {
+        return Err("binding is empty".to_string());
+    }
+    // An empty part is a key the recorder could not name, not one to drop: "ctrl+alt+" is not ctrl+alt.
+    let parts: Vec<&str> = binding.split('+').map(str::trim).collect();
+    if parts.iter().any(|part| part.is_empty()) {
+        return Err(format!("'{binding}' has a key with no name"));
+    }
     let Some((last, leading)) = parts.split_last() else {
         return Err("binding is empty".to_string());
     };
@@ -332,9 +346,16 @@ struct ListenerState {
     /// The largest modifier set held since the last time every modifier was up.
     chord: Modifiers,
     interrupted: bool,
-    /// Tracked so auto-repeat is not read as a second press.
-    held_key: Option<&'static str>,
-    holding: Option<&'static str>,
+    /// Tracked by key, not name, so auto-repeat is not read as a second press and numpad 1 and the
+    /// top-row 1, which share a name, do not end each other's hold.
+    held_key: Option<Key>,
+    /// Every hold still down, by the key that started it and its action, so each gets its own release.
+    holding: Vec<(Key, String)>,
+    /// Windows types AltGr as a made-up left Ctrl then right Alt, which must not read as Ctrl+Alt.
+    /// The made-up Ctrl is kept out of `held`; a right Alt while it is down is typing, not Alt.
+    fake_ctrl: bool,
+    /// Set while an AltGr press is being read as typing, so its release is ignored too.
+    typing_altgr: bool,
     delivery_announced: bool,
     unmatched_announced: Vec<&'static str>,
     /// Asked before each key event, for a listener that can miss a modifier's release.
@@ -363,6 +384,10 @@ impl ListenerState {
         let Some(is_down) = self.modifier_is_down else {
             return;
         };
+        // The made-up Ctrl's release may be lost like any other, and would make every right Alt typing.
+        if self.fake_ctrl && !is_down(Modifier::Ctrl) {
+            self.fake_ctrl = false;
+        }
         for modifier in MODIFIERS {
             if self.held.get(modifier) && !is_down(modifier) {
                 self.held.set(modifier, false);
@@ -423,6 +448,11 @@ impl ListenerState {
     }
 
     fn on_press(&mut self, key: Key, bindings: &Mutex<Vec<HotkeyBinding>>) {
+        if key == Key::AltGr && self.fake_ctrl {
+            self.typing_altgr = true;
+            self.interrupted = true;
+            return;
+        }
         if let Some(modifier) = Modifier::from_key(&key) {
             self.modifier_down(modifier);
             return;
@@ -432,10 +462,11 @@ impl ListenerState {
             self.interrupted = true;
             return;
         };
-        if self.held_key == Some(name) {
+        // Auto-repeat, or a second key of the same name (numpad and top-row 1) while the first is down.
+        if self.held_key.and_then(|held| key_name(&held)) == Some(name) {
             return;
         }
-        self.held_key = Some(name);
+        self.held_key = Some(key);
         self.interrupted = true;
 
         // Logged once, without naming the key, to prove key events arrive at all.
@@ -451,7 +482,7 @@ impl ListenerState {
                 fire(binding, true);
                 fired = true;
                 if binding.is_hold() {
-                    self.holding = Some(name);
+                    self.holding.push((key, binding.action.clone()));
                 }
             }
         }
@@ -461,18 +492,24 @@ impl ListenerState {
     }
 
     fn on_release(&mut self, key: Key, bindings: &Mutex<Vec<HotkeyBinding>>) {
+        if key == Key::AltGr && self.typing_altgr {
+            self.typing_altgr = false;
+            return;
+        }
         let Some(modifier) = Modifier::from_key(&key) else {
-            let name = key_name(&key);
-            if self.held_key == name {
+            if self.held_key == Some(key) {
                 self.held_key = None;
             }
             // A modifier released first is a slipped finger, not the end of the hold.
-            if let (Some(name), Some(holding)) = (name, self.holding)
-                && name == holding
-            {
-                self.holding = None;
+            let (ended, still): (Vec<_>, Vec<_>) = std::mem::take(&mut self.holding)
+                .into_iter()
+                .partition(|(held, _)| *held == key);
+            self.holding = still;
+            if !ended.is_empty() {
                 for binding in bindings.lock().iter() {
-                    if binding.is_hold() && binding.key == Some(name) {
+                    if binding.is_hold()
+                        && ended.iter().any(|(_, action)| *action == binding.action)
+                    {
                         fire(binding, false);
                     }
                 }
@@ -618,6 +655,15 @@ impl SimpleHotkeyManager {
                 let mut dispatch = move |event: &Event| {
                     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         if !*active_flag.lock() {
+                            return;
+                        }
+                        // AltGr's made-up left Ctrl carries scan code 0x21D, a real one 0x1D.
+                        #[cfg(target_os = "windows")]
+                        if let EventType::KeyPress(Key::ControlLeft)
+                        | EventType::KeyRelease(Key::ControlLeft) = event.event_type
+                            && event.position_code & 0x200 != 0
+                        {
+                            state.fake_ctrl = matches!(event.event_type, EventType::KeyPress(_));
                             return;
                         }
                         state.process(event.event_type, &bindings);
@@ -886,9 +932,11 @@ mod tests {
         Click,
         /// Released where the listener cannot see, as on the Ctrl+Alt+Del screen.
         Unheard(Key),
+        /// The left Ctrl Windows makes up for AltGr, told apart by its scan code.
+        FakeCtrl(bool),
     }
 
-    use Tap::{Click, Down, Unheard, Up};
+    use Tap::{Click, Down, FakeCtrl, Unheard, Up};
 
     /// What the system reports, updated only after the listener has seen the event.
     static PHYSICAL: Mutex<Modifiers> = Mutex::new(Modifiers {
@@ -936,6 +984,11 @@ mod tests {
                 Up(key) => Some(EventType::KeyRelease(*key)),
                 Click => Some(EventType::ButtonPress(Button::Left)),
                 Unheard(_) => None,
+                FakeCtrl(down) => {
+                    state.fake_ctrl = *down;
+                    PHYSICAL.lock().set(Modifier::Ctrl, *down);
+                    None
+                }
             };
             if let Some(event) = event {
                 state.process(event, &manager.bindings);
@@ -1433,6 +1486,117 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[test]
+    fn typing_an_altgr_character_on_windows_is_not_ctrl_alt() {
+        let bindings = [("ctrl+alt+a", "ask")];
+        let altgr_a = [
+            FakeCtrl(true),
+            Down(Key::AltGr),
+            Down(Key::KeyA),
+            Up(Key::KeyA),
+            Up(Key::AltGr),
+            FakeCtrl(false),
+        ];
+        assert!(
+            fired_on_windows(&bindings, &altgr_a).is_empty(),
+            "AltGr+A ran the action"
+        );
+
+        for real in [Key::Alt, Key::AltGr] {
+            let taps = [Down(Key::ControlLeft), Down(real), Down(Key::KeyA)];
+            assert_eq!(
+                fired_on_windows(&bindings, &taps),
+                vec!["ask"],
+                "left Ctrl with {real:?}"
+            );
+        }
+
+        let lost = [
+            FakeCtrl(true),
+            Unheard(Key::ControlLeft),
+            Down(Key::KeyB),
+            Up(Key::KeyB),
+            Down(Key::AltGr),
+            Down(Key::Space),
+        ];
+        assert_eq!(
+            fired_on_windows(&[("alt+space", "revise")], &lost),
+            vec!["revise"],
+            "a lost made-up Ctrl kept right Alt from being Alt"
+        );
+    }
+
+    #[test]
+    fn letting_go_of_one_key_does_not_end_the_hold_of_another_with_its_name() {
+        let _serial = SERIAL.lock();
+        FIRED.lock().clear();
+        let mut manager = SimpleHotkeyManager::new();
+        manager
+            .register_hold("ctrl+1".to_string(), "dictate".to_string(), record_edge)
+            .unwrap();
+        let mut state = ListenerState::default();
+        for event in [
+            EventType::KeyPress(Key::ControlLeft),
+            EventType::KeyPress(Key::Kp1),
+            EventType::KeyPress(Key::Num1),
+            EventType::KeyRelease(Key::Num1),
+            EventType::KeyPress(Key::Kp1),
+        ] {
+            state.process(event, &manager.bindings);
+        }
+        assert_eq!(
+            *FIRED.lock(),
+            vec!["dictate:1"],
+            "the hold restarted or ended early"
+        );
+    }
+
+    #[test]
+    fn two_holds_down_at_once_each_get_their_release() {
+        let _serial = SERIAL.lock();
+        FIRED.lock().clear();
+        let mut manager = SimpleHotkeyManager::new();
+        for (binding, action) in [("ctrl+alt+d", "dictate"), ("ctrl+alt+a", "ask")] {
+            manager
+                .register_hold(binding.to_string(), action.to_string(), record_edge)
+                .unwrap();
+        }
+        let mut state = ListenerState::default();
+        for event in [
+            EventType::KeyPress(Key::Alt),
+            EventType::KeyPress(Key::ControlLeft),
+            EventType::KeyPress(Key::KeyD),
+            EventType::KeyPress(Key::KeyA),
+            EventType::KeyRelease(Key::KeyA),
+            EventType::KeyRelease(Key::KeyD),
+        ] {
+            state.process(event, &manager.bindings);
+        }
+        let fired = FIRED.lock().clone();
+        assert!(
+            fired.contains(&"dictate:0".to_string()),
+            "dictate never got its release: {fired:?}"
+        );
+        assert!(
+            fired.contains(&"ask:0".to_string()),
+            "ask never got its release: {fired:?}"
+        );
+    }
+
+    #[test]
+    fn a_numpad_digit_fires_a_digit_binding() {
+        assert_eq!(key_name(&Key::Kp1), Some("1"));
+        assert_eq!(key_name(&Key::Num1), Some("1"));
+    }
+
+    #[test]
+    fn a_key_with_no_name_is_refused_not_dropped() {
+        for binding in ["ctrl+alt+", "ctrl+alt++", "+a", "ctrl++a"] {
+            assert!(parse_binding(binding).is_err(), "{binding} was accepted");
+        }
+        assert!(parse_binding("  ").is_err());
     }
 
     #[test]

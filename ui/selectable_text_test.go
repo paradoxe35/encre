@@ -456,6 +456,7 @@ func TestTheScrollbarOfWideCodeDragsAndExpands(t *testing.T) {
 }
 
 func TestTheMarksFollowScrolledCode(t *testing.T) {
+	settleScrolls(t)
 	card, _ := newCard(t)
 	answered(card, "q", "```\n"+strings.Repeat("wide_code_", 30)+"\n```")
 	s := card.selection
@@ -619,5 +620,134 @@ func TestTheSelectionDropsWhenTheTextBeforeItChanges(t *testing.T) {
 	update("**bold** text", true)
 	if got := s.SelectedText(); got != "" {
 		t.Fatalf("after the text before it changed %q is selected", got)
+	}
+}
+
+func TestTagsWrittenAsTextShowInTheAnswer(t *testing.T) {
+	card, _ := newCard(t)
+	answered(card, "q", "<div> is a block element, while <span> is inline.\nMore text here.\n\nUse `<b>` or <https://example.org>.")
+	card.selection.SelectAll()
+	got := card.selection.SelectedText()
+	for _, want := range []string{"<div> is a block element, while <span> is inline.", "More text here.", "<b>", "https://example.org"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the answer reads %q, missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "&lt;") {
+		t.Errorf("the escape shows: %q", got)
+	}
+}
+
+func TestTagsShowInListsAndStayRawInCode(t *testing.T) {
+	cases := []struct{ answer, want, unwanted string }{
+		{"1. Step one\n\n    Wrap it in <div> tags here.\n", "Wrap it in <div> tags here.", ""},
+		{"- item\n    - use <span> inline\n", "use <span> inline", ""},
+		{"````markdown\n```go\nif a<b {}\n```\n````\n", "if a<b {}", "&lt;"},
+		{"Use `x\n<b>` here.", "<b>", "&lt;"},
+		{"- Type a backtick (`)\n- Press <kbd>Ctrl</kbd>\n- Run `ls`\n", "Press <kbd>Ctrl</kbd>", ""},
+		{"# The ` key\nPress <kbd>Esc</kbd> then `q`.\n", "Press <kbd>Esc</kbd>", ""},
+		{"1. ```html\n   <div>\n   ```\n2. Use <b> tags\n", "Use <b> tags", ""},
+		{"1. ```html\n   <div>\n   ```\n2. Use <b> tags\n", "<div>", "&lt;"},
+		{"> quote <tag> here", "quote <tag> here", "&lt;"},
+		{"> > nested <n>", "nested <n>", "&lt;"},
+		{"> - q <a>\n> after <c>", "after <c>", "&lt;"},
+		{"- ```\n  code <a>\n\nAfter <b>tag</b>", "After <b>tag</b>", ""},
+		{"> ```\n> code\nplain <x>", "plain <x>", ""},
+		{"```\n- ```\n<inside>\n```\nafter <z>", "<inside>", "&lt;"},
+		{"```\n- ```\n<inside>\n```\nafter <z>", "after <z>", ""},
+		{"Use \\`<div>\\` here", "<div>", ""},
+		{"Plain <i>tag</i> and a & b", "a & b", "&amp;"},
+	}
+	for _, c := range cases {
+		card, _ := newCard(t)
+		answered(card, "q", c.answer)
+		card.selection.SelectAll()
+		got := card.selection.SelectedText()
+		if !strings.Contains(got, c.want) || (c.unwanted != "" && strings.Contains(got, c.unwanted)) {
+			t.Errorf("%q reads %q, want it to hold %q", c.answer, got, c.want)
+		}
+	}
+}
+
+func TestCodeInsideHTMLAndQuotedHeadingsShowAsWritten(t *testing.T) {
+	cases := []struct{ answer, want, unwanted string }{
+		{"<p>Use `x < y` here</p>", "x < y", "&lt;"},
+		{"<div>\n```\na < b\n```\n</div>", "a < b", "&lt;"},
+		{"> # Heading &amp;lt;b&gt;", "Heading &lt;b>", ""},
+		{"Use `foo\n<div>` here", "<div>", ""},
+		{"> **bold <b>tag</b>**", "bold <b>tag</b>", "\uE000"},
+		{"> ~~gone <i>x</i>~~", "gone <i>x</i>", ""},
+		{"> # Title *with <tag>*", "with <tag>", ""},
+		{"| a | <b>b</b> |\n|---|---|\n| <i>c</i> | d |", "<i>c</i>", ""},
+		{"[click <b>here</b>](https://example.org)", "click <b>here</b>", ""},
+	}
+	for _, c := range cases {
+		card, _ := newCard(t)
+		answered(card, "q", c.answer)
+		card.selection.SelectAll()
+		got := card.selection.SelectedText()
+		if !strings.Contains(got, c.want) || (c.unwanted != "" && strings.Contains(got, c.unwanted)) {
+			t.Errorf("%q reads %q, want it to hold %q", c.answer, got, c.want)
+		}
+	}
+}
+
+func TestATaskThatStartsWithFormattingShowsWhole(t *testing.T) {
+	cases := map[string]string{
+		"- [ ] **bold** task":               "[ ] bold task",
+		"- [x] *em* done":                   "[x] em done",
+		"- [ ] `code` task":                 "[ ] code task",
+		"- [ ] [link](https://e.com) go":    "[ ] link go",
+		"1. [ ] ~~gone~~ now":               "[ ] gone now",
+		"> - [ ] **q** quoted":              "[ ] q quoted",
+		"- [ ] plain **bold**":              "[ ] plain bold",
+		"- [x] plain":                       "[x] plain",
+		"- [ ] <b>x</b>":                    "[ ] <b>x</b>",
+		"- [ ] first para\n\n  second para": "second para",
+		"- [ ] a\n\n  ```\n  code\n  ```":   "code",
+		"<details>\n<summary>Plan</summary>\n- [ ] **Install** Go\n</details>\n\n# Title\n\n**bold**": "[ ] Install Go",
+	}
+	for answer, want := range cases {
+		card, _ := newCard(t)
+		answered(card, "", answer)
+		card.selection.SelectAll()
+		got := card.selection.SelectedText()
+		if !strings.Contains(got, want) || strings.Contains(got, "parasecond") || strings.Contains(got, "acode") || strings.Contains(got, "**bold**") {
+			t.Errorf("%q reads %q, want %q", answer, got, want)
+		}
+	}
+}
+
+func TestAParagraphOfManyFormattedPiecesRendersQuickly(t *testing.T) {
+	answer := strings.Repeat("plain **bold** `code` ", 80)
+	start := time.Now()
+	markdownSegments(answer)
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("laying out %d formatted pieces took %v", 240, took)
+	}
+}
+
+// Fyne runs a heading or quote under an item's first line into the same paragraph; the checkbox is
+// labelled with the first line alone, as the item's other text is not part of the task's words.
+func TestATaskLabelStopsAtAHeadingOrQuote(t *testing.T) {
+	for answer, want := range map[string]string{"- [ ] a\n  # Heading": "a", "- [ ] a\n  > quoted": "a"} {
+		var label string
+		var walk func([]widget.RichTextSegment)
+		walk = func(segments []widget.RichTextSegment) {
+			for _, segment := range segments {
+				switch segment := segment.(type) {
+				case *widget.CheckBoxSegment:
+					label = segment.Text
+				case *widget.ParagraphSegment:
+					walk(segment.Texts)
+				case *widget.ListSegment:
+					walk(segment.Items)
+				}
+			}
+		}
+		walk(markdownSegments(answer))
+		if label != want {
+			t.Errorf("%q labels its checkbox %q, want %q", answer, label, want)
+		}
 	}
 }

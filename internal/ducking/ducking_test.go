@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -283,7 +284,8 @@ func TestLoweringSavesWhatWasFoundAndRestoringForgetsIt(t *testing.T) {
 	if err != nil || string(data) != `{"player":0.8}` {
 		t.Fatalf("saved %q, %v", data, err)
 	}
-	if info, err := os.Stat(statePath()); err != nil || info.Mode().Perm() != 0o600 {
+	// Windows keeps no POSIX modes.
+	if info, err := os.Stat(statePath()); runtime.GOOS != "windows" && (err != nil || info.Mode().Perm() != 0o600) {
 		t.Fatalf("saved with %v, %v; want 0600", info.Mode().Perm(), err)
 	}
 

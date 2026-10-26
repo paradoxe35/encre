@@ -30,6 +30,7 @@ type ModelList struct {
 	progress map[string]stt.Progress
 
 	list   *widget.List
+	empty  *widget.Label
 	search *widget.Entry
 	filter *widget.Select
 }
@@ -50,6 +51,9 @@ func NewModelList(store *stt.Store, window fyne.Window, selected string, onSelec
 
 func (m *ModelList) build() {
 	m.list = widget.NewList(m.count, m.template, m.update)
+	m.empty = widget.NewLabel("")
+	m.empty.Alignment = fyne.TextAlignCenter
+	m.empty.Hide()
 
 	m.search = widget.NewEntry()
 	m.search.SetPlaceHolder("Search models")
@@ -97,6 +101,18 @@ func (m *ModelList) apply() {
 	m.filtered = out
 	m.mu.Unlock()
 	m.list.Refresh()
+
+	// An empty filter would otherwise leave a blank area under a summary that counts the whole catalogue.
+	switch {
+	case len(out) > 0:
+		m.empty.Hide()
+	case mode == "Downloaded" && query == "":
+		m.empty.SetText("No models downloaded yet")
+		m.empty.Show()
+	default:
+		m.empty.SetText("No models match")
+		m.empty.Show()
+	}
 }
 
 // Reload is for when the catalogue was replaced underneath the list.
@@ -136,8 +152,10 @@ func matches(model stt.Model, query, mode string, store *stt.Store) bool {
 }
 
 type modelRow struct {
-	title  *widget.Label
-	meta   *widget.Label
+	title *widget.Label
+	meta  *widget.Label
+	// state stands in for the action when there is nothing to do, as a disabled button is too faint.
+	state  *widget.Label
 	action *widget.Button
 	remove *widget.Button
 	info   *widget.Button
@@ -158,6 +176,7 @@ func (m *ModelList) template() fyne.CanvasObject {
 	row := &modelRow{
 		title:  widget.NewLabel(""),
 		meta:   widget.NewLabel(""),
+		state:  widget.NewLabel(""),
 		action: widget.NewButton("Get", nil),
 		remove: widget.NewButtonWithIcon("", theme.DeleteIcon(), nil),
 		info:   widget.NewButtonWithIcon("", theme.InfoIcon(), nil),
@@ -173,7 +192,7 @@ func (m *ModelList) template() fyne.CanvasObject {
 		row: row,
 		content: container.NewVBox(
 			container.NewBorder(nil, nil, nil,
-				container.NewHBox(row.action, row.remove, row.info), row.title),
+				container.NewHBox(row.state, row.action, row.remove, row.info), row.title),
 			row.meta,
 		),
 	}
@@ -202,36 +221,30 @@ func (m *ModelList) update(i widget.ListItemID, item fyne.CanvasObject) {
 
 	row.remove.Hide()
 	row.info.Show()
+	row.state.Hide()
 	row.action.Show()
 
 	switch {
 	case downloading && progress.Stage == stt.StageVerifying:
-		row.action.SetText("Verifying")
-		row.action.OnTapped = nil
-		row.action.Disable()
+		showState(row, "Verifying…")
 
 	case downloading:
 		row.action.SetText(fmt.Sprintf("Cancel (%.0f%%)", progress.Fraction()*100))
 		row.action.OnTapped = func() { m.store.CancelDownload(model) }
-		row.action.Enable()
 
 	case m.store.Downloaded(model):
 		row.remove.Show()
 		row.remove.OnTapped = func() { m.confirmDelete(model) }
 		if model.ID == m.selected {
-			row.action.SetText("In use")
-			row.action.OnTapped = nil
-			row.action.Disable()
+			showState(row, "In use")
 		} else {
 			row.action.SetText("Use")
 			row.action.OnTapped = func() { m.choose(model) }
-			row.action.Enable()
 		}
 
 	default:
 		row.action.SetText(fmt.Sprintf("Get %.0f MB", model.SizeMB()))
 		row.action.OnTapped = func() { m.download(model) }
-		row.action.Enable()
 	}
 
 	row.info.OnTapped = func() {
@@ -239,6 +252,12 @@ func (m *ModelList) update(i widget.ListItemID, item fyne.CanvasObject) {
 	}
 
 	row.action.Refresh()
+}
+
+func showState(row *modelRow, text string) {
+	row.state.SetText(text)
+	row.state.Show()
+	row.action.Hide()
 }
 
 func summarise(model stt.Model, host stt.Machine) string {
@@ -279,7 +298,8 @@ func (m *ModelList) download(model stt.Model) {
 		m.mu.Unlock()
 
 		fyne.Do(func() {
-			m.list.Refresh()
+			// Filtered again, as a finished download moves the model into the Downloaded view.
+			m.apply()
 			if err != nil && !errorsIsCancelled(err) {
 				dialog.ShowError(err, m.window)
 				return
@@ -312,7 +332,7 @@ func (m *ModelList) confirmDelete(model stt.Model) {
 			if m.onDeleted != nil {
 				m.onDeleted(model)
 			}
-			m.list.Refresh()
+			m.apply()
 		}, m.window)
 }
 
@@ -330,7 +350,7 @@ func errorsIsCancelled(err error) bool {
 
 func (m *ModelList) CreateRenderer() fyne.WidgetRenderer {
 	header := container.NewBorder(nil, nil, nil, m.filter, m.search)
-	return widget.NewSimpleRenderer(container.NewBorder(header, nil, nil, nil, m.list))
+	return widget.NewSimpleRenderer(container.NewBorder(header, nil, nil, nil, container.NewStack(m.list, m.empty)))
 }
 
 func (m *ModelList) SetActiveChanged(callback func(string)) {

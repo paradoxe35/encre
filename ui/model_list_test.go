@@ -5,6 +5,7 @@ import (
 
 	"fyne.io/fyne/v2/test"
 	"github.com/paradoxe35/encre/internal/stt"
+	"github.com/paradoxe35/encre/internal/testhome"
 )
 
 func TestActiveModelTextRemainsVisibleForLongLists(t *testing.T) {
@@ -43,5 +44,25 @@ func TestModelListReloadRebuildsRowsAndActiveLabel(t *testing.T) {
 	}
 	if active != "No active model selected" {
 		t.Errorf("active label after Reload = %q", active)
+	}
+}
+
+func TestAnEmptyModelFilterSaysSo(t *testing.T) {
+	test.NewApp()
+	testhome.Use(t)
+	list := NewModelList(stt.NewStore(), test.NewWindow(nil), "", nil)
+
+	list.filter.SetSelected("Downloaded")
+	if !list.empty.Visible() || list.empty.Text != "No models downloaded yet" {
+		t.Fatalf("an empty Downloaded view shows %q (visible %v)", list.empty.Text, list.empty.Visible())
+	}
+	list.filter.SetSelected("All")
+	list.search.SetText("no model is called this")
+	if !list.empty.Visible() || list.empty.Text != "No models match" {
+		t.Fatalf("a search matching nothing shows %q (visible %v)", list.empty.Text, list.empty.Visible())
+	}
+	list.search.SetText("")
+	if list.empty.Visible() {
+		t.Fatal("the empty note stays over a full list")
 	}
 }

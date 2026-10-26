@@ -3,12 +3,14 @@ package ui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 	"github.com/paradoxe35/encre/internal/ai"
 	"github.com/paradoxe35/encre/internal/logger"
@@ -45,14 +47,20 @@ func (w *MainWindow) loadModels(provider, apiKey, baseURL, current string, repor
 
 func (w *MainWindow) showModelPicker(models []ai.ModelInfo, current string, apply func(string)) {
 	visible := models
+	// Most providers list IDs only; a second line under each would be blank.
+	described := slices.ContainsFunc(models, func(model ai.ModelInfo) bool { return describeModel(model) != "" })
 
 	list := widget.NewList(
 		func() int { return len(visible) },
 		func() fyne.CanvasObject {
+			// Two lines, so a long ID and a long name each get the full width before they are cut.
 			id := widget.NewLabel("")
+			id.Truncation = fyne.TextTruncateEllipsis
 			name := widget.NewLabel("")
 			name.TextStyle.Italic = true
-			return container.NewHBox(id, name)
+			name.Truncation = fyne.TextTruncateEllipsis
+			name.Hidden = !described
+			return container.New(layout.NewCustomPaddedVBoxLayout(0), id, name)
 		},
 		func(item widget.ListItemID, obj fyne.CanvasObject) {
 			if item >= len(visible) {
@@ -130,5 +138,5 @@ func matchingModels(models []ai.ModelInfo, query string) []ai.ModelInfo {
 
 // Keeps a provider error inside the one line the status bar has.
 func shortMessage(message string) string {
-	return truncateRunes(strings.ReplaceAll(message, "\n", " "), 80)
+	return truncateRunes(strings.ReplaceAll(message, "\n", " "), statusErrorLimit)
 }

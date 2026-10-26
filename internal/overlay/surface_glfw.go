@@ -22,6 +22,12 @@ func Supported() bool {
 	return glfw.GetPlatform() != glfw.PlatformWayland
 }
 
+// NativeWayland reports that windows are Wayland's own, not XWayland's, where GLFW gives a key's
+// evdev code as its scancode rather than the X11 keycode, eight more.
+func NativeWayland() bool {
+	return glfw.GetPlatform() == glfw.PlatformWayland
+}
+
 // The GL function table is process-wide and shared with Fyne's painter.
 var initGL sync.Once
 
@@ -60,9 +66,15 @@ func openSurface() (surface, error) {
 	noFocus(window)
 
 	focus, known := focusPoint()
+	area := workareaFor(screens, focus, known)
 	ww, wh := window.GetSize()
-	origin := pillOrigin(workareaFor(screens, focus, known), ww, wh)
+	origin := pillOrigin(area, ww, wh)
 	window.SetPos(origin.X, origin.Y)
+	// Scaled to the monitor it lands on, the window may have grown or shrunk; centre it again at that size.
+	if w, h := window.GetSize(); w != ww || h != wh {
+		origin = pillOrigin(area, w, h)
+		window.SetPos(origin.X, origin.Y)
+	}
 
 	window.MakeContextCurrent()
 	var glErr error

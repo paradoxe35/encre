@@ -99,6 +99,14 @@ func (w *MainWindow) createSpeechSection() fyne.CanvasObject {
 	)
 }
 
+// shownEngine is the engine whose pane is on screen; a model list callback may fire while the other is.
+func (w *MainWindow) shownEngine() config.SpeechEngine {
+	if w.speechEngine == nil {
+		return config.SpeechLocal
+	}
+	return engineFromLabel(w.speechEngine.Selected)
+}
+
 func engineFromLabel(label string) config.SpeechEngine {
 	switch label {
 	case remoteEngineLabel:
@@ -145,7 +153,7 @@ func (w *MainWindow) localSpeechPane() *fyne.Container {
 	w.speechModels = NewModelList(store, w.Window, w.speechModelDraft,
 		func(model stt.Model) {
 			w.speechModelDraft = model.ID
-			w.refreshLanguages(config.SpeechLocal)
+			w.refreshLanguages(w.shownEngine())
 			w.markDirty()
 			w.statusBinding.Set("Speech model set to " + model.Name)
 		})
@@ -155,7 +163,7 @@ func (w *MainWindow) localSpeechPane() *fyne.Container {
 			return
 		}
 		w.speechModelDraft = ""
-		w.refreshLanguages(config.SpeechLocal)
+		w.refreshLanguages(w.shownEngine())
 		w.markDirty()
 	})
 
@@ -212,6 +220,10 @@ func (w *MainWindow) remoteSpeechPane() *fyne.Container {
 	w.speechRemoteURL = w.dirtyEntry()
 	w.speechRemoteURL.SetPlaceHolder("https://api.example.com/v1")
 	w.speechRemoteURL.SetText(speech.RemoteBaseURL)
+	w.speechPresetURL = widget.NewLabel("")
+	w.speechPresetURL.Truncation = fyne.TextTruncateEllipsis
+	w.speechPresetURL.Selectable = true
+	w.speechPresetURL.Hide()
 
 	w.speechRemoteKey = w.dirtyPasswordEntry()
 	key, unreadable := decryptedRemoteAPIKey(speech.RemoteAPIKey)
@@ -219,26 +231,25 @@ func (w *MainWindow) remoteSpeechPane() *fyne.Container {
 	w.speechRemoteKey.SetPlaceHolder(apiKeyPlaceholder(unreadable, "API key"))
 	w.speechRemoteKey.SetText(key)
 
-	w.speechRemote = w.dirtySelect(stt.PresetNames(), w.applyPreset)
-	if preset, ok := stt.FindPreset(speech.RemoteProvider); ok {
-		w.speechRemote.SetSelected(preset.Name)
-	} else {
-		w.speechRemote.SetSelected(stt.RemotePresets[0].Name)
+	saved, ok := stt.FindPreset(speech.RemoteProvider)
+	if !ok {
+		saved = stt.RemotePresets[0]
 	}
+	w.speechServiceSaved = saved.ID
+	w.speechRemote = w.dirtySelect(stt.PresetNames(), w.applyPreset)
+	w.speechRemote.SetSelected(saved.Name)
 
 	note := widget.NewLabel("Audio is sent to this service. Nothing is downloaded.")
 	note.Wrapping = fyne.TextWrapWord
 	note.TextStyle.Italic = true
 
-	return container.NewPadded(container.NewVBox(
-		widget.NewForm(
-			widget.NewFormItem("Service", w.speechRemote),
-			widget.NewFormItem("Model", w.speechRemoteModel),
-			widget.NewFormItem("Endpoint", w.speechRemoteURL),
-			widget.NewFormItem("API key", w.speechRemoteKey),
-		),
-		note,
-	))
+	w.speechRemoteForm = widget.NewForm(
+		widget.NewFormItem("Service", w.speechRemote),
+		widget.NewFormItem("Model", w.speechRemoteModel),
+		widget.NewFormItem("Endpoint", container.NewStack(w.speechRemoteURL, w.speechPresetURL)),
+		widget.NewFormItem("API key", w.speechRemoteKey),
+	)
+	return container.NewPadded(container.NewVBox(w.speechRemoteForm, note))
 }
 
 // The endpoint is locked for known services so a typo cannot break a working provider.
@@ -248,15 +259,62 @@ func (w *MainWindow) applyPreset(name string) {
 		return
 	}
 
+	w.switchSpeechService(preset.ID)
 	w.speechRemoteModel.SetOptions(preset.Models)
 	if preset.ID == "custom" {
 		w.speechRemoteURL.Enable()
+		w.speechRemoteURL.Show()
+		w.speechPresetURL.Hide()
 	} else {
 		w.speechRemoteURL.SetText(preset.BaseURL)
 		w.speechRemoteURL.Disable()
+		w.speechRemoteURL.Hide()
+		w.speechPresetURL.SetText(preset.BaseURL)
+		w.speechPresetURL.Show()
+	}
+	// A form greys its labels only when refreshed, not when a field is turned off.
+	if w.speechRemoteForm != nil {
+		w.speechRemoteForm.Refresh()
 	}
 	w.adoptPresetModel(preset)
 	w.refreshLanguages(config.SpeechRemote)
+}
+
+type speechServiceDraft struct {
+	key, url   string
+	unreadable bool
+}
+
+// Keeps what was typed for the service left, and shows what belongs to the one picked: its draft,
+// what was saved for it, or nothing.
+func (w *MainWindow) switchSpeechService(id string) {
+	if id == w.speechServiceShown {
+		return
+	}
+	if w.speechServiceDrafts == nil {
+		w.speechServiceDrafts = make(map[string]speechServiceDraft)
+	}
+	if w.speechServiceShown != "" {
+		w.speechServiceDrafts[w.speechServiceShown] = speechServiceDraft{
+			key: w.speechRemoteKey.Text, url: w.speechRemoteURL.Text, unreadable: w.speechKeyUnreadable,
+		}
+	}
+	first := w.speechServiceShown == ""
+	w.speechServiceShown = id
+	if first {
+		return
+	}
+
+	draft, ok := w.speechServiceDrafts[id]
+	if !ok && id == w.speechServiceSaved {
+		speech := w.config.SpeechSettings()
+		draft.key, draft.unreadable = decryptedRemoteAPIKey(speech.RemoteAPIKey)
+		draft.url = speech.RemoteBaseURL
+	}
+	w.speechKeyUnreadable = draft.unreadable
+	w.speechRemoteKey.SetPlaceHolder(apiKeyPlaceholder(draft.unreadable, "API key"))
+	w.speechRemoteKey.SetText(draft.key)
+	w.speechRemoteURL.SetText(draft.url)
 }
 
 // A model of another preset is swapped for the default; one typed by hand is left alone.
@@ -396,8 +454,11 @@ func (w *MainWindow) showFreeformLanguages() {
 
 	if w.speechLanguageDraft == "" {
 		w.speechLanguageEntry.SetText(detectLanguageLabel)
+	} else if name := stt.LanguageName(w.speechLanguageDraft); codeByName[name] == w.speechLanguageDraft {
+		w.speechLanguageEntry.SetText(name)
 	} else {
-		w.speechLanguageEntry.SetText(stt.LanguageName(w.speechLanguageDraft))
+		// A name the list would read back as another code, or not at all, is shown as the code itself.
+		w.speechLanguageEntry.SetText(w.speechLanguageDraft)
 	}
 
 	w.speechLanguage.Hide()
@@ -541,6 +602,8 @@ func (w *MainWindow) applySpeechSettings(remoteAPIKey string) {
 
 	if preset, ok := stt.PresetByName(w.speechRemote.Selected); ok {
 		speech.RemoteProvider = preset.ID
+		w.speechServiceSaved = preset.ID
+		clear(w.speechServiceDrafts)
 	}
 	speech.RemoteModel = w.speechRemoteModel.Text
 	speech.RemoteBaseURL = w.speechRemoteURL.Text

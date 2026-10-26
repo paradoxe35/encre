@@ -18,7 +18,10 @@ exclude = [
     "CGEventSetIntegerValueField", "CGEventSourceKeyState",
     "CGEventTapCreate", "CGEventTapEnable", "CGEventGetIntegerValueField", "CGEventGetFlags",
     "CFMachPortCreateRunLoopSource", "CFRunLoopGetCurrent", "CFRunLoopAddSource", "CFRunLoopRun",
-    "kCFRunLoopCommonModes"
+    "kCFRunLoopCommonModes",
+    "TISCopyCurrentKeyboardLayoutInputSource", "TISCopyCurrentASCIICapableKeyboardLayoutInputSource",
+    "TISGetInputSourceProperty", "kTISPropertyUnicodeKeyLayoutData", "CFDataGetBytePtr",
+    "LMGetKbdType", "UCKeyTranslate", "pthread_main_np", "_dispatch_main_q", "dispatch_async_f"
 ]
 
 [parse]

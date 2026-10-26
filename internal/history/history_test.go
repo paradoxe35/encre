@@ -75,8 +75,8 @@ func TestClearRemovesEverything(t *testing.T) {
 	if got := len(store.Recent("")); got != 0 {
 		t.Fatalf("after clear, %d entries remain", got)
 	}
-	if _, err := os.Stat(store.path); !os.IsNotExist(err) {
-		t.Error("clear should remove the file")
+	if data, _ := os.ReadFile(store.path); len(data) != 0 {
+		t.Errorf("clear left %q in the file", data)
 	}
 }
 
@@ -222,5 +222,30 @@ func TestTrimCountsLinesWrittenBeforeTheStoreOpened(t *testing.T) {
 	reopened.Add(Entry{Kind: KindRevise, Result: "y"})
 	if got := lineCount(t, store.path); got != MaxEntries {
 		t.Errorf("file has %d lines after trimming, want %d", got, MaxEntries)
+	}
+}
+
+func TestClearingALinkedHistoryEmptiesTheFileItPointsTo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "synced-history.jsonl")
+	if err := os.WriteFile(target, []byte(`{"kind":"revise","original":"secret"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "history.jsonl")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Store{path: link}).Clear(); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(target); len(data) != 0 {
+		t.Fatalf("the linked file still holds %q", data)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("clearing removed the link")
 	}
 }

@@ -46,6 +46,10 @@ type Application struct {
 	loopStarted atomic.Bool
 	// loopEnded is set once the loop stops: the window system is gone and nothing waits on the UI thread.
 	loopEnded atomic.Bool
+	// tearingDown is set once teardown begins and tornDown closed once it ends; a quit from macOS
+	// waits on the second only briefly, as the teardown may be waiting on the thread it runs on.
+	tearingDown atomic.Bool
+	tornDown    chan struct{}
 
 	permissionMonitorCancel    context.CancelFunc
 	permissionsMissingOnLaunch bool
@@ -76,6 +80,7 @@ func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instanc
 	platform.RegisterNotifier(config.APP_ID, "Encre")
 
 	application := &Application{
+		tornDown:      make(chan struct{}),
 		app:           app,
 		config:        cfg,
 		hotkeyManager: hotkeyManager,
@@ -156,6 +161,26 @@ func NewApplication(app fyne.App, cfg *config.Config, instance *platform.Instanc
 		application.loopStarted.Store(true)
 		systray.SetTooltip("Encre")
 		installReopenHandler(application.ShowWindow)
+		// The UI thread is the one asking, so nothing in the teardown may wait on it.
+		installTerminateHandler(func(asked bool) bool {
+			// A tray Quit already tearing down may be waiting on this thread; it gets a moment to
+			// give the audio and clipboard back, and the quit goes ahead either way.
+			if application.tearingDown.Load() {
+				application.loopEnded.Store(true)
+				select {
+				case <-application.tornDown:
+				case <-time.After(1500 * time.Millisecond):
+				}
+				return true
+			}
+			// Cmd+Q in Encre's own window only hides it, so the hotkeys keep working from the tray.
+			if !asked {
+				return false
+			}
+			application.loopEnded.Store(true)
+			application.teardown()
+			return true
+		})
 		prepareNotifications()
 	})
 	app.Lifecycle().SetOnStopped(func() { application.loopEnded.Store(true) })
@@ -497,6 +522,8 @@ func stopOffMain(teardown, quit func()) {
 }
 
 func (a *Application) teardown() {
+	// Set before the Once is taken, so a quit from macOS never blocks behind it unseen.
+	a.tearingDown.Store(true)
 	a.teardownOnce.Do(func() {
 		if a.updateChecks != nil {
 			close(a.updateChecks)
@@ -512,6 +539,9 @@ func (a *Application) teardown() {
 		a.voice.Close()
 		a.processor.Close()
 		logger.Info("Application stopped")
+		if a.tornDown != nil {
+			close(a.tornDown)
+		}
 	})
 }
 
