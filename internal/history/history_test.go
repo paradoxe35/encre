@@ -48,6 +48,19 @@ func TestRecentFiltersByKind(t *testing.T) {
 	}
 }
 
+func TestRecentFiltersBeforeApplyingTheEntryLimit(t *testing.T) {
+	store := testStore(t)
+	store.Add(Entry{Kind: KindAsk, Original: "question", Result: "answer"})
+	for i := 0; i <= MaxEntries; i++ {
+		store.Add(Entry{Kind: KindRevise, Result: "revision"})
+	}
+
+	asked := store.Recent(KindAsk)
+	if len(asked) != 1 || asked[0].Original != "question" {
+		t.Fatalf("Ask history after other actions = %+v, want the latest exchange", asked)
+	}
+}
+
 func TestTrimKeepsNewestAtCap(t *testing.T) {
 	store := testStore(t)
 	for i := 0; i < MaxEntries+50; i++ {
@@ -62,6 +75,23 @@ func TestTrimKeepsNewestAtCap(t *testing.T) {
 	// The oldest fifty must be gone: the first survivor is entry #50.
 	if entries[len(entries)-1].Result == "0" {
 		t.Error("the oldest entries should have been trimmed")
+	}
+}
+
+func TestTrimKeepsRecentEntriesForEachKind(t *testing.T) {
+	store := testStore(t)
+	allKinds := []Kind{KindRevise, KindTranslate, KindDictate, KindAsk}
+	for i := 0; i < maxFileEntries+1; i++ {
+		kind := allKinds[i%len(allKinds)]
+		store.Add(Entry{Kind: kind, Original: string(kind), Result: "result"})
+	}
+
+	asked := store.Recent(KindAsk)
+	if len(asked) != MaxEntries {
+		t.Fatalf("trim kept %d Ask entries, want %d", len(asked), MaxEntries)
+	}
+	if got := len(store.Recent(KindRevise)); got != MaxEntries {
+		t.Fatalf("trim kept %d revise entries, want %d", got, MaxEntries)
 	}
 }
 
@@ -156,12 +186,30 @@ func TestAnExistingWorldReadableHistoryIsTightened(t *testing.T) {
 	}
 }
 
+func TestClearingAnExistingWorldReadableHistoryKeepsItPrivateOnNextWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX modes on Windows")
+	}
+	store := testStore(t)
+	if err := os.WriteFile(store.path, []byte(`{"kind":"ask","original":"secret"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Clear(); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+
+	store.Add(Entry{Kind: KindAsk, Original: "new question", Result: "answer"})
+	if got := filePerm(t, store.path); got != 0o600 {
+		t.Errorf("mode = %o after clear and write, want 600", got)
+	}
+}
+
 func TestTrimmedHistoryStaysPrivate(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("no POSIX modes on Windows")
 	}
 	store := testStore(t)
-	for i := 0; i < 2*MaxEntries+1; i++ {
+	for i := 0; i < maxFileEntries+1; i++ {
 		store.Add(Entry{Kind: KindRevise, Result: "x"})
 	}
 	if got := filePerm(t, store.path); got != 0o600 {
@@ -201,11 +249,16 @@ func TestTrimIsRare(t *testing.T) {
 		t.Fatalf("file has %d lines; it should not be rewritten just past the cap", got)
 	}
 
-	for i := 0; i < MaxEntries; i++ {
+	for i := MaxEntries + 10; i < maxFileEntries; i++ {
 		store.Add(Entry{Kind: KindRevise, Result: "x"})
 	}
-	if got := lineCount(t, store.path); got > 2*MaxEntries {
-		t.Fatalf("file has %d lines, should be trimmed once past %d", got, 2*MaxEntries)
+	if got := lineCount(t, store.path); got != maxFileEntries {
+		t.Fatalf("file has %d lines; it should not be rewritten at the cap", got)
+	}
+
+	store.Add(Entry{Kind: KindRevise, Result: "x"})
+	if got := lineCount(t, store.path); got > MaxEntries {
+		t.Fatalf("file has %d lines, should be trimmed to %d", got, MaxEntries)
 	}
 	if got := len(store.Recent("")); got != MaxEntries {
 		t.Errorf("Recent returned %d, want %d", got, MaxEntries)
@@ -214,7 +267,7 @@ func TestTrimIsRare(t *testing.T) {
 
 func TestTrimCountsLinesWrittenBeforeTheStoreOpened(t *testing.T) {
 	store := testStore(t)
-	for i := 0; i < 2*MaxEntries; i++ {
+	for i := 0; i < maxFileEntries; i++ {
 		store.Add(Entry{Kind: KindRevise, Result: "x"})
 	}
 
