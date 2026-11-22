@@ -91,8 +91,9 @@ func discoverCustomIn(dir string) []Model {
 		if !strings.HasSuffix(entry.Name(), ".gguf") && !strings.HasSuffix(entry.Name(), ".bin") {
 			continue
 		}
-		info, err := entry.Info()
-		if err != nil {
+		// Follow links into shared model caches, as Store.Downloaded does.
+		info, err := os.Stat(filepath.Join(dir, entry.Name()))
+		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
 		custom = append(custom, Model{

@@ -61,6 +61,32 @@ func TestDiscoverCustomModels(t *testing.T) {
 	}
 }
 
+func TestDiscoverCustomFollowsModelSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	cache := t.TempDir()
+	target := filepath.Join(cache, "weights")
+	if err := os.WriteFile(target, make([]byte, 512), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "linked.gguf")); err != nil {
+		t.Skipf("creating symlinks unavailable: %v", err)
+	}
+	for name, dest := range map[string]string{"directory.gguf": cache, "broken.bin": filepath.Join(cache, "missing")} {
+		if err := os.Symlink(dest, filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	models := discoverCustomIn(dir)
+	if len(models) != 1 || models[0].ID != "custom/linked.gguf" || models[0].SizeBytes != 512 {
+		t.Fatalf("unexpected custom models: %+v", models)
+	}
+	store := &Store{dir: dir}
+	if !store.Downloaded(models[0]) {
+		t.Fatal("a discovered model's size should agree with the store")
+	}
+}
+
 func TestDiscoverCustomSkipsCatalogEntries(t *testing.T) {
 	dir := t.TempDir()
 	shipped := Models().Models[0]
